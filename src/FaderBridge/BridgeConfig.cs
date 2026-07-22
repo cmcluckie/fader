@@ -11,8 +11,13 @@ public sealed class BridgeConfig
 
     public int X32Port { get; set; } = 10023;
 
-    /// <summary>Substring matched against the MIDI port name (case-insensitive).</summary>
-    public string MidiPortName { get; set; } = "FaderPort";
+    /// <summary>
+    /// MIDI port name, matched case-insensitively. An exact match wins; failing
+    /// that, a substring match must be unambiguous. Windows enumerates the
+    /// FaderPort 8 as "PreSonus FP8" plus a second "MIDIIN2 (PreSonus FP8)"
+    /// port, so the exact name is what you want here.
+    /// </summary>
+    public string MidiPortName { get; set; } = "PreSonus FP8";
 
     /// <summary>Faders on the surface. One FaderPort 8 bank = 8.</summary>
     public int StripCount { get; set; } = 8;

@@ -48,7 +48,16 @@ internal static class Program
         Console.WriteLine($"\nAvailable input ports ({inputs.Count}):");
         for (var i = 0; i < inputs.Count; i++)
         {
-            Console.WriteLine($"  [{i}] {inputs[i].Name}   (id: {inputs[i].Id})");
+            Console.WriteLine($"  [{i}] \"{inputs[i].Name}\"   (id: {inputs[i].Id})");
+        }
+
+        // The bridge needs an output too (motors, LEDs, scribble strips), so
+        // show both lists - copy the right name into config.json's midiPortName.
+        var outputs = access.Outputs.ToList();
+        Console.WriteLine($"\nAvailable output ports ({outputs.Count}):");
+        foreach (var o in outputs)
+        {
+            Console.WriteLine($"      \"{o.Name}\"   (id: {o.Id})");
         }
 
         var chosen = SelectPort(inputs, args.FirstOrDefault());
@@ -68,6 +77,11 @@ internal static class Program
         {
             Console.Error.WriteLine($"Failed to open port: {ex.Message}");
             return 1;
+        }
+
+        if (args.Contains("--test-output"))
+        {
+            await TestOutputAsync(access, chosen.Name);
         }
 
         var parser = new MidiStreamParser();
@@ -131,6 +145,78 @@ internal static class Program
         return 0;
     }
 
+    /// <summary>
+    /// Drive the surface briefly to prove the outbound path: scribble strips
+    /// (MCU SysEx), button LEDs, and the motors. Everything it changes is put
+    /// back before it returns. Nothing here touches audio - the FaderPort is
+    /// the only device written to.
+    /// </summary>
+    private static async Task TestOutputAsync(IMidiAccess access, string portName)
+    {
+        Console.WriteLine("\n--- output test ---");
+
+        IMidiOutput output;
+        try
+        {
+            var port = access.Outputs.FirstOrDefault(p =>
+                           string.Equals(p.Name, portName, StringComparison.OrdinalIgnoreCase))
+                       ?? access.Outputs.First(p =>
+                           p.Name.Contains(portName, StringComparison.OrdinalIgnoreCase));
+
+            output = await access.OpenOutputAsync(port.Id);
+            Console.WriteLine($"Output port: \"{port.Name}\"");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Could not open an output port: {ex.Message}");
+            return;
+        }
+
+        void Send(byte[] data) => output.Send(data, 0, data.Length, 0);
+
+        Console.WriteLine("Writing scribble strips (expect \"FADER 1\".. across the displays)...");
+        for (var strip = 0; strip < 8; strip++)
+        {
+            Send(McuProtocol.ScribbleText(strip, 0, $"FADER {strip + 1}"));
+            Send(McuProtocol.ScribbleText(strip, 1, "MCU OK"));
+        }
+        await Task.Delay(800);
+
+        Console.WriteLine("Lighting Select LEDs left to right...");
+        for (var strip = 0; strip < 8; strip++)
+        {
+            Send(McuProtocol.Led(McuProtocol.SelectBase + strip, true));
+            await Task.Delay(90);
+        }
+        for (var strip = 0; strip < 8; strip++)
+        {
+            Send(McuProtocol.Led(McuProtocol.SelectBase + strip, false));
+        }
+
+        Console.WriteLine("Sweeping fader 1 (it should physically move, then return)...");
+        foreach (var value in new[] { 4096, 8192, 12287, 8192, 0 })
+        {
+            Send(McuProtocol.FaderPosition(0, value));
+            await Task.Delay(320);
+        }
+
+        Console.WriteLine("Clearing...");
+        for (var strip = 0; strip < 8; strip++)
+        {
+            Send(McuProtocol.ScribbleText(strip, 0, string.Empty));
+            Send(McuProtocol.ScribbleText(strip, 1, string.Empty));
+        }
+        await Task.Delay(200);
+        await output.CloseAsync();
+
+        Console.WriteLine("""
+            --- end of output test ---
+
+            Did the displays show text? Did fader 1 move? Did the LEDs chase?
+            Anything that did NOT happen tells us what the FaderPort rejects.
+            """);
+    }
+
     private static void Print(string kind, string detail)
     {
         _count++;
@@ -141,6 +227,17 @@ internal static class Program
     {
         if (!string.IsNullOrWhiteSpace(filter))
         {
+            // Exact match wins: "PreSonus FP8" is a substring of
+            // "MIDIIN2 (PreSonus FP8)", so substring alone is ambiguous.
+            var exact = inputs
+                .Where(p => string.Equals(p.Name, filter, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (exact.Count == 1)
+            {
+                return exact[0];
+            }
+
             var matches = inputs
                 .Where(p => p.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
                 .ToList();

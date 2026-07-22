@@ -71,6 +71,19 @@ public sealed class FaderPortDevice : IControlSurface, IAsyncDisposable
             throw new InvalidOperationException($"No MIDI {direction} ports found.");
         }
 
+        // Exact match wins outright. Windows enumerates a FaderPort as both
+        // "PreSonus FP8" and "MIDIIN2 (PreSonus FP8)", so the first name is a
+        // substring of the second and pure substring matching is ambiguous for
+        // the very name the user is most likely to type.
+        var exact = ports
+            .Where(p => string.Equals(p.Name, filter, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (exact.Count == 1)
+        {
+            return exact[0];
+        }
+
         var matches = ports
             .Where(p => p.Name.Contains(filter, StringComparison.OrdinalIgnoreCase))
             .ToList();
@@ -80,10 +93,10 @@ public sealed class FaderPortDevice : IControlSurface, IAsyncDisposable
             return matches[0];
         }
 
-        var available = string.Join("\n  ", ports.Select(p => p.Name));
+        var available = string.Join("\n  ", ports.Select(p => $"\"{p.Name}\""));
         throw new InvalidOperationException(matches.Count == 0
             ? $"No MIDI {direction} port matched \"{filter}\". Available:\n  {available}"
-            : $"\"{filter}\" matched {matches.Count} {direction} ports - be more specific. Available:\n  {available}");
+            : $"\"{filter}\" matched {matches.Count} {direction} ports - use one of these names exactly:\n  {available}");
     }
 
     private void Send(byte[] data)
