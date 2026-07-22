@@ -1,14 +1,21 @@
 # FaderPort 8 ↔ X32 Rack OSC Bridge
 
-macOS bridge between a PreSonus FaderPort 8 (USB MIDI, Mackie Control) and a
-Behringer X32 Rack (OSC over UDP 10023). Bidirectional: the surface drives the
-console, and the console drives the motors, LEDs and scribble strips back.
+Bridge between a PreSonus FaderPort 8 (USB MIDI, Mackie Control) and a Behringer
+X32 Rack (OSC over UDP 10023). Bidirectional: the surface drives the console, and
+the console drives the motors, LEDs and scribble strips back.
+
+Runs on **macOS and Windows**. The MIDI backend is selected at startup —
+CoreMIDI on macOS, WinMM on Windows — so the same build works on both.
 
 ## Prerequisites
 
 - .NET 8 SDK or newer
 - FaderPort 8 in **MCU mode** (hold `NEXT` while powering on, choose MCU)
-- Mac and X32 on the same subnet
+- Host machine and X32 on the same subnet
+
+On macOS, run from **Terminal in the GUI session, not over SSH** — CoreMIDI will
+not enumerate devices without a logged-in user session. Windows has no such
+restriction.
 
 ## Configure
 
@@ -18,7 +25,7 @@ find on the X32 under **Setup → Network**:
 ```json
 {
   "x32IpAddress": "192.168.1.100",
-  "midiPortName": "FaderPort",
+  "midiPortName": "PreSonus FP8",
   "stripCount": 8,
   "x32ChannelCount": 32,
   "keepaliveSeconds": 9.0,
@@ -31,8 +38,15 @@ find on the X32 under **Setup → Network**:
 broadcast every parameter after a scene recall, so a push-only bridge goes
 quietly stale; this is what catches it. Set to `0` to disable.
 
-`midiPortName` is a case-insensitive substring; it must match exactly one port.
-If it matches none or several, the bridge lists what it found and exits.
+`midiPortName` is matched case-insensitively. An **exact** name wins; failing
+that, a substring match must be unambiguous. If nothing matches, or a substring
+matches several ports, the bridge lists what it found and exits.
+
+Exact-match-first is not a nicety. Windows enumerates the FaderPort 8 as both
+`PreSonus FP8` and `MIDIIN2 (PreSonus FP8)` — the first name is a substring of
+the second, so substring matching alone rejects the most natural name as
+ambiguous. Port names differ between platforms; run `MidiMonitor` with no
+arguments to list what your machine actually reports, and copy a name verbatim.
 
 ## Build
 
@@ -76,11 +90,23 @@ dotnet run --project diagnostics/BridgeSelfTest
 bridge's own parser:
 
 ```bash
-dotnet run --project diagnostics/MidiMonitor -- FaderPort
+dotnet run --project diagnostics/MidiMonitor                      # list ports and pick one
+dotnet run --project diagnostics/MidiMonitor -- "PreSonus FP8"    # open by exact name
 ```
 
 Check that faders reach `0` and `16383` at the extremes, touch prints
 `TOUCH DOWN`/`UP` for the right strip, and nothing prints `(unmapped)`.
+
+Add `--test-output` to drive the surface *outward* first — it writes the scribble
+strips, chases the Select LEDs and sweeps fader 1, restoring everything after:
+
+```bash
+dotnet run --project diagnostics/MidiMonitor -- "PreSonus FP8" --test-output
+```
+
+This is the check that the surface is really in MCU mode and accepts display
+SysEx; passive monitoring cannot tell you either. Only the FaderPort is written
+to — there is no audio path.
 
 **X32 OSC path check** — four steps: `/info` round-trip, read fader, set fader
 (channel 1 should physically move), read back:
@@ -102,16 +128,21 @@ recovery from a silent scene recall, without stomping a held fader.
 The suite was mutation-tested — injecting a non-inverted mute and a disabled
 touch gate produced exactly the expected failures, so the assertions have teeth.
 
-**Not verified — needs your hardware.** All of the above ran against a *mock*
-console and a *fake* surface. What that proves is that the logic is right given
-the protocol assumptions. What it cannot prove is that the assumptions match your
-two devices. Specifically, still unconfirmed:
+**Verified against real FaderPort 8 hardware (Windows):** port enumeration and
+exact-name matching; opening the input port. The device reports itself as
+`PreSonus FP8` (inputs also list `MIDIIN2 (PreSonus FP8)`; outputs also list
+`MIDIOUT2 (PreSonus FP8)`).
+
+**Not verified — still needs hardware in hand.** The self-test ran against a
+*mock* console and a *fake* surface. That proves the logic is right given the
+protocol assumptions; it cannot prove the assumptions match the devices.
+Outstanding:
 
 | Assumption | Risk | How you'll know |
 |---|---|---|
 | MCU note numbers (mute 16–23, touch 104–111, etc.) | Medium | `MidiMonitor` — mislabelled or `(unmapped)` output |
-| FaderPort needs no MCU host handshake to enable motors/LEDs | Medium | `MidiMonitor` — a device-query SysEx appearing at startup |
-| FaderPort honours standard MCU display SysEx at device ID `0x14` | Medium | scribble strips stay blank |
+| FaderPort needs no MCU host handshake to enable motors/LEDs | Medium | `--test-output` — LEDs/motors do nothing |
+| FaderPort honours standard MCU display SysEx at device ID `0x14` | Medium | `--test-output` — scribble strips stay blank |
 | `/-stat/solosw/NN` and `/-stat/selidx` on Rack firmware | Low-medium | solo/select do nothing; `OscPing` can probe them |
 | `/ch/NN/...` fader, mix/on, config/name | Low | `OscPing` already exercises fader |
 
@@ -127,18 +158,22 @@ two devices. Specifically, still unconfirmed:
 
 ## Library choice
 
-`managed-midi` (`Commons.Music.Midi`), binding `CoreMidiApi.CoreMidiAccess`
-**explicitly** rather than via `MidiAccessManager.Default`.
+`managed-midi` (`Commons.Music.Midi`). On macOS it binds
+`CoreMidiApi.CoreMidiAccess` **explicitly**; on Windows it uses
+`MidiAccessManager.Default`, which resolves to `WinMMMidiAccess`.
 
 RtMidi.Core was rejected: version 1.0.53 bundles a single `librtmidi.dylib` that
 is x86_64-only (Mach-O cputype `0x01000007`, no arm64 slice), so on Apple
 Silicon it fails to load unless the whole app is forced under Rosetta.
-managed-midi ships **no** native binaries — it P/Invokes CoreMIDI directly, so
-it runs native on Apple Silicon and Intel alike.
+managed-midi ships **no** native binaries — it P/Invokes the platform's own MIDI
+framework, so it runs native on Apple Silicon, Intel, and Windows alike.
 
-`MidiAccessManager.Default` is avoided because it can resolve to the RtMidi
-backend on macOS and reintroduce that dependency. `MidiBackend` falls back to
+`MidiAccessManager.Default` is avoided *on macOS* because it can resolve to the
+RtMidi backend there and reintroduce that dependency. `MidiBackend` falls back to
 RtMidi only if CoreMIDI fails outright, in which case: `brew install rtmidi`.
+
+Scribble strips need SysEx output. The WinMM backend exposes `midiOutLongMsg`
+and `midiOutPrepareHeader`, so this works on Windows.
 
 ## Layout
 
