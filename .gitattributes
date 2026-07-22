@@ -1,0 +1,2 @@
+# Authored on Windows, runs on macOS - keep LF in the repo and on checkout there.
+* text=auto eol=lf

@@ -1,0 +1,9 @@
+bin/
+obj/
+
+# Personal Claude Code settings; .claude/settings.json is the shared one.
+.claude/settings.local.json
+*.user
+.vs/
+.idea/
+.DS_Store

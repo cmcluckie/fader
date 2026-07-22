@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fader.Diagnostics.OscPing</RootNamespace>
+    <AssemblyName>OscPing</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Link the bridge's real codec rather than copying it, so this diagnostic
+         exercises the same code the bridge runs on. -->
+    <Compile Include="..\..\src\FaderBridge\Osc\OscMessage.cs" Link="Osc\OscMessage.cs" />
+  </ItemGroup>
+
+</Project>

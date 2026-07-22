@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fader.Bridge</RootNamespace>
+    <AssemblyName>FaderBridge</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- managed-midi marks IMidiAccess obsolete to advertise a future breaking
+         change in favour of IMidiAccess2. The members used here are unaffected. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- managed-midi P/Invokes CoreMIDI directly and ships no native binaries,
+         so it runs natively on both Apple Silicon and Intel Macs.
+         (RtMidi.Core 1.0.53 bundles an x86_64-only librtmidi.dylib.) -->
+    <PackageReference Include="managed-midi" Version="1.10.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="config.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

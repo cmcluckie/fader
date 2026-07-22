@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fader.Diagnostics.MidiMonitor</RootNamespace>
+    <AssemblyName>MidiMonitor</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- managed-midi marks IMidiAccess obsolete to advertise a future breaking
+         change in favour of IMidiAccess2. The members used here are unaffected. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="managed-midi" Version="1.10.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Link the bridge's real parser and note map rather than copying them, so
+         this diagnostic validates the same code the bridge runs on. -->
+    <Compile Include="..\..\src\FaderBridge\Midi\MidiStreamParser.cs" Link="Midi\MidiStreamParser.cs" />
+    <Compile Include="..\..\src\FaderBridge\Midi\McuProtocol.cs" Link="Midi\McuProtocol.cs" />
+    <Compile Include="..\..\src\FaderBridge\Midi\MidiBackend.cs" Link="Midi\MidiBackend.cs" />
+    <Compile Include="..\..\src\FaderBridge\Bridge\FaderScaling.cs" Link="Bridge\FaderScaling.cs" />
+  </ItemGroup>
+
+</Project>

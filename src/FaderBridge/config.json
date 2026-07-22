@@ -1,0 +1,10 @@
+{
+  "x32IpAddress": "192.168.1.100",
+  "x32Port": 10023,
+  "midiPortName": "FaderPort",
+  "stripCount": 8,
+  "x32ChannelCount": 32,
+  "keepaliveSeconds": 9.0,
+  "showChannelNumbers": true,
+  "echoSuppressionMs": 150
+}
