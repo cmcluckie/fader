@@ -48,6 +48,36 @@ the second, so substring matching alone rejects the most natural name as
 ambiguous. Port names differ between platforms; run `MidiMonitor` with no
 arguments to list what your machine actually reports, and copy a name verbatim.
 
+## Moving to the Mac
+
+The repo ships as a git bundle — one file, full history, no server involved:
+
+```bash
+git clone Fader.bundle Fader && cd Fader && git remote remove origin
+```
+
+Then, **before anything else**, list the MIDI ports. CoreMIDI names devices
+differently from WinMM, so the `midiPortName` in `config.json` will very likely
+need changing:
+
+```bash
+dotnet run --project diagnostics/MidiMonitor
+```
+
+Copy a name from that list verbatim into `config.json`. On Windows the device
+reports as `PreSonus FP8`; on macOS expect something different, possibly with
+separate port-1/port-2 entries.
+
+Two macOS-only gotchas:
+
+- **Do not run over SSH.** CoreMIDI will not enumerate devices without a
+  logged-in GUI session. Use Terminal on the machine itself.
+- The launch profiles in `Properties/launchSettings.json` hard-code the Windows
+  port name. Use the no-argument run to list ports first.
+
+Everything else is identical — the backend is selected at startup and the rest of
+the code is platform-agnostic.
+
 ## Build
 
 All four projects build as a unit from `Fader.sln`:
