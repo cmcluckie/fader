@@ -106,20 +106,84 @@ public static class McuProtocol
         if (TryGetStrip(note, VPotBase, 8, out s)) return $"V-Pot {s + 1}";
         if (TryGetStrip(note, TouchBase, 8, out s)) return $"Touch {s + 1}";
 
-        return note switch
-        {
-            Rewind => "Rewind",
-            FastForward => "Fast-Forward",
-            Stop => "Stop",
-            Play => "Play",
-            Record => "Record",
-            BankLeft => "Bank Left",
-            BankRight => "Bank Right",
-            ChannelLeft => "Channel Left",
-            ChannelRight => "Channel Right",
-            _ => $"note {note} (unmapped)",
-        };
+        return Globals.TryGetValue(note, out var name)
+            ? name
+            : $"note {note} (unmapped)";
     }
+
+    /// <summary>
+    /// Standard MCU global buttons. Confirmed present on the FaderPort 8:
+    /// pressing its modifier and utility keys produces exactly these numbers,
+    /// so the surface follows the MCU map faithfully rather than a PreSonus
+    /// variant. Named here so diagnostic output is readable and so anything
+    /// genuinely unknown still stands out as "(unmapped)".
+    /// </summary>
+    private static readonly Dictionary<int, string> Globals = new()
+    {
+        [40] = "Assign Track",
+        [41] = "Assign Send",
+        [42] = "Assign Pan/Surround",
+        [43] = "Assign Plug-in",
+        [44] = "Assign EQ",
+        [45] = "Assign Instrument",
+        [BankLeft] = "Bank Left",
+        [BankRight] = "Bank Right",
+        [ChannelLeft] = "Channel Left",
+        [ChannelRight] = "Channel Right",
+        [50] = "Flip",
+        [51] = "Global View",
+        [52] = "Name/Value",
+        [53] = "SMPTE/Beats",
+        [54] = "F1", [55] = "F2", [56] = "F3", [57] = "F4",
+        [58] = "F5", [59] = "F6", [60] = "F7", [61] = "F8",
+        [62] = "View: MIDI Tracks",
+        [63] = "View: Inputs",
+        [64] = "View: Audio Tracks",
+        [65] = "View: Audio Instrument",
+        [66] = "View: Aux",
+        [67] = "View: Busses",
+        [68] = "View: Outputs",
+        [69] = "View: User",
+        [70] = "Shift",
+        [71] = "Option",
+        [72] = "Control",
+        [73] = "Cmd/Alt",
+        [74] = "Automation: Read/Off",
+        [75] = "Automation: Write",
+        [76] = "Automation: Trim",
+        [77] = "Automation: Touch",
+        [78] = "Automation: Latch",
+        [79] = "Group",
+        [80] = "Save",
+        [81] = "Undo",
+        [82] = "Cancel",
+        [83] = "Enter",
+        [84] = "Marker",
+        [85] = "Nudge",
+        [86] = "Cycle",
+        [87] = "Drop",
+        [88] = "Replace",
+        [89] = "Click",
+        [90] = "Solo (rude)",
+        [Rewind] = "Rewind",
+        [FastForward] = "Fast-Forward",
+        [Stop] = "Stop",
+        [Play] = "Play",
+        [Record] = "Record",
+        [96] = "Cursor Up",
+        [97] = "Cursor Down",
+        [98] = "Cursor Left",
+        [99] = "Cursor Right",
+        [100] = "Zoom",
+        [101] = "Scrub",
+    };
+
+    /// <summary>
+    /// MCU carries the master fader on pitch-bend channel 8, one past the eight
+    /// strips. The FaderPort emits it, so the bridge must recognise it rather
+    /// than silently treating it as a ninth strip.
+    /// </summary>
+    public const int MasterFaderChannel = 8;
 
     /// <summary>Decodes an MCU scribble-strip SysEx back to text, for logging/tests.</summary>
     public static string? TryDecodeScribble(byte[] sysex)

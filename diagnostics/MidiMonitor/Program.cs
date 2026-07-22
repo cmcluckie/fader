@@ -86,9 +86,12 @@ internal static class Program
 
         var parser = new MidiStreamParser();
 
-        parser.PitchBend += (strip, value) => Print(
+        parser.PitchBend += (channel, value) => Print(
             "FADER",
-            $"strip {strip + 1}  value {value,5} / 16383  ({value / 16383.0,6:P1})  " +
+            (channel == McuProtocol.MasterFaderChannel
+                ? "MASTER    "
+                : $"strip {channel + 1}  ") +
+            $"value {value,5} / 16383  ({value / 16383.0,6:P1})  " +
             $"-> X32 float ~{FaderScaling.McuToX32(value):F4}");
 
         parser.NoteOn += (_, note, velocity) => Print(

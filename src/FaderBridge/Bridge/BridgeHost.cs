@@ -87,6 +87,17 @@ public sealed class BridgeHost
 
     private void OnFaderMoved(int strip, int value14)
     {
+        if (strip == McuProtocol.MasterFaderChannel)
+        {
+            // MCU puts the master fader on channel 8. The FaderPort emits it;
+            // what it is physically wired to is still unconfirmed, so it is
+            // logged rather than routed to /main/st/mix/fader. Mapping an
+            // unidentified control onto the main LR bus is not a guess worth
+            // making silently.
+            Log?.Invoke($"master fader (MCU ch 8) = {value14} - not mapped");
+            return;
+        }
+
         if (strip >= _config.StripCount)
         {
             return;
