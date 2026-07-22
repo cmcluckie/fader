@@ -1,0 +1,71 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "1 - Self-test (no hardware needed)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/BridgeSelfTest/bin/Debug/net8.0/BridgeSelfTest.dll",
+      "cwd": "${workspaceFolder}/diagnostics/BridgeSelfTest",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "2 - List MIDI ports",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/MidiMonitor/bin/Debug/net8.0/MidiMonitor.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/diagnostics/MidiMonitor",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "3 - Monitor FaderPort (edit port name in args)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/MidiMonitor/bin/Debug/net8.0/MidiMonitor.dll",
+      // Port names differ between macOS (CoreMIDI) and Windows (WinMM).
+      // Run "2 - List MIDI ports" first and paste a name verbatim here.
+      "args": ["PreSonus FP8"],
+      "cwd": "${workspaceFolder}/diagnostics/MidiMonitor",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "4 - Test surface output (MOVES FADER 1)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/MidiMonitor/bin/Debug/net8.0/MidiMonitor.dll",
+      "args": ["PreSonus FP8", "--test-output"],
+      "cwd": "${workspaceFolder}/diagnostics/MidiMonitor",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "5 - Ping X32 (MOVES CHANNEL 1 FADER)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/OscPing/bin/Debug/net8.0/OscPing.dll",
+      "args": ["192.168.9.113"],
+      "cwd": "${workspaceFolder}/diagnostics/OscPing",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "6 - Run the bridge",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/src/FaderBridge/bin/Debug/net8.0/FaderBridge.dll",
+      "cwd": "${workspaceFolder}/src/FaderBridge",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}
