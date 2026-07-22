@@ -1,0 +1,16 @@
+{
+  "profiles": {
+    "1 - List MIDI ports": {
+      "commandName": "Project",
+      "commandLineArgs": ""
+    },
+    "2 - Monitor FaderPort (listen)": {
+      "commandName": "Project",
+      "commandLineArgs": "\"PreSonus FP8\""
+    },
+    "3 - Test output (MOVES FADER 1)": {
+      "commandName": "Project",
+      "commandLineArgs": "\"PreSonus FP8\" --test-output"
+    }
+  }
+}
