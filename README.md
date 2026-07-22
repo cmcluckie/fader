@@ -128,23 +128,31 @@ recovery from a silent scene recall, without stomping a held fader.
 The suite was mutation-tested — injecting a non-inverted mute and a disabled
 touch gate produced exactly the expected failures, so the assertions have teeth.
 
-**Verified against real FaderPort 8 hardware (Windows):** port enumeration and
-exact-name matching; opening the input port. The device reports itself as
-`PreSonus FP8` (inputs also list `MIDIIN2 (PreSonus FP8)`; outputs also list
-`MIDIOUT2 (PreSonus FP8)`).
+**Verified against a real FaderPort 8 (Windows / WinMM).** The entire outbound
+path works — everything the bridge sends *to* the surface:
 
-**Not verified — still needs hardware in hand.** The self-test ran against a
-*mock* console and a *fake* surface. That proves the logic is right given the
-protocol assumptions; it cannot prove the assumptions match the devices.
-Outstanding:
+- port enumeration and exact-name matching; the device reports as `PreSonus FP8`
+  (inputs also list `MIDIIN2 (PreSonus FP8)`, outputs `MIDIOUT2 (PreSonus FP8)`)
+- **motorised faders** move to commanded positions — so pitch-bend encoding is
+  right, and **no MCU host handshake is required** before the surface responds
+- **scribble strips** render text — standard MCU display SysEx at device ID
+  `0x14` is accepted, offsets and 7-character cells are correct
+- **button LEDs** light via note-on echo
+
+**Not verified — still needs hardware.** The self-test ran against a *mock*
+console and a *fake* surface, which proves the logic is right given the protocol
+assumptions but cannot prove the assumptions match the devices. Outstanding:
 
 | Assumption | Risk | How you'll know |
 |---|---|---|
-| MCU note numbers (mute 16–23, touch 104–111, etc.) | Medium | `MidiMonitor` — mislabelled or `(unmapped)` output |
-| FaderPort needs no MCU host handshake to enable motors/LEDs | Medium | `--test-output` — LEDs/motors do nothing |
-| FaderPort honours standard MCU display SysEx at device ID `0x14` | Medium | `--test-output` — scribble strips stay blank |
+| MCU note numbers *inbound* (mute 16–23, touch 104–111, …) | Medium | `MidiMonitor` — mislabelled or `(unmapped)` output |
+| Fader touch reports on notes 104–111 | Medium | `MidiMonitor` — no `TOUCH DOWN` when gripping a fader |
 | `/-stat/solosw/NN` and `/-stat/selidx` on Rack firmware | Low-medium | solo/select do nothing; `OscPing` can probe them |
 | `/ch/NN/...` fader, mix/on, config/name | Low | `OscPing` already exercises fader |
+
+Touch reporting matters more than it looks: fader-touch gating is what stops
+incoming OSC fighting your hand. If those notes are wrong, the gating silently
+never engages.
 
 ## Open decisions
 
