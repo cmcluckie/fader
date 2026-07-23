@@ -16,6 +16,9 @@ public static class X32Address
 
     public static string Name(int channel) => $"/ch/{channel:D2}/config/name";
 
+    /// <summary>Main LR stereo bus fader (the console's master output level).</summary>
+    public const string MainFader = "/main/st/mix/fader";
+
     public static string Color(int channel) => $"/ch/{channel:D2}/config/color";
 
     /// <summary>Solo is global and 1-based across the console's whole channel list.</summary>

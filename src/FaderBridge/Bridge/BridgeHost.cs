@@ -89,12 +89,11 @@ public sealed class BridgeHost
     {
         if (strip == McuProtocol.MasterFaderChannel)
         {
-            // MCU puts the master fader on channel 8. The FaderPort emits it;
-            // what it is physically wired to is still unconfirmed, so it is
-            // logged rather than routed to /main/st/mix/fader. Mapping an
-            // unidentified control onto the main LR bus is not a guess worth
-            // making silently.
-            Log?.Invoke($"master fader (MCU ch 8) = {value14} - not mapped");
+            // MCU channel 8 is the master fader. On the FaderPort 8 this is the
+            // Session Navigator encoder in Master (F5) mode, not a ninth motor
+            // fader - so it is send-only: there is no motor to drive back and no
+            // touch note to gate on. Route it straight to the main LR bus.
+            _console.Send(new OscMessage(X32Address.MainFader, FaderScaling.McuToX32(value14)));
             return;
         }
 

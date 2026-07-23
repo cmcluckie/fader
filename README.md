@@ -98,6 +98,7 @@ enumerate devices without a logged-in user session.
 | Control | Does |
 |---|---|
 | Faders | `/ch/NN/mix/fader`, motorised both ways |
+| Master fader | `/main/st/mix/fader` (Session Navigator encoder in Master mode; send-only) |
 | Mute | `/ch/NN/mix/on` (inverted: 0 = muted), lamp follows console |
 | Solo | `/-stat/solosw/NN` |
 | Select | `/-stat/selidx` |

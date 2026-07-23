@@ -158,6 +158,13 @@ internal static class Program
         Check("fader move reaches the console as a float",
             mock.Get(X32Address.Fader(3)) is float f && Math.Abs(f - 0.75f) < 0.001f);
 
+        // The master fader (MCU channel 8) is send-only: it drives the main LR
+        // bus and must NOT be mistaken for strip 8's channel fader.
+        surface.MoveFader(McuProtocol.MasterFaderChannel, 12287);
+        await Settle();
+        Check("master fader routes to the main LR bus",
+            mock.Get(X32Address.MainFader) is float mf && Math.Abs(mf - 0.75f) < 0.001f);
+
         // --- console -> surface ---------------------------------------------
         surface.ClearLog();
         mock.Push(X32Address.Fader(1), 0.5f);
