@@ -106,6 +106,28 @@ enumerate devices without a logged-in user session.
 | Channel Left/Right | shift the window by 1 |
 | Scribble strips | channel name (upper), channel number (lower) |
 
+## Menu-bar app (macOS)
+
+`src/FaderBridge.MenuBar` wraps the bridge in a menu-bar app. It references the
+real `FaderBridge` project and hosts `BridgeHost` in-process, so it runs exactly
+the same code as the console app — the surface, banking, and OSC paths are
+unchanged. A menu-bar app is also a proper GUI login session, which is what
+CoreMIDI needs, so the "don't run over SSH" caveat stops applying.
+
+```bash
+dotnet run --project src/FaderBridge.MenuBar   # run from source
+scripts/build-app.sh                           # -> dist/FaderBridge.app
+```
+
+The menu shows whether the bridge is running, whether the X32 is replying (a
+`/info` probe every 3s), and the MIDI port in use, plus Start/Stop and Quit. The
+bundle sets `LSUIElement`, so it lives only in the menu bar — no Dock icon. It
+reads `config.json` from `Contents/MacOS/` inside the bundle.
+
+The app is **unsigned**: it runs when built locally, but Gatekeeper will block it
+if it is zipped, moved, or downloaded without code-signing. Launch-at-login and a
+theme-aware (light/dark) menu-bar icon are not yet done.
+
 ## Diagnostics
 
 Three, all runnable independently.

@@ -1,5 +1,6 @@
 bin/
 obj/
+dist/
 
 # Personal Claude Code settings; .claude/settings.json is the shared one.
 .claude/settings.local.json
