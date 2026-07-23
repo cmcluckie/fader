@@ -1,7 +1,7 @@
 {
   "x32IpAddress": "192.168.9.113",
   "x32Port": 10023,
-  "midiPortName": "PreSonus FP8",
+  "midiPortName": "PreSonus FP8 Port 1",
   "stripCount": 8,
   "x32ChannelCount": 32,
   "keepaliveSeconds": 9.0,
