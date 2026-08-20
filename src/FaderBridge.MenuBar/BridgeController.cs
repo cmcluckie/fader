@@ -1,3 +1,4 @@
+using Commons.Music.Midi;
 using Fader.Bridge;
 using Fader.Bridge.Midi;
 using Fader.Bridge.Osc;
@@ -7,7 +8,12 @@ namespace Fader.MenuBar;
 /// <summary>Immutable snapshot of what the tray menu needs to render.</summary>
 public sealed record BridgeStatus
 {
-    public bool Running { get; init; }
+    /// <summary>The user wants the bridge on (Start pressed).</summary>
+    public bool Active { get; init; }
+
+    /// <summary>The FaderPort is open and the bridge is actually running.</summary>
+    public bool Bridging { get; init; }
+
     public bool X32Reachable { get; init; }
     public string MidiPort { get; init; } = "—";
     public string X32Endpoint { get; init; } = "—";
@@ -15,42 +21,61 @@ public sealed record BridgeStatus
 }
 
 /// <summary>
-/// Owns the lifecycle of the real bridge (surface + console + host) so the tray
-/// can start and stop it, and polls the console with /info so the menu can show
-/// whether it is actually reachable rather than merely "running".
+/// Supervises the bridge so it survives either device being absent. Every 5s it
+/// re-checks the FaderPort: if it is missing it waits and retries; when it
+/// appears it opens it and starts bridging; if it is unplugged mid-run it tears
+/// down and goes back to waiting. The X32 needs no such reconnect - OSC is
+/// connectionless - so it is simply probed with /info each tick, and the
+/// bridge's own keepalive and periodic resync repopulate state when it returns.
 /// </summary>
 public sealed class BridgeController : IAsyncDisposable
 {
     private readonly string _configPath;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
+    private BridgeConfig? _config;
+    private IMidiAccess? _midiAccess;     // shared: presence checks + opening
     private FaderPortDevice? _surface;
     private X32Client? _client;
     private BridgeHost? _host;
-    private CancellationTokenSource? _cts;
-    private Timer? _probe;
+    private NowPlaying? _nowPlaying;
+    private CancellationTokenSource? _sessionCts;  // one bridging session
+    private Timer? _supervisor;
 
-    private int _stripCount = 8;
+    private bool _marqueeEnabled = true;
+
+    private volatile bool _active;
+    private bool _bridging;
     private long _lastInfoTicks;
+    private string _midiPort = "—";
+    private string _endpoint = "—";
+    private string? _error;
 
-    // Reachability is declared lost if no /info reply lands within this window.
-    private static readonly TimeSpan ProbeInterval = TimeSpan.FromSeconds(3);
-    private static readonly long ReachableTtlMs = 7000;
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(5);
+
+    // Reachability tolerates one missed reply at the 5s probe cadence.
+    private const long ReachableTtlMs = 11_000;
 
     public BridgeController(string configPath) => _configPath = configPath;
 
     public event Action<BridgeStatus>? StatusChanged;
 
-    public bool Running { get; private set; }
+    public bool Active => _active;
 
-    private string _midiPort = "—";
-    private string _endpoint = "—";
-    private string? _error;
+    public bool MarqueeEnabled => _marqueeEnabled;
+
+    /// <summary>Turn the now-playing marquee on the scribble strips on or off.</summary>
+    public void SetMarqueeEnabled(bool on)
+    {
+        _marqueeEnabled = on;
+        _nowPlaying?.SetEnabled(on);
+    }
 
     private void Publish() => StatusChanged?.Invoke(new BridgeStatus
     {
-        Running = Running,
-        X32Reachable = Running && Environment.TickCount64 - _lastInfoTicks < ReachableTtlMs,
+        Active = _active,
+        Bridging = _bridging,
+        X32Reachable = _bridging && Environment.TickCount64 - Interlocked.Read(ref _lastInfoTicks) < ReachableTtlMs,
         MidiPort = _midiPort,
         X32Endpoint = _endpoint,
         Error = _error,
@@ -61,17 +86,16 @@ public sealed class BridgeController : IAsyncDisposable
         await _gate.WaitAsync();
         try
         {
-            if (Running)
+            if (_active)
             {
                 return;
             }
 
             _error = null;
 
-            BridgeConfig config;
             try
             {
-                config = BridgeConfig.Load(_configPath);
+                _config = BridgeConfig.Load(_configPath);
             }
             catch (Exception ex)
             {
@@ -80,43 +104,23 @@ public sealed class BridgeController : IAsyncDisposable
                 return;
             }
 
-            _stripCount = config.StripCount;
-            _endpoint = $"{config.X32IpAddress}:{config.X32Port}";
+            _endpoint = $"{_config.X32IpAddress}:{_config.X32Port}";
 
-            var surface = new FaderPortDevice();
             try
             {
-                await surface.OpenAsync(config.MidiPortName);
+                _midiAccess = MidiBackend.Create(out _);
             }
             catch (Exception ex)
             {
-                _error = $"MIDI: {ex.Message}";
-                _midiPort = "not found";
-                await surface.DisposeAsync();
+                _error = $"MIDI backend: {ex.Message}";
                 Publish();
                 return;
             }
 
-            _midiPort = surface.InputName;
+            _active = true;
 
-            var cts = new CancellationTokenSource();
-            var client = new X32Client(
-                config.ResolvedAddress, config.X32Port,
-                TimeSpan.FromSeconds(config.KeepaliveSeconds));
-            client.MessageReceived += OnConsoleMessage;
-            client.Start(cts.Token);
-
-            var host = new BridgeHost(config, surface, client);
-            host.Start(cts.Token);
-
-            _surface = surface;
-            _client = client;
-            _host = host;
-            _cts = cts;
-            _lastInfoTicks = 0;
-            Running = true;
-
-            _probe = new Timer(_ => Probe(), null, TimeSpan.Zero, ProbeInterval);
+            await TryConnectAsync();                 // connect immediately if possible
+            _supervisor = new Timer(_ => _ = TickAsync(), null, Interval, Interval);
             Publish();
         }
         finally
@@ -127,48 +131,23 @@ public sealed class BridgeController : IAsyncDisposable
 
     public async Task StopAsync()
     {
+        _active = false;    // set first so an in-flight tick bails out
+
+        // Dispose the timer outside the gate: its callback returns synchronously
+        // (it only kicks off TickAsync), so this cannot deadlock on the gate.
+        if (_supervisor is not null)
+        {
+            await _supervisor.DisposeAsync();
+            _supervisor = null;
+        }
+
         await _gate.WaitAsync();
         try
         {
-            if (!Running)
-            {
-                return;
-            }
-
-            Running = false;
-
-            if (_probe is not null)
-            {
-                await _probe.DisposeAsync();
-                _probe = null;
-            }
-
-            _cts?.Cancel();
-
-            if (_client is not null)
-            {
-                _client.MessageReceived -= OnConsoleMessage;
-            }
-
-            // Blank the surface so it does not freeze on the last-known state.
-            try { _surface?.Reset(_stripCount); }
-            catch { /* best effort on the way down */ }
-
-            if (_client is not null)
-            {
-                await _client.DisposeAsync();
-            }
-
-            if (_surface is not null)
-            {
-                await _surface.DisposeAsync();
-            }
-
-            _cts?.Dispose();
-            _client = null;
-            _surface = null;
-            _host = null;
-            _cts = null;
+            await TeardownSessionAsync();
+            (_midiAccess as IDisposable)?.Dispose();
+            _midiAccess = null;
+            _config = null;
             _midiPort = "—";
             Publish();
         }
@@ -178,28 +157,166 @@ public sealed class BridgeController : IAsyncDisposable
         }
     }
 
-    private void OnConsoleMessage(OscMessage message)
+    /// <summary>The 5s heartbeat. Runs under the gate; skips if one is in flight.</summary>
+    private async Task TickAsync()
     {
-        // Any reply proves the path, but /info is the one we solicit and it is
-        // never suppressed or bank-scoped, so it is the cleanest liveness signal.
-        if (message.Address == "/info")
+        if (!await _gate.WaitAsync(0))
         {
-            _lastInfoTicks = Environment.TickCount64;
+            return;
+        }
+
+        try
+        {
+            if (!_active)
+            {
+                return;
+            }
+
+            if (!_bridging)
+            {
+                await TryConnectAsync();
+            }
+            else if (!SurfacePresent())
+            {
+                // FaderPort was unplugged or powered off while running.
+                await TeardownSessionAsync();
+                _midiPort = "waiting for FaderPort…";
+            }
+
+            if (_bridging)
+            {
+                try { _client?.Send(new OscMessage("/info")); }
+                catch { /* socket may be mid-teardown; next tick reflects it */ }
+            }
+
+            Publish();
+        }
+        finally
+        {
+            _gate.Release();
         }
     }
 
-    private void Probe()
+    /// <summary>Open the FaderPort and start a bridging session, if it is present.</summary>
+    private async Task TryConnectAsync()
     {
-        try
+        if (_config is null || _midiAccess is null)
         {
-            _client?.Send(new OscMessage("/info"));
-        }
-        catch
-        {
-            // Socket may be tearing down; the next Publish will reflect it.
+            return;
         }
 
-        Publish();
+        if (!SurfacePresent())
+        {
+            _midiPort = "waiting for FaderPort…";
+            return;
+        }
+
+        try
+        {
+            var surface = new FaderPortDevice();
+            await surface.OpenAsync(_config.MidiPortName, _midiAccess);
+
+            var session = new CancellationTokenSource();
+            var client = new X32Client(
+                _config.ResolvedAddress, _config.X32Port,
+                TimeSpan.FromSeconds(_config.KeepaliveSeconds));
+            client.MessageReceived += OnConsoleMessage;
+            client.Start(session.Token);
+
+            var host = new BridgeHost(_config, surface, client);
+            host.Transport += MediaKeys.Handle;   // transport buttons -> music player
+            host.Start(session.Token);
+
+            var nowPlaying = new NowPlaying(surface, host);
+            nowPlaying.SetEnabled(_marqueeEnabled);
+            nowPlaying.Start();
+
+            _surface = surface;
+            _client = client;
+            _host = host;
+            _nowPlaying = nowPlaying;
+            _sessionCts = session;
+            _midiPort = surface.InputName;
+            Interlocked.Exchange(ref _lastInfoTicks, 0);
+            _error = null;
+            _bridging = true;
+        }
+        catch (Exception ex)
+        {
+            // Opening raced a disconnect, or the name is wrong. Stay in waiting;
+            // the next tick retries.
+            _error = $"MIDI: {ex.Message}";
+            _midiPort = "waiting for FaderPort…";
+            await TeardownSessionAsync();
+        }
+    }
+
+    private async Task TeardownSessionAsync()
+    {
+        _bridging = false;
+
+        // Stop the marquee before the surface it writes to goes away.
+        _nowPlaying?.Dispose();
+        _nowPlaying = null;
+
+        _sessionCts?.Cancel();
+
+        if (_client is not null)
+        {
+            _client.MessageReceived -= OnConsoleMessage;
+        }
+
+        try { _surface?.Reset(_config?.StripCount ?? 8); }
+        catch { /* the surface may already be gone; best effort */ }
+
+        if (_client is not null)
+        {
+            await _client.DisposeAsync();
+        }
+
+        if (_surface is not null)
+        {
+            await _surface.DisposeAsync();
+        }
+
+        _sessionCts?.Dispose();
+        _surface = null;
+        _client = null;
+        _host = null;
+        _sessionCts = null;
+    }
+
+    /// <summary>Is the configured FaderPort currently enumerated on both ends?</summary>
+    private bool SurfacePresent()
+    {
+        if (_config is null || _midiAccess is null)
+        {
+            return false;
+        }
+
+        var filter = _config.MidiPortName;
+        return Matches(_midiAccess.Inputs) && Matches(_midiAccess.Outputs);
+
+        bool Matches(IEnumerable<IMidiPortDetails> ports)
+        {
+            var list = ports.ToList();
+            // Exact match wins; otherwise an unambiguous substring - the same
+            // rule FaderPortDevice.OpenAsync uses to pick the port.
+            if (list.Any(p => string.Equals(p.Name, filter, StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+
+            return list.Count(p => p.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)) == 1;
+        }
+    }
+
+    private void OnConsoleMessage(OscMessage message)
+    {
+        if (message.Address == "/info")
+        {
+            Interlocked.Exchange(ref _lastInfoTicks, Environment.TickCount64);
+        }
     }
 
     public async ValueTask DisposeAsync()

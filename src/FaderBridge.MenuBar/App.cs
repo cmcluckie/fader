@@ -20,6 +20,7 @@ public sealed class App : Application
     private NativeMenuItem? _x32Item;
     private NativeMenuItem? _midiItem;
     private NativeMenuItem? _startStopItem;
+    private NativeMenuItem? _marqueeItem;
 
     // No XAML; everything is built in code.
     public override void Initialize()
@@ -39,6 +40,13 @@ public sealed class App : Application
         _startStopItem = new NativeMenuItem("Stop");
         _startStopItem.Click += OnStartStopClick;
 
+        _marqueeItem = new NativeMenuItem("Scroll now-playing on displays")
+        {
+            ToggleType = NativeMenuItemToggleType.CheckBox,
+            IsChecked = _controller.MarqueeEnabled,
+        };
+        _marqueeItem.Click += OnMarqueeClick;
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -51,6 +59,7 @@ public sealed class App : Application
                 _midiItem,
                 new NativeMenuItemSeparator(),
                 _startStopItem,
+                _marqueeItem,
                 new NativeMenuItemSeparator(),
                 quitItem,
             },
@@ -78,26 +87,29 @@ public sealed class App : Application
 
     private void Render(BridgeStatus status)
     {
-        if (status.Error is { } error)
+        _bridgeItem!.Header = status switch
         {
-            _bridgeItem!.Header = $"⚠ {error}";
-        }
-        else
-        {
-            _bridgeItem!.Header = status.Running ? "● Bridge running" : "○ Bridge stopped";
-        }
+            { Error: { } error } => $"⚠ {error}",
+            { Active: false } => "○ Bridge stopped",
+            { Bridging: false } => "◍ Waiting for FaderPort…",
+            _ => "● Bridge running",
+        };
 
-        _x32Item!.Header = status.Running
+        _x32Item!.Header = status.Bridging
             ? $"X32 {status.X32Endpoint} — {(status.X32Reachable ? "reachable" : "no reply")}"
             : $"X32 {status.X32Endpoint}";
 
         _midiItem!.Header = $"MIDI: {status.MidiPort}";
 
-        _startStopItem!.Header = status.Running ? "Stop" : "Start";
+        _startStopItem!.Header = status.Active ? "Stop" : "Start";
 
-        _tray!.ToolTipText = status.Running
-            ? $"FaderPort ⇄ X32 — {(status.X32Reachable ? "connected" : "no reply")}"
-            : "FaderPort ⇄ X32 — stopped";
+        _tray!.ToolTipText = status switch
+        {
+            { Active: false } => "FaderPort ⇄ X32 — stopped",
+            { Bridging: false } => "FaderPort ⇄ X32 — waiting for FaderPort",
+            { X32Reachable: true } => "FaderPort ⇄ X32 — connected",
+            _ => "FaderPort ⇄ X32 — X32 not replying",
+        };
     }
 
     private async void OnStartStopClick(object? sender, EventArgs e)
@@ -107,7 +119,7 @@ public sealed class App : Application
             return;
         }
 
-        if (_controller.Running)
+        if (_controller.Active)
         {
             await _controller.StopAsync();
         }
@@ -115,6 +127,18 @@ public sealed class App : Application
         {
             await _controller.StartAsync();
         }
+    }
+
+    private void OnMarqueeClick(object? sender, EventArgs e)
+    {
+        if (_controller is null || _marqueeItem is null)
+        {
+            return;
+        }
+
+        var on = !_controller.MarqueeEnabled;
+        _controller.SetMarqueeEnabled(on);
+        _marqueeItem.IsChecked = on;
     }
 
     private async void OnQuitClick(object? sender, EventArgs e)

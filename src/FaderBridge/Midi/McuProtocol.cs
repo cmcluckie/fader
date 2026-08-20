@@ -88,6 +88,33 @@ public static class McuProtocol
         return message.ToArray();
     }
 
+    /// <summary>Characters in one scribble row across all eight strips.</summary>
+    public const int RowWidth = 8 * ScribbleCellWidth;
+
+    /// <summary>
+    /// Write a whole row (all eight 7-char cells) in a single SysEx, at the row's
+    /// base offset. A scrolling marquee would otherwise need eight messages per
+    /// frame; this keeps it to one.
+    /// </summary>
+    public static byte[] ScribbleLine(int row, string text)
+    {
+        var offset = row == 0 ? 0 : LowerRowOffset;
+        var line = Fit(text, RowWidth);
+
+        var message = new List<byte>(8 + RowWidth)
+        {
+            0xF0, 0x00, 0x00, 0x66, 0x14, 0x12, (byte)offset,
+        };
+
+        foreach (var c in line)
+        {
+            message.Add((byte)(c is >= ' ' and <= '~' ? c : ' '));
+        }
+
+        message.Add(0xF7);
+        return message.ToArray();
+    }
+
     private static string Fit(string text, int width)
     {
         text ??= string.Empty;

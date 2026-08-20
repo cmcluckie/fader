@@ -19,6 +19,38 @@ public static class X32Address
     /// <summary>Main LR stereo bus fader (the console's master output level).</summary>
     public const string MainFader = "/main/st/mix/fader";
 
+    /// <summary>Main LR stereo bus name.</summary>
+    public const string MainName = "/main/st/config/name";
+
+    /// <summary>Mix bus fader (buses are 1-based, 1-16).</summary>
+    public static string BusFader(int bus) => $"/bus/{bus:D2}/mix/fader";
+
+    /// <summary>Mix bus name.</summary>
+    public static string BusName(int bus) => $"/bus/{bus:D2}/config/name";
+
+    /// <summary>
+    /// Parse "/bus/07/mix/fader" into (7, "mix/fader"). Returns false for any
+    /// address that is not a /bus/NN/ parameter.
+    /// </summary>
+    public static bool TryParseBus(string address, out int bus, out string parameter)
+    {
+        bus = 0;
+        parameter = string.Empty;
+
+        if (address.Length < 9 || !address.StartsWith("/bus/", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!int.TryParse(address.AsSpan(5, 2), out bus) || address[7] != '/')
+        {
+            return false;
+        }
+
+        parameter = address[8..];
+        return true;
+    }
+
     public static string Color(int channel) => $"/ch/{channel:D2}/config/color";
 
     /// <summary>Solo is global and 1-based across the console's whole channel list.</summary>

@@ -98,7 +98,8 @@ enumerate devices without a logged-in user session.
 | Control | Does |
 |---|---|
 | Faders | `/ch/NN/mix/fader`, motorised both ways |
-| Master fader | `/main/st/mix/fader` (Session Navigator encoder in Master mode; send-only) |
+| Master layer | **Record (●)** flips the 8 faders to Main LR (strip 1) + mix buses 1–7 (lamp lit); press again for channels |
+| Transport | ◀◀/▶▶ = previous/next track, ▶ = play/pause, ■ = pause on the Mac's music player (Apple Music / Spotify) |
 | Mute | `/ch/NN/mix/on` (inverted: 0 = muted), lamp follows console |
 | Solo | `/-stat/solosw/NN` |
 | Select | `/-stat/selidx` |
@@ -216,6 +217,24 @@ never engages.
 - **Scribble-strip colour** is not implemented (it was flagged as a stretch
   goal). The X32 exposes `/ch/NN/config/color`; the FaderPort's colour protocol
   isn't documented by PreSonus.
+## Master / bus layer
+
+The console's master and mix-bus levels live on a second **layer** of the eight
+motor faders, instead of the FaderPort's master encoder. `MidiMonitor` showed
+that encoder is not an absolute fader — it rests at `0` and only rises while
+turning, with no direction — so routing it to `/main` drove the master to zero
+at rest. Real motor faders are a far better fit.
+
+The FaderPort's own Master button sends no MIDI (nor does the Session Navigator
+encoder's push), so the layer is toggled by the **Record (●)** button instead —
+a real button gives an instant, lamp-lit switch. Press it to put Main LR on
+strip 1 and mix buses 1–7 on strips 2–8 (Record lamp lit); press again for
+channels. Mute/Solo/Select stay channel-only. Buses 8–16 are not surfaced yet.
+
+The transport buttons, which an X32 has no use for, drive the Mac's music player
+instead (Apple Music, or Spotify if it is running): ◀◀/▶▶ previous/next track,
+▶ play/pause, ■ pause. This uses AppleScript, so macOS asks for Automation
+permission the first time.
 
 ## Library choice
 

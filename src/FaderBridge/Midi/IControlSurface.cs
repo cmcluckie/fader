@@ -21,4 +21,7 @@ public interface IControlSurface
     void SetLed(int note, bool on);
 
     void SetScribble(int strip, int row, string text);
+
+    /// <summary>Write a whole row (all strips) at once - for a scrolling marquee.</summary>
+    void SetScribbleLine(int row, string text);
 }

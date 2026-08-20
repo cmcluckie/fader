@@ -35,6 +35,13 @@ public sealed class FakeSurface : IControlSurface
         lock (_lock) { Scribbles[(strip, row)] = text; }
     }
 
+    public Dictionary<int, string> ScribbleLines { get; } = new();
+
+    public void SetScribbleLine(int row, string text)
+    {
+        lock (_lock) { ScribbleLines[row] = text; }
+    }
+
     // --- inbound: pretend the user did something physical -------------------
 
     public void MoveFader(int strip, int value14) => FaderMoved?.Invoke(strip, value14);

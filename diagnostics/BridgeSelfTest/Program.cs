@@ -115,6 +115,13 @@ internal static class Program
         Check("non-ASCII replaced with space", accented.Skip(7).Take(7).All(b => b is >= 0x20 and <= 0x7E));
 
         Check("decodes back", McuProtocol.TryDecodeScribble(sysex)?.Trim() == "Kick");
+
+        // Whole-row write (used by the now-playing marquee): one SysEx, 56 chars.
+        var line = McuProtocol.ScribbleLine(0, "Hello");
+        Check("scribble line header + offset 0",
+            Convert.ToHexString(line[..7]) == "F0000066141200");
+        Check("scribble line is 56 chars wide", line.Length == 8 + McuProtocol.RowWidth);
+        Check("scribble line row 1 is offset 56", McuProtocol.ScribbleLine(1, "x")[6] == 56);
     }
 
     // ------------------------------------------------------------ integration
@@ -158,12 +165,79 @@ internal static class Program
         Check("fader move reaches the console as a float",
             mock.Get(X32Address.Fader(3)) is float f && Math.Abs(f - 0.75f) < 0.001f);
 
-        // The master fader (MCU channel 8) is send-only: it drives the main LR
-        // bus and must NOT be mistaken for strip 8's channel fader.
+        // The master encoder (channel-8 pitch bend) is inert: it must not route
+        // its own value nor flip layers - the Record button does that.
         surface.MoveFader(McuProtocol.MasterFaderChannel, 12287);
         await Settle();
-        Check("master fader routes to the main LR bus",
-            mock.Get(X32Address.MainFader) is float mf && Math.Abs(mf - 0.75f) < 0.001f);
+        surface.MoveFader(0, 8000);
+        await Settle();
+        Check("the master encoder stays inert - strip 1 still drives its channel, not the main bus",
+            mock.Get(X32Address.MainFader) is null &&
+            mock.Get(X32Address.Fader(1)) is float);
+
+        // Record flips the eight faders to the Master layer: strip 0 = main LR,
+        // strips 1-7 = mix buses 1-7, and the Record lamp lights.
+        surface.PressButton(McuProtocol.Record);
+        await Settle();
+        Check("Record lights its lamp when entering the Master layer",
+            surface.Leds.GetValueOrDefault(McuProtocol.Record) is true);
+
+        surface.MoveFader(0, 16383);
+        await Settle();
+        Check("on the Master layer, strip 1 drives the main LR bus",
+            mock.Get(X32Address.MainFader) is 1f);
+
+        surface.MoveFader(2, 12287);
+        await Settle();
+        Check("on the Master layer, strip 3 drives mix bus 2",
+            mock.Get(X32Address.BusFader(2)) is float b && Math.Abs(b - 0.75f) < 0.001f);
+
+        surface.ClearLog();
+        mock.Push(X32Address.BusFader(3), 0.4f);
+        await Settle();
+        Check("a bus change from the console drives its strip's motor",
+            surface.MotorPositions.GetValueOrDefault(3) == FaderScaling.X32ToMcu(0.4f));
+
+        // Record again toggles back to the channel layer and darkens the lamp.
+        surface.PressButton(McuProtocol.Record);
+        await Settle();
+        Check("Record darkens its lamp when leaving the Master layer",
+            surface.Leds.GetValueOrDefault(McuProtocol.Record) is false);
+
+        surface.MoveFader(1, 0);
+        await Settle();
+        Check("back on the Channel layer, strip 2 drives its channel again, not a bus",
+            mock.Get(X32Address.Fader(2)) is 0f);
+
+        // --- transport buttons -> media commands -----------------------------
+        TransportCommand? media = null;
+        bridge.Transport += c => media = c;
+
+        surface.PressButton(McuProtocol.FastForward);
+        await Settle();
+        Check("Fast-Forward raises a Next command", media == TransportCommand.Next);
+
+        surface.PressButton(McuProtocol.Rewind);
+        await Settle();
+        Check("Rewind raises a Previous command", media == TransportCommand.Previous);
+
+        surface.PressButton(McuProtocol.Play);
+        await Settle();
+        Check("Play raises a Play/Pause command", media == TransportCommand.PlayPause);
+
+        // --- display override (a marquee owns the scribble strips) -----------
+        // Channel 5 (strip 4 at bank offset 0); its name is not asserted elsewhere.
+        bridge.SetDisplayOverride(true);
+        mock.Push(X32Address.Name(5), "OVERRIDDEN");
+        await Settle();
+        Check("bridge withholds its labels while overridden",
+            surface.Scribbles.GetValueOrDefault((4, 0)) != "OVERRIDDEN");
+
+        bridge.SetDisplayOverride(false);
+        await Settle();
+        Check("releasing the override repaints the labels",
+            surface.Scribbles.GetValueOrDefault((4, 0)) == "OVERRIDDEN");
+
 
         // --- console -> surface ---------------------------------------------
         surface.ClearLog();

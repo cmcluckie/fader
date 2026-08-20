@@ -21,10 +21,15 @@ public sealed class FaderPortDevice : IControlSurface, IAsyncDisposable
     public string InputName { get; private set; } = "(none)";
     public string OutputName { get; private set; } = "(none)";
 
-    public async Task OpenAsync(string portNameFilter)
+    public async Task OpenAsync(string portNameFilter, IMidiAccess? access = null)
     {
-        var access = MidiBackend.Create(out var backend);
-        Log?.Invoke($"MIDI backend: {backend}");
+        // The caller may pass a shared access (e.g. a supervisor that also polls
+        // for the device's presence) so we do not create a second MIDI client.
+        if (access is null)
+        {
+            access = MidiBackend.Create(out var backend);
+            Log?.Invoke($"MIDI backend: {backend}");
+        }
 
         var inputPort = Match(access.Inputs.ToList(), portNameFilter, "input");
         var outputPort = Match(access.Outputs.ToList(), portNameFilter, "output");
@@ -123,6 +128,9 @@ public sealed class FaderPortDevice : IControlSurface, IAsyncDisposable
 
     public void SetScribble(int strip, int row, string text) =>
         Send(McuProtocol.ScribbleText(strip, row, text));
+
+    public void SetScribbleLine(int row, string text) =>
+        Send(McuProtocol.ScribbleLine(row, text));
 
     /// <summary>Darken every LED and blank both scribble rows, for a clean exit.</summary>
     public void Reset(int stripCount)
