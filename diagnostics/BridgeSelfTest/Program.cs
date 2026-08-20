@@ -28,6 +28,7 @@ internal static class Program
         OscEncodingIsSpecCorrect();
         ScribbleSysExLayout();
         FeedbackPersistence();
+        RtaAndGeq();
         await BridgeBehaviour();
         await SilentSceneRecallRecovery();
 
@@ -165,6 +166,43 @@ internal static class Program
         {
             try { Directory.Delete(dir, recursive: true); } catch { /* temp */ }
         }
+    }
+
+    private static void RtaAndGeq()
+    {
+        Section("X32 RTA + GEQ (verified paths)");
+
+        // GEQ par <-> dB (0.5 = flat, +/-15 dB).
+        Check("GEQ 0.5 par is 0 dB", Math.Abs(X32Geq.ParToDb(0.5f)) < 0.001f);
+        Check("GEQ -6 dB is 0.3 par", Math.Abs(X32Geq.DbToPar(-6f) - 0.3f) < 0.001f);
+        Check("GEQ dB round-trips", Math.Abs(X32Geq.ParToDb(X32Geq.DbToPar(-9f)) + 9f) < 0.001f);
+        Check("GEQ clamps to +/-15 dB", X32Geq.DbToPar(-30f) == 0f && X32Geq.DbToPar(30f) == 1f);
+
+        Check("1000 Hz maps to band 18 (1 kHz)", X32Geq.NearestBand(1000f) == 18);
+        Check("2100 Hz maps to band 21 (2 kHz)", X32Geq.NearestBand(2100f) == 21);
+        Check("band address is /fx/5/par/07", X32Geq.Band(5, 7) == "/fx/5/par/07");
+        Check("GEQ has 31 bands", X32Geq.BandHz.Length == 31);
+
+        // RTA blob: int32 word-count, then 100 little-endian int16 (dB = v/256).
+        var blob = new byte[4 + 100 * 2];
+        BitConverter.GetBytes(50).CopyTo(blob, 0);
+        BitConverter.GetBytes((short)(-20 * 256)).CopyTo(blob, 4 + 50 * 2);
+        var frame = X32Rta.Decode(blob);
+        Check("RTA decodes 100 bands", frame is { Length: 100 });
+        Check("RTA scales dB = v/256", frame is not null && Math.Abs(frame[50] + 20f) < 0.01f);
+        Check("RTA short blob rejected", X32Rta.Decode(new byte[8]) is null);
+
+        Check("RTA band 0 is ~20 Hz", Math.Abs(X32Rta.BandHz(0) - 20f) < 0.5f);
+        Check("RTA band 99 is ~20 kHz", Math.Abs(X32Rta.BandHz(99) - 20000f) < 50f);
+        Check("RTA band centres ascend",
+            X32Rta.BandHz(10) < X32Rta.BandHz(50) && X32Rta.BandHz(50) < X32Rta.BandHz(90));
+
+        // Headamp (§7 trap): local input source-1 = headamp index.
+        Check("ch source 3 -> headamp index 2", X32Headamp.HeadampForSource(3) == 2);
+        Check("headamp address is /headamp/002/gain", X32Headamp.Gain(2) == "/headamp/002/gain");
+        Check("non-local source has no local headamp", X32Headamp.HeadampForSource(40) == -1);
+        Check("headamp 0.5833 par is ~+30 dB", Math.Abs(X32Headamp.ParToDb(0.5833f) - 30f) < 0.1f);
+        Check("headamp dB round-trips", Math.Abs(X32Headamp.ParToDb(X32Headamp.DbToPar(24f)) - 24f) < 0.01f);
     }
 
     // ------------------------------------------------------------ integration
