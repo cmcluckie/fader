@@ -1,11 +1,18 @@
-# FaderPort 8 ↔ X32 Rack OSC Bridge
+# Fader — X32 control + feedback suppression
 
-Bridge between a PreSonus FaderPort 8 (USB MIDI, Mackie Control) and a Behringer
-X32 Rack (OSC over UDP 10023). Bidirectional: the surface drives the console, and
-the console drives the motors, LEDs and scribble strips back.
+One platform for a live rig, run from a single macOS menu-bar app:
 
-Runs on **macOS and Windows**. The MIDI backend is selected at startup —
-CoreMIDI on macOS, WinMM on Windows — so the same build works on both.
+- **A FaderPort ↔ X32 control bridge** (the first half of this document) — maps a
+  PreSonus FaderPort 8 (USB MIDI, Mackie Control) to a Behringer X32 Rack (OSC
+  over UDP 10023). Bidirectional: the surface drives the console, and the console
+  drives the motors, LEDs and scribble strips back. Runs on **macOS and Windows**
+  (CoreMIDI or WinMM, selected at startup).
+- **A feedback-suppression engine** ([Feedback suppression](#feedback-suppression))
+  — a headless JUCE audio process the app supervises, notching microphone
+  feedback, plus an X32 RTA-assisted ring-out for the room. macOS only.
+
+The two-part shape (why a separate audio process, not managed DSP) is recorded in
+[docs/adr/0001](docs/adr/0001-feedback-engine-architecture.md).
 
 ## Prerequisites
 
@@ -121,17 +128,113 @@ scripts/build-app.sh                           # -> dist/FaderBridge.app
 ```
 
 The menu shows whether the bridge is running, whether the X32 is replying (a
-`/info` probe every 3s), and the MIDI port in use, plus Start/Stop and Quit. The
-bundle sets `LSUIElement`, so it lives only in the menu bar — no Dock icon. It
-reads `config.json` from `Contents/MacOS/` inside the bundle.
+`/info` probe every 5s), and the MIDI port in use, plus Start/Stop and Quit — and,
+if the engine is built, the feedback controls. It also **reconnects**: if the
+FaderPort is unplugged it waits and retries every 5s, reattaching when it
+returns. The bundle sets `LSUIElement`, so it lives only in the menu bar — no
+Dock icon. It reads `config.json` from `Contents/MacOS/` inside the bundle.
 
 The app is **unsigned**: it runs when built locally, but Gatekeeper will block it
 if it is zipped, moved, or downloaded without code-signing. Launch-at-login and a
 theme-aware (light/dark) menu-bar icon are not yet done.
 
+## Feedback suppression
+
+A two-channel acoustic feedback suppressor for the lead and backup vocal mics,
+plus a system ring-out that drives the X32's own GEQ. The DSP (a spectral
+detector and a notch bank, ported verbatim from the FeedbackKiller plugin) runs
+in a **separate headless process**, `fk-engine`; the menu-bar app supervises it
+and talks to it over OSC on loopback. See
+[docs/adr/0001](docs/adr/0001-feedback-engine-architecture.md) for why, and
+[docs/fk-osc-interface.md](docs/fk-osc-interface.md) for the wire contract.
+
+The audio path has **no managed code anywhere near it** — a GC pause in an audio
+callback produces the kind of dropout that only ever happens on stage. That
+constraint is the whole reason for the split.
+
+### Building the engine
+
+The engine needs CMake and a C++ toolchain; the first build fetches JUCE and
+takes a while.
+
+```bash
+brew install cmake                                   # if not already present
+cd engine
+cmake -B build -G "Unix Makefiles"                   # or -G Xcode with full Xcode
+cmake --build build --config Release
+# -> engine/build/fk-engine_artefacts/Release/fk-engine
+```
+
+`scripts/build-app.sh` copies that binary into `FaderBridge.app` so the tray app
+finds it; otherwise the app resolves it via `$FK_ENGINE_PATH` or the dev build
+path, and shows "Feedback: engine not built" if it can't.
+
+### The signal path and the Console routing change
+
+The engine inserts into the Apollo return path, after the UAD chain:
+
+```
+X32 XLR 3/4 (mics) → card out → ADAT → Apollo → UAD chain (post-insert)
+   → fk-engine (Core Audio, ADAT 3/4 in) → notch → ADAT 3/4 out
+   → X32 card in → X32 channels 3/4
+```
+
+For this to work you must **disable the Console hardware direct-out** on ADAT 3
+and 4 (set their output destination to *none*). If you leave the direct-out
+running you will hear the un-notched vocal doubling with the engine's return.
+Confirm ADAT 3/4 are still **post-insert** so the engine receives the vocal after
+the 610-B and 1176. In the engine's audio settings choose the Apollo and enable
+**ADAT 3 and 4 for input and output**, buffer **32 or 64 samples** — anything
+larger is wasted latency (analysis runs on a ring buffer beside the signal, so
+audio latency is only the buffer).
+
+### Keep a bypass path
+
+The Mac is now in your audio path, so before you trust it live, wire a fallback:
+send the same mics to a **spare pair of ADAT channels** with a Console
+direct-out, land them on **two muted X32 channels**, and keep those in reach. If
+the laptop sleeps or the engine dies, unmute and carry on with the clean vocal —
+one unmute from recovery. The app also never fails to silence *quietly*: if the
+engine stops, the menu reads **"engine down — audio bypassed"**.
+
+### Modes and the workflow
+
+`OFF` analyses and displays but passes audio untouched. `ASSIST` detects and
+logs but never cuts — **this is the default, and where you start.** `AUTO`
+deploys notches. Pick the mode from the tray's **Feedback mode** submenu.
+
+1. Run **ASSIST** for a full rehearsal. Every detection is logged to
+   `~/Documents/FeedbackKiller/logs/feedback-log-*.csv`
+   (`seconds,channel,frequency_hz,level_db,applied`).
+2. Read the log against what actually rang. If the frequencies match, the
+   detector is tuned for your room; if it flagged you *singing*, raise
+   `prominenceDb` or `persistFrames` (via `/fk/param`).
+3. Ring-out: **AUTO**, push the mains until things ring, let it find them, then
+   **Lock all feedback filters** (tray). Locked filters are persisted to
+   `~/Documents/FeedbackKiller/notches.json` and **replayed on every restart** —
+   they survive the engine, or the app, dying.
+4. For the show, leave it in **AUTO** with the locked filters in place; anything
+   new it finds is a live filter that releases on its own.
+
+### System ring-out (the X32 side)
+
+The engine handles the *microphones*; the X32's own RTA + GEQ handle the
+*system*. The 31-band GEQs on insert FX slots 5–8 are individually addressable,
+and the console's 100-band RTA is readable over OSC, so the app can push the
+mains, read the RTA, and cut the offending GEQ band — a second tool for a
+different problem. Set the RTA source to the main mix and insert a GEQ on the
+main LR for this. The paths are verified against the console; **cutting during a
+real ring needs the PA up**, so that step is done at the rig.
+
+Verify the RTA/GEQ path (read-only, no console changes) with:
+
+```bash
+dotnet run --project diagnostics/RingOut -- <x32-ip> 5
+```
+
 ## Diagnostics
 
-Three, all runnable independently.
+Five, all runnable independently.
 
 **Bridge self-test** — no hardware needed. Runs the real bridge against a mock
 console over a real UDP socket:
@@ -169,18 +272,52 @@ to — there is no audio path.
 dotnet run --project diagnostics/OscPing -- <x32-ip>
 ```
 
+**Feedback engine smoke test** — spawns `fk-engine` via the supervisor and proves
+the whole C# ↔ engine path: telemetry flows, a placed notch round-trips, and a
+locked notch survives an engine restart. No mics needed (it opens the default
+audio device):
+
+```bash
+dotnet run --project diagnostics/FkPing
+```
+
+**X32 ring-out path check** — read-only: subscribes to the RTA, reports the peak
+band mapped to a GEQ band, and reads GEQ bands to confirm they're flat. Changes
+nothing on the console:
+
+```bash
+dotnet run --project diagnostics/RingOut -- <x32-ip> 5
+```
+
 ## What's verified, and what isn't
 
-**Verified (49/49 self-test assertions, on real UDP):** OSC encoding is
+**Verified (89/89 self-test assertions, on real UDP):** OSC encoding is
 byte-for-byte spec-correct; fader scaling round-trips exactly with no creep;
 MCU scribble SysEx layout and offsets; fader-touch gating suppresses motor
 updates and resyncs on release; echo suppression stops the console's echo of our
 own move re-driving the motor; the inverted mute sense in both directions; bank
 windowing, including clamping at both ends and ignoring off-bank channels;
-recovery from a silent scene recall, without stomping a held fader.
+recovery from a silent scene recall, without stomping a held fader; the
+master/bus layer routing and the Record-lamp toggle; transport→media commands;
+the whole-row scribble marquee and its display-override gate; feedback
+locked-notch persistence and the CSV log format; and the RTA blob decode, GEQ
+par↔dB maths, nearest-band lookup, and the headamp source mapping.
 
 The suite was mutation-tested — injecting a non-inverted mute and a disabled
 touch gate produced exactly the expected failures, so the assertions have teeth.
+
+**Verified against the live X32 Rack (firmware 2.07).** OSC read *and* write
+(`/info`, `/ch/NN/mix/fader`, `/main/st/mix/fader`); the CoreMIDI port name
+(`PreSonus FP8 Port 1`); the console driving the surface (mute lamps, banking);
+the RTA stream (`/batchsubscribe … /meters/15`, 100×int16, `dB = v/256`) — note
+the batchsubscribe alias must start with `/` or the reply is rejected; the GEQ on
+insert slots 5–7 reading flat (`/fx/N/par/NN`, 0.5 = 0 dB); and the headamp trap
+(`/ch/03/config/source` = 3 → `/headamp/002/gain`).
+
+**Verified end-to-end (C# ↔ engine, default audio device).** `fk-engine` builds
+with JUCE, passes audio through the detector untouched, and the supervisor round-
+trips control and telemetry, persists locked notches, and replays them across a
+restart. Proven by `FkPing`.
 
 **Verified against a real FaderPort 8 (Windows / WinMM).** The entire outbound
 path works — everything the bridge sends *to* the surface:
@@ -203,10 +340,21 @@ assumptions but cannot prove the assumptions match the devices. Outstanding:
 | Fader touch reports on notes 104–111 | Medium | `MidiMonitor` — no `TOUCH DOWN` when gripping a fader |
 | `/-stat/solosw/NN` and `/-stat/selidx` on Rack firmware | Low-medium | solo/select do nothing; `OscPing` can probe them |
 | `/ch/NN/...` fader, mix/on, config/name | Low | `OscPing` already exercises fader |
+| Surface → console direction on this Mac | Low | move fader 1, watch channel 1 move — not yet eyes-verified here |
+| **Feedback: Apollo/ADAT audio path & channel mapping** | High | no signal reaches the engine, or the wrong ADAT pair is used |
+| **Feedback: detection tuning for your room** | Medium | ASSIST log flags you *singing*, or misses real rings |
+| **Feedback: RTA band-centre frequencies** | Low-med | a ring-out cut lands on a neighbouring 1/3-octave band |
+| **Feedback: GEQ ±15 dB endpoints** | Low | a cut lands at a slightly wrong depth |
+| **Feedback: cutting GEQ / notching during a real ring** | — | needs the PA up; confirm at soundcheck |
 
 Touch reporting matters more than it looks: fader-touch gating is what stops
 incoming OSC fighting your hand. If those notes are wrong, the gating silently
 never engages.
+
+The feedback rows are the deliverable-5 list: everything the engine does was
+proven on the bench against the default audio device and the live console, but
+nothing was run against the Apollo, real mics, or a PA. The `RingOut` and
+`FkPing` diagnostics are the tools to check each at the rig.
 
 ## Open decisions
 
@@ -217,6 +365,7 @@ never engages.
 - **Scribble-strip colour** is not implemented (it was flagged as a stretch
   goal). The X32 exposes `/ch/NN/config/color`; the FaderPort's colour protocol
   isn't documented by PreSonus.
+
 ## Master / bus layer
 
 The console's master and mix-bus levels live on a second **layer** of the eight
@@ -258,24 +407,40 @@ and `midiOutPrepareHeader`, so this works on Windows.
 ## Layout
 
 ```
-src/FaderBridge/
-  Program.cs              startup, config load, graceful shutdown
-  BridgeConfig.cs         JSON config + validation
-  Bridge/BridgeHost.cs    both directions, touch gating, banking
-  Bridge/FaderScaling.cs  MCU 14-bit <-> X32 float  (tune the taper here)
-  Midi/McuProtocol.cs     note map, motor/LED/scribble message construction
-  Midi/MidiStreamParser.cs
-  Midi/FaderPortDevice.cs MIDI in/out
-  Midi/IControlSurface.cs so the bridge is testable without hardware
-  Osc/OscMessage.cs       hand-rolled OSC 1.0 codec, incl. bundles
-  Osc/X32Client.cs        UDP + /xremote keepalive
-  Osc/X32Address.cs       address construction and parsing
+src/FaderBridge/                the bridge + feedback library
+  Program.cs                    startup, config load, graceful shutdown
+  Bridge/BridgeHost.cs          both directions, touch gating, banking, layers
+  Bridge/FaderScaling.cs        MCU 14-bit <-> X32 float  (tune the taper here)
+  Midi/McuProtocol.cs           note map, motor/LED/scribble/marquee construction
+  Midi/FaderPortDevice.cs       MIDI in/out
+  Osc/OscMessage.cs             hand-rolled OSC 1.0 codec, incl. bundles + blobs
+  Osc/X32Client.cs              UDP + /xremote keepalive
+  Osc/X32Address.cs             channel/bus/main address construction
+  Osc/X32Rta.cs                 100-band RTA subscribe + decode
+  Osc/X32Geq.cs                 31-band GEQ addressing + par<->dB
+  Osc/X32Headamp.cs             the headamp/source trap (§7)
+  Osc/RingOutSession.cs         RTA peak -> GEQ cut
+  Feedback/FkEngineClient.cs    loopback OSC to fk-engine
+  Feedback/EngineSupervisor.cs  spawn / health-check / restart
+  Feedback/FeedbackController.cs replay, persistence, logging
+  Feedback/FkNotchStore.cs      locked notches (JSON)
+  Feedback/FkEventLog.cs        detections (CSV)
+src/FaderBridge.MenuBar/        the macOS menu-bar app (Avalonia tray)
+engine/                         the headless C++ audio engine (JUCE)
+  Source/FeedbackDetector.h     spectral detector (ported verbatim)
+  Source/NotchBank.h            biquad notch bank (ported verbatim)
+  Source/AudioEngine.h          processBlock as a Core Audio callback
+  Source/EngineMain.cpp         device + OSC wiring, headless
 diagnostics/
-  BridgeSelfTest/  MidiMonitor/  OscPing/
+  BridgeSelfTest/  MidiMonitor/  OscPing/  FkPing/  RingOut/
+docs/
+  adr/0001-...                  architecture decision record
+  fk-osc-interface.md           the engine <-> app OSC contract
 ```
 
-The diagnostics link the bridge's real source files rather than copying them, so
-a clean diagnostic run means the bridge's own code is what passed.
+The C# diagnostics reference the bridge's real source, so a clean diagnostic run
+means the bridge's own code is what passed. The engine's DSP headers are
+byte-for-byte copies of the FeedbackKiller originals (same SHA).
 
 ## Tuning
 
