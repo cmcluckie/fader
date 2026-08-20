@@ -1,8 +1,10 @@
+using System.Net;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Fader.Bridge;
 using Fader.Bridge.Feedback;
 
 namespace Fader.MenuBar;
@@ -27,12 +29,15 @@ public sealed class App : Application
     // locked-notch persistence and CSV logging owned here (Phases 1-2).
     private FeedbackController? _feedback;
     private string? _enginePath;
+    private string _configPath = "";
     private FkMode _fkMode = FkMode.Assist;
     private NativeMenuItem? _fkStatusItem;
     private NativeMenuItem? _fkEngineItem;
     private NativeMenuItem? _fkOff;
     private NativeMenuItem? _fkAssist;
     private NativeMenuItem? _fkAuto;
+    private NativeMenuItem? _fkSpectrumItem;
+    private SpectrumWindow? _spectrumWindow;
 
     // No XAML; everything is built in code.
     public override void Initialize()
@@ -41,8 +46,8 @@ public sealed class App : Application
 
     public override void OnFrameworkInitializationCompleted()
     {
-        var configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
-        _controller = new BridgeController(configPath);
+        _configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
+        _controller = new BridgeController(_configPath);
         _controller.StatusChanged += OnStatusChanged;
 
         _bridgeItem = new NativeMenuItem("Starting…") { IsEnabled = false };
@@ -89,6 +94,9 @@ public sealed class App : Application
         var fkClear = new NativeMenuItem("Clear feedback filters");
         fkClear.Click += (_, _) => _feedback?.ClearAll(includeLocked: true);
 
+        _fkSpectrumItem = new NativeMenuItem("Show spectrum window") { IsEnabled = false };
+        _fkSpectrumItem.Click += OnFkSpectrumClick;
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -108,6 +116,7 @@ public sealed class App : Application
                 fkModeMenu,
                 fkLockAll,
                 fkClear,
+                _fkSpectrumItem,
                 new NativeMenuItemSeparator(),
                 quitItem,
             },
@@ -245,6 +254,40 @@ public sealed class App : Application
         _fkStatusItem.Header = _feedback is null
             ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
             : (_feedback.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine down — audio bypassed");
+
+        if (_fkSpectrumItem is not null)
+        {
+            _fkSpectrumItem.IsEnabled = _feedback is not null;
+        }
+    }
+
+    private void OnFkSpectrumClick(object? sender, EventArgs e)
+    {
+        if (_feedback is null)
+        {
+            return;
+        }
+
+        if (_spectrumWindow is not null)
+        {
+            _spectrumWindow.Activate();
+            return;
+        }
+
+        IPAddress address;
+        try
+        {
+            address = BridgeConfig.Load(_configPath).ResolvedAddress;
+        }
+        catch
+        {
+            return;   // no usable console address; nothing to show the RTA from
+        }
+
+        var window = new SpectrumWindow(_feedback, address);
+        window.Closed += (_, _) => _spectrumWindow = null;
+        _spectrumWindow = window;
+        window.Show();
     }
 
     private static string? FindEngine()

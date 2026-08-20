@@ -40,6 +40,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Log += m => Log?.Invoke(m);
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
+        _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
     }
 
     public bool EngineOk => _supervisor.EngineOk;
@@ -52,6 +53,12 @@ public sealed class FeedbackController : IAsyncDisposable
 
     /// <summary>Latest notch state for a channel (for a display, and for tests).</summary>
     public event Action<int, FkNotch[]>? NotchesChanged;
+
+    /// <summary>Latest engine spectrum frame for a channel (for a display).</summary>
+    public event Action<FkSpectrum>? SpectrumChanged;
+
+    /// <summary>A detection fired (for a display; also logged internally).</summary>
+    public event Action<FkDetection>? DetectionReceived;
 
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
 
@@ -132,8 +139,11 @@ public sealed class FeedbackController : IAsyncDisposable
         _store.Save(locked);
     }
 
-    private void OnDetection(FkDetection d) =>
+    private void OnDetection(FkDetection d)
+    {
         _log.Write(d, _mode == FkMode.Auto, _clock.Elapsed.TotalSeconds);
+        DetectionReceived?.Invoke(d);
+    }
 
     private List<StoredNotch> CollectLocked()
     {
