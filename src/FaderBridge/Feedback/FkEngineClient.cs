@@ -34,6 +34,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public event Action<int, FkNotch[]>? NotchesReceived;
     public event Action<FkSpectrum>? SpectrumReceived;
     public event Action<FkAudioState>? AudioStateReceived;
+    public event Action<string>? DeviceListed;
     public event Action<string>? Error;
 
     public void Start(CancellationToken token)
@@ -54,6 +55,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void LockAll(int ch)                      => Send(new OscMessage("/fk/lockall", ch));
     public void SetAudio(string device, int sampleRate, int bufferSize)
         => Send(new OscMessage("/fk/audio", device, sampleRate, bufferSize));
+    public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
 
     private void Send(OscMessage message)
     {
@@ -114,6 +116,10 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/audio/state" when m.Arguments is [string dev, int sr, int buf, int running]:
                 AudioStateReceived?.Invoke(new FkAudioState(dev, sr, buf, running != 0));
+                break;
+
+            case "/fk/device" when m.Arguments is [string name]:
+                DeviceListed?.Invoke(name);
                 break;
         }
     }

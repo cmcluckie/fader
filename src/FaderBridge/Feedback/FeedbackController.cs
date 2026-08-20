@@ -20,8 +20,11 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly object _lock = new();
     private readonly FkNotch[][] _latest = { Array.Empty<FkNotch>(), Array.Empty<FkNotch>() };
 
+    private readonly List<string> _devices = new();
     private FkMode _mode = FkMode.Assist;   // §8: default assist
     private string _savedSignature = "";
+    private string? _currentDevice;
+    private string? _selectedDevice;
     private volatile bool _pendingReplay;
     // Persistence is gated off from a (re)start until the replay is applied, so a
     // fresh engine's empty notch frames cannot clobber the stored locked filters.
@@ -41,6 +44,8 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
+        _supervisor.Client.DeviceListed += OnDeviceListed;
+        _supervisor.Client.AudioStateReceived += OnAudioState;
     }
 
     public bool EngineOk => _supervisor.EngineOk;
@@ -59,6 +64,22 @@ public sealed class FeedbackController : IAsyncDisposable
 
     /// <summary>A detection fired (for a display; also logged internally).</summary>
     public event Action<FkDetection>? DetectionReceived;
+
+    /// <summary>The available input devices or the current selection changed.</summary>
+    public event Action? DevicesChanged;
+
+    /// <summary>Input devices the engine reported (Core Audio).</summary>
+    public IReadOnlyList<string> Devices { get { lock (_lock) { return _devices.ToArray(); } } }
+
+    /// <summary>The device the engine is currently running on.</summary>
+    public string? CurrentDevice => _currentDevice;
+
+    /// <summary>Switch the engine's audio device; remembered and re-applied on restart.</summary>
+    public void SetDevice(string device)
+    {
+        _selectedDevice = device;
+        _supervisor.Client.SetAudio(device, 48000, 64);
+    }
 
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
 
@@ -89,9 +110,18 @@ public sealed class FeedbackController : IAsyncDisposable
     // on process spawn - a packet sent before the engine binds its port is lost.
     private void OnEngineOk(bool ok)
     {
+        if (ok)
+        {
+            _supervisor.Client.ListDevices();   // repopulate the picker whenever it comes up
+        }
+
         if (ok && _pendingReplay)
         {
             _pendingReplay = false;
+            if (_selectedDevice is { } device)
+            {
+                _supervisor.Client.SetAudio(device, 48000, 64);   // re-apply the chosen device
+            }
             var toReplay = _store.Load();   // intact - persistence was gated off until now
             if (toReplay.Count > 0)
             {
@@ -143,6 +173,23 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         _log.Write(d, _mode == FkMode.Auto, _clock.Elapsed.TotalSeconds);
         DetectionReceived?.Invoke(d);
+    }
+
+    private void OnDeviceListed(string name)
+    {
+        bool added;
+        lock (_lock)
+        {
+            added = !_devices.Contains(name);
+            if (added) _devices.Add(name);
+        }
+        if (added) DevicesChanged?.Invoke();
+    }
+
+    private void OnAudioState(FkAudioState state)
+    {
+        _currentDevice = state.Device;
+        DevicesChanged?.Invoke();
     }
 
     private List<StoredNotch> CollectLocked()

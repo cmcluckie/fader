@@ -37,6 +37,7 @@ public sealed class App : Application
     private NativeMenuItem? _fkAssist;
     private NativeMenuItem? _fkAuto;
     private NativeMenuItem? _fkSpectrumItem;
+    private NativeMenuItem? _fkDeviceMenu;
     private SpectrumWindow? _spectrumWindow;
 
     // No XAML; everything is built in code.
@@ -97,6 +98,8 @@ public sealed class App : Application
         _fkSpectrumItem = new NativeMenuItem("Show spectrum window") { IsEnabled = false };
         _fkSpectrumItem.Click += OnFkSpectrumClick;
 
+        _fkDeviceMenu = new NativeMenuItem("Audio input") { IsEnabled = false, Menu = new NativeMenu() };
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -113,6 +116,7 @@ public sealed class App : Application
                 new NativeMenuItemSeparator(),
                 _fkStatusItem,
                 _fkEngineItem,
+                _fkDeviceMenu,
                 fkModeMenu,
                 fkLockAll,
                 fkClear,
@@ -228,6 +232,7 @@ public sealed class App : Application
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FeedbackKiller");
             var controller = new FeedbackController(_enginePath, dataDir);
             controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
+            controller.DevicesChanged += () => Dispatcher.UIThread.Post(RebuildDeviceMenu);
             _feedback = controller;
             controller.SetMode(_fkMode);   // reflect the menu's current mode
             controller.Start();
@@ -242,6 +247,7 @@ public sealed class App : Application
         }
 
         RenderFk();
+        RebuildDeviceMenu();
     }
 
     private void RenderFk()
@@ -258,6 +264,37 @@ public sealed class App : Application
         if (_fkSpectrumItem is not null)
         {
             _fkSpectrumItem.IsEnabled = _feedback is not null;
+        }
+        if (_fkDeviceMenu is not null)
+        {
+            _fkDeviceMenu.IsEnabled = _feedback is not null;
+        }
+    }
+
+    private void RebuildDeviceMenu()
+    {
+        if (_fkDeviceMenu?.Menu is not { } menu)
+        {
+            return;
+        }
+
+        menu.Items.Clear();
+        if (_feedback is null)
+        {
+            return;
+        }
+
+        var current = _feedback.CurrentDevice;
+        foreach (var device in _feedback.Devices)
+        {
+            var name = device;
+            var item = new NativeMenuItem(name)
+            {
+                ToggleType = NativeMenuItemToggleType.Radio,
+                IsChecked = name == current,
+            };
+            item.Click += (_, _) => _feedback?.SetDevice(name);
+            menu.Items.Add(item);
         }
     }
 

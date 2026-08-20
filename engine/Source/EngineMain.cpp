@@ -82,6 +82,7 @@ private:
         else if (a == "/fk/param"        && m.size() >= 2) applyParam (m[0].getString(), m[1].getFloat32());
         else if (a == "/fk/audio"        && m.size() >= 3) requestReconfigure (m[0].getString(), m[1].getInt32(), m[2].getInt32());
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
+        else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();
     }
 
@@ -112,6 +113,7 @@ private:
         while (keepRunning.load())
         {
             applyPendingReconfigure();
+            if (devicesDirty.exchange (false)) sendDevices();
 
             const int mask = subscribeMask.load();
 
@@ -191,6 +193,29 @@ private:
         }
     }
 
+    // Enumerate input-capable devices and report each, plus the current one.
+    void sendDevices()
+    {
+        juce::StringArray seen;
+        for (auto* type : devices.getAvailableDeviceTypes())
+        {
+            type->scanForDevices();
+            for (const auto& name : type->getDeviceNames (true))   // true = inputs
+            {
+                if (! seen.contains (name))
+                {
+                    seen.add (name);
+                    sender.send (juce::OSCMessage ("/fk/device", name));
+                }
+            }
+        }
+
+        auto* current = devices.getCurrentAudioDevice();
+        const int sr = current ? (int) current->getCurrentSampleRate() : 0;
+        const int bs = current ? current->getCurrentBufferSizeSamples() : 0;
+        sendAudioState (current ? current->getName() : juce::String(), sr, bs);
+    }
+
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }
     void sendAudioState (const juce::String& d, int sr, int bs)
     {
@@ -207,6 +232,7 @@ private:
     std::thread              telemetry;
     std::atomic<bool>        keepRunning { false };
     std::atomic<int>         subscribeMask { 0xF };
+    std::atomic<bool>        devicesDirty { true };   // send the device list once at start
     juce::CriticalSection    reconfigLock;
     Reconfig                 pending;
 };
