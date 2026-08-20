@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(fk-engine VERSION 0.1.0 LANGUAGES CXX)
+project(fk-engine VERSION 0.1.0 LANGUAGES C CXX)
 
 # Headless audio engine for the X32 tray controller (see docs/adr/0001-...).
 # No GUI modules are linked: this process owns Core Audio, the FFT detector, and
