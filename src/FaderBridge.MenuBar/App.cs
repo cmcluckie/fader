@@ -23,8 +23,9 @@ public sealed class App : Application
     private NativeMenuItem? _startStopItem;
     private NativeMenuItem? _marqueeItem;
 
-    // Feedback engine (Phase 1): supervised out-of-process, controlled over OSC.
-    private EngineSupervisor? _engine;
+    // Feedback engine: supervised out-of-process, controlled over OSC, with
+    // locked-notch persistence and CSV logging owned here (Phases 1-2).
+    private FeedbackController? _feedback;
     private string? _enginePath;
     private FkMode _fkMode = FkMode.Assist;
     private NativeMenuItem? _fkStatusItem;
@@ -83,6 +84,11 @@ public sealed class App : Application
             Menu = new NativeMenu { Items = { _fkOff, _fkAssist, _fkAuto } },
         };
 
+        var fkLockAll = new NativeMenuItem("Lock all feedback filters");
+        fkLockAll.Click += (_, _) => _feedback?.LockAll();
+        var fkClear = new NativeMenuItem("Clear feedback filters");
+        fkClear.Click += (_, _) => _feedback?.ClearAll(includeLocked: true);
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -100,6 +106,8 @@ public sealed class App : Application
                 _fkStatusItem,
                 _fkEngineItem,
                 fkModeMenu,
+                fkLockAll,
+                fkClear,
                 new NativeMenuItemSeparator(),
                 quitItem,
             },
@@ -195,7 +203,7 @@ public sealed class App : Application
         _fkOff!.IsChecked = mode == FkMode.Off;
         _fkAssist!.IsChecked = mode == FkMode.Assist;
         _fkAuto!.IsChecked = mode == FkMode.Auto;
-        _engine?.Client.SetMode(mode);
+        _feedback?.SetMode(mode);
     }
 
     private void OnFkEngineClick(object? sender, EventArgs e)
@@ -205,21 +213,23 @@ public sealed class App : Application
             return;
         }
 
-        if (_engine is null)
+        if (_feedback is null)
         {
-            var supervisor = new EngineSupervisor(_enginePath);
-            supervisor.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
-            supervisor.EngineStarted += () => supervisor.Client.SetMode(_fkMode);   // replay after each (re)start
-            _engine = supervisor;
-            supervisor.Start();
+            var dataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FeedbackKiller");
+            var controller = new FeedbackController(_enginePath, dataDir);
+            controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
+            _feedback = controller;
+            controller.SetMode(_fkMode);   // reflect the menu's current mode
+            controller.Start();
             _fkEngineItem.IsChecked = true;
         }
         else
         {
-            var supervisor = _engine;
-            _engine = null;
+            var controller = _feedback;
+            _feedback = null;
             _fkEngineItem.IsChecked = false;
-            _ = supervisor.DisposeAsync();
+            _ = controller.DisposeAsync();
         }
 
         RenderFk();
@@ -232,9 +242,9 @@ public sealed class App : Application
             return;
         }
 
-        _fkStatusItem.Header = _engine is null
+        _fkStatusItem.Header = _feedback is null
             ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
-            : (_engine.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine starting…");
+            : (_feedback.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine down — audio bypassed");
     }
 
     private static string? FindEngine()
@@ -257,9 +267,9 @@ public sealed class App : Application
 
     private async void OnQuitClick(object? sender, EventArgs e)
     {
-        if (_engine is not null)
+        if (_feedback is not null)
         {
-            await _engine.DisposeAsync();
+            await _feedback.DisposeAsync();
         }
 
         if (_controller is not null)

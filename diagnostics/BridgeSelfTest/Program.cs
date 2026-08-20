@@ -1,5 +1,6 @@
 using System.Net;
 using Fader.Bridge;
+using Fader.Bridge.Feedback;
 using Fader.Bridge.Midi;
 using Fader.Bridge.Osc;
 
@@ -26,6 +27,7 @@ internal static class Program
         ScalingRoundTrip();
         OscEncodingIsSpecCorrect();
         ScribbleSysExLayout();
+        FeedbackPersistence();
         await BridgeBehaviour();
         await SilentSceneRecallRecovery();
 
@@ -122,6 +124,47 @@ internal static class Program
             Convert.ToHexString(line[..7]) == "F0000066141200");
         Check("scribble line is 56 chars wide", line.Length == 8 + McuProtocol.RowWidth);
         Check("scribble line row 1 is offset 56", McuProtocol.ScribbleLine(1, "x")[6] == 56);
+    }
+
+    private static void FeedbackPersistence()
+    {
+        Section("Feedback persistence + logging");
+
+        var dir = Path.Combine(Path.GetTempPath(), "fk-selftest-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var store = new FkNotchStore(Path.Combine(dir, "notches.json"));
+            Check("empty store loads as empty", store.Load().Count == 0);
+
+            store.Save(new List<StoredNotch> { new(0, 1200f, -6f, true), new(1, 3400f, -9f, false) });
+            var loaded = store.Load();
+            Check("store round-trips locked notches",
+                loaded.Count == 2
+                && loaded[0] is { Channel: 0, Manual: true } && Math.Abs(loaded[0].Hz - 1200f) < 0.01f
+                && loaded[1] is { Channel: 1, Manual: false } && Math.Abs(loaded[1].DepthDb + 9f) < 0.01f);
+
+            var corrupt = Path.Combine(dir, "corrupt.json");
+            File.WriteAllText(corrupt, "{ not json ]");
+            Check("corrupt store loads clean rather than throwing",
+                new FkNotchStore(corrupt).Load().Count == 0);
+
+            var log = new FkEventLog(Path.Combine(dir, "logs"), stamp: "test");
+            log.Write(new FkDetection(0, 1234.56f, -20.5f), applied: true, seconds: 12.345);
+            log.Write(new FkDetection(1, 800.0f, -30.0f), applied: false, seconds: 15.0);
+            log.Dispose();
+
+            var lines = File.ReadAllLines(log.Path);
+            Check("csv header matches the plugin's",
+                lines.Length >= 1 && lines[0] == "seconds,channel,frequency_hz,level_db,applied");
+            Check("csv logs a LEAD detection as applied",
+                lines.Length >= 2 && lines[1] == "12.345,LEAD,1234.56,-20.50,1");
+            Check("csv logs a BGV detection as flagged-only",
+                lines.Length >= 3 && lines[2] == "15.000,BGV,800.00,-30.00,0");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch { /* temp */ }
+        }
     }
 
     // ------------------------------------------------------------ integration
