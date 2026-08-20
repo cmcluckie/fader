@@ -67,6 +67,10 @@ static async Task<bool> Persistence(string binary)
         c1.Start();
         if (!await WaitFor(() => c1.EngineOk, 6000)) { Console.WriteLine("    engine never came up"); await c1.DisposeAsync(); return false; }
 
+        await WaitFor(() => c1.InputChannels.Count > 0, 2000);
+        Console.WriteLine($"    devices ({c1.Devices.Count}): {string.Join(", ", c1.Devices)}");
+        Console.WriteLine($"    channels ({c1.InputChannels.Count}): {string.Join(", ", c1.InputChannels.Take(6).Select(c => $"[{c.Index}]{c.Name}"))} ...");
+
         c1.PlaceManualNotch(0, 1500f, -8f);
         await Task.Delay(1200);
         var stored = new FkNotchStore(Path.Combine(dir, "notches.json")).Load();

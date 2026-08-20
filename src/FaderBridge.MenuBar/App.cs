@@ -305,11 +305,15 @@ public sealed class App : Application
 
         _fkLeadMenu.Items.Clear();
         _fkBgvMenu.Items.Clear();
+
         if (_feedback is null)
         {
+            _fkLeadMenu.Items.Add(Hint("Turn on the feedback engine"));
+            _fkBgvMenu.Items.Add(Hint("Turn on the feedback engine"));
             return;
         }
 
+        var added = 0;
         foreach (var (index, name) in _feedback.InputChannels)
         {
             // Skip the device's unpatched slots.
@@ -319,8 +323,17 @@ public sealed class App : Application
             }
             _fkLeadMenu.Items.Add(ChannelItem(index, name, isLead: true));
             _fkBgvMenu.Items.Add(ChannelItem(index, name, isLead: false));
+            added++;
+        }
+
+        if (added == 0)
+        {
+            _fkLeadMenu.Items.Add(Hint("Pick an audio device first"));
+            _fkBgvMenu.Items.Add(Hint("Pick an audio device first"));
         }
     }
+
+    private static NativeMenuItem Hint(string text) => new(text) { IsEnabled = false };
 
     private NativeMenuItem ChannelItem(int index, string name, bool isLead)
     {
@@ -352,6 +365,12 @@ public sealed class App : Application
         menu.Items.Clear();
         if (_feedback is null)
         {
+            menu.Items.Add(Hint("Turn on the feedback engine"));
+            return;
+        }
+        if (_feedback.Devices.Count == 0)
+        {
+            menu.Items.Add(Hint("Waiting for the engine…"));
             return;
         }
 
