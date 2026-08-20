@@ -234,7 +234,7 @@ dotnet run --project diagnostics/RingOut -- <x32-ip> 5
 
 ## Diagnostics
 
-Five, all runnable independently.
+Six, all runnable independently.
 
 **Bridge self-test** — no hardware needed. Runs the real bridge against a mock
 console over a real UDP socket:
@@ -287,6 +287,14 @@ nothing on the console:
 
 ```bash
 dotnet run --project diagnostics/RingOut -- <x32-ip> 5
+```
+
+**Spectrum scope** — the engine's spectrum and the console RTA on one shared
+log-frequency axis, with engine↔RTA correlations marked (a ring seen on a mic
+*and* in the RTA at the same frequency — §6). Terminal form of the display:
+
+```bash
+dotnet run --project diagnostics/SpectrumScope -- <x32-ip>
 ```
 
 ## What's verified, and what isn't
