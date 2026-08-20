@@ -57,6 +57,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void SetAudio(string device, int sampleRate, int bufferSize)
         => Send(new OscMessage("/fk/audio", device, sampleRate, bufferSize));
     public void SetChannels(int lead, int bgv)       => Send(new OscMessage("/fk/channels/set", lead, bgv));
+    public void SetSuppress(int channel, bool on)    => Send(new OscMessage("/fk/suppress", channel, on ? 1 : 0));
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
 
     private void Send(OscMessage message)

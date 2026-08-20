@@ -164,9 +164,9 @@ internal static class Program
 
             var audio = new FkAudioStore(Path.Combine(dir, "audio.json"));
             Check("empty audio store is default", audio.Load() == AudioSelection.Default);
-            audio.Save(new AudioSelection("Universal Audio Thunderbolt", 4, 5));
-            Check("audio store round-trips device + ADAT channels",
-                audio.Load() is { Device: "Universal Audio Thunderbolt", Lead: 4, Bgv: 5 });
+            audio.Save(new AudioSelection("Universal Audio Thunderbolt", 4, 5, SuppressLead: true, SuppressBgv: false));
+            Check("audio store round-trips device, ADAT channels, and per-channel suppress",
+                audio.Load() is { Device: "Universal Audio Thunderbolt", Lead: 4, Bgv: 5, SuppressLead: true, SuppressBgv: false });
         }
         finally
         {

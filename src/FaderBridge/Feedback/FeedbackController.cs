@@ -29,6 +29,8 @@ public sealed class FeedbackController : IAsyncDisposable
     private string? _selectedDevice;
     private int _leadChannel = 0;
     private int _bgvChannel = 1;
+    private bool _suppressLead;
+    private bool _suppressBgv;
     private volatile bool _pendingReplay;
     // Persistence is gated off from a (re)start until the replay is applied, so a
     // fresh engine's empty notch frames cannot clobber the stored locked filters.
@@ -41,6 +43,8 @@ public sealed class FeedbackController : IAsyncDisposable
         _selectedDevice = audio.Device;
         _leadChannel = audio.Lead;
         _bgvChannel = audio.Bgv;
+        _suppressLead = audio.SuppressLead;
+        _suppressBgv = audio.SuppressBgv;
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -114,8 +118,24 @@ public sealed class FeedbackController : IAsyncDisposable
         SaveAudio();
     }
 
+    public bool SuppressLead => _suppressLead;
+    public bool SuppressBgv => _suppressBgv;
+
+    /// <summary>The engine or the per-channel suppress state changed.</summary>
+    public event Action? SuppressChanged;
+
+    /// <summary>Turn feedback cutting on or off for one channel (0 = LEAD, 1 = BGV).</summary>
+    public void SetSuppress(int channel, bool on)
+    {
+        if (channel == 0) _suppressLead = on; else _suppressBgv = on;
+        _supervisor.Client.SetSuppress(channel, on);
+        SaveAudio();
+        SuppressChanged?.Invoke();
+    }
+
     private void SaveAudio() =>
-        _audioStore.Save(new AudioSelection(_selectedDevice, _leadChannel, _bgvChannel));
+        _audioStore.Save(new AudioSelection(
+            _selectedDevice, _leadChannel, _bgvChannel, _suppressLead, _suppressBgv));
 
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
 
@@ -168,7 +188,8 @@ public sealed class FeedbackController : IAsyncDisposable
             {
                 _supervisor.Client.PlaceNotch(n.Channel, n.Hz, n.DepthDb);
             }
-            _supervisor.Client.SetMode(_mode);
+            _supervisor.Client.SetSuppress(0, _suppressLead);
+            _supervisor.Client.SetSuppress(1, _suppressBgv);
 
             // Re-enable persistence once the engine has had time to reflect the
             // replay, so the first saved frame carries the replayed notches.

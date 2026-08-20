@@ -2,8 +2,9 @@ using System.Text.Json;
 
 namespace Fader.Bridge.Feedback;
 
-/// <summary>The persisted audio selection: which device and which two input channels.</summary>
-public sealed record AudioSelection(string? Device, int Lead, int Bgv)
+/// <summary>The persisted audio selection: device, the two input channels, and per-channel suppress.</summary>
+public sealed record AudioSelection(
+    string? Device, int Lead, int Bgv, bool SuppressLead = false, bool SuppressBgv = false)
 {
     public static readonly AudioSelection Default = new(null, 0, 1);
 }

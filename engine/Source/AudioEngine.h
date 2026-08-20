@@ -26,7 +26,11 @@ public:
     static constexpr int numChans = 2;                       // 0 = LEAD, 1 = BGV
 
     // ---- control (called from the OSC thread) -------------------------------
-    void setMode (Mode m) noexcept          { mode.store ((int) m); }
+    // Suppression is per channel now: detection always runs (display + log); a
+    // channel only *cuts* when its suppress flag is on. setMode is kept for the
+    // OSC compat path - Auto turns both on, Off/Assist turn both off.
+    void setMode (Mode m) noexcept              { const bool on = (m == Mode::Auto); suppress0.store (on); suppress1.store (on); }
+    void setSuppress (int ch, bool on) noexcept { (ch == 0 ? suppress0 : suppress1).store (on); }
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
@@ -92,7 +96,6 @@ public:
         drainCommands();
 
         // Level-triggered params, reassembled cheaply each block.
-        const auto m = (Mode) mode.load();
         FeedbackDetector::Params p;
         p.prominenceDb   = prominenceDb.load();
         p.persistFrames  = persistFrames.load();
@@ -103,7 +106,8 @@ public:
 
         // Each engine channel reads a selected enabled-input pointer (the chosen
         // physical channels, e.g. ADAT 3/4), and writes the matching output.
-        const int srcs[numChans] = { srcMap0.load(), srcMap1.load() };
+        const int  srcs[numChans] = { srcMap0.load(), srcMap1.load() };
+        const bool sup[numChans]  = { suppress0.load(), suppress1.load() };
 
         for (int ch = 0; ch < numChans; ++ch)
         {
@@ -127,11 +131,11 @@ public:
             FeedbackDetector::Event ev;
             while (det.popEvent (ev))
             {
-                if (m == Mode::Auto) bank.trigger (ev.freq, stepDb, maxCutDb.load(), elapsed);
-                pushEvent ({ ch, ev.freq, ev.levelDb });          // C# logs it
+                if (sup[ch]) bank.trigger (ev.freq, stepDb, maxCutDb.load(), elapsed);
+                pushEvent ({ ch, ev.freq, ev.levelDb });          // C# logs it either way
             }
 
-            bank.process (out, numSamples, m == Mode::Off);       // Off passes audio untouched
+            bank.process (out, numSamples, ! sup[ch]);            // off -> pass audio untouched
         }
 
         // any output channel we don't drive gets silence, never garbage
@@ -195,7 +199,7 @@ private:
     std::array<NotchBank<kMaxNotches>, numChans> banks;
     std::array<FeedbackDetector, numChans>       detectors;
 
-    std::atomic<int>   mode { (int) Mode::Assist };            // default assist (§8)
+    std::atomic<bool>  suppress0 { false }, suppress1 { false };   // per-channel cut enable (default off = assist)
     std::atomic<float> maxCutDb { -12.0f }, notchQ { 20.0f }, releaseSeconds { 120.0f };
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<int>   persistFrames { 5 };

@@ -30,12 +30,10 @@ public sealed class App : Application
     private FeedbackController? _feedback;
     private string? _enginePath;
     private string _configPath = "";
-    private FkMode _fkMode = FkMode.Assist;
     private NativeMenuItem? _fkStatusItem;
     private NativeMenuItem? _fkEngineItem;
-    private NativeMenuItem? _fkOff;
-    private NativeMenuItem? _fkAssist;
-    private NativeMenuItem? _fkAuto;
+    private NativeMenuItem? _fkLeadSuppress;
+    private NativeMenuItem? _fkBgvSuppress;
     private NativeMenuItem? _fkSpectrumItem;
     private NativeMenuItem? _fkDeviceMenu;
     private NativeMenuItem? _fkInputsMenu;
@@ -84,14 +82,18 @@ public sealed class App : Application
         };
         _fkEngineItem.Click += OnFkEngineClick;
 
-        _fkOff    = FkModeItem("Off",    FkMode.Off);
-        _fkAssist = FkModeItem("Assist", FkMode.Assist);
-        _fkAuto   = FkModeItem("Auto",   FkMode.Auto);
-        _fkAssist.IsChecked = true;   // default assist
-        var fkModeMenu = new NativeMenuItem("Feedback mode")
+        // Per-channel cut on/off. The master (engine) runs and analyses both mics;
+        // these decide which one actually gets notched.
+        _fkLeadSuppress = new NativeMenuItem("Suppress LEAD")
         {
-            Menu = new NativeMenu { Items = { _fkOff, _fkAssist, _fkAuto } },
+            ToggleType = NativeMenuItemToggleType.CheckBox, IsChecked = false, IsEnabled = false,
         };
+        _fkLeadSuppress.Click += (_, _) => ToggleSuppress(0);
+        _fkBgvSuppress = new NativeMenuItem("Suppress BGV")
+        {
+            ToggleType = NativeMenuItemToggleType.CheckBox, IsChecked = false, IsEnabled = false,
+        };
+        _fkBgvSuppress.Click += (_, _) => ToggleSuppress(1);
 
         var fkLockAll = new NativeMenuItem("Lock all feedback filters");
         fkLockAll.Click += (_, _) => _feedback?.LockAll();
@@ -134,9 +136,10 @@ public sealed class App : Application
                 new NativeMenuItemSeparator(),
                 _fkStatusItem,
                 _fkEngineItem,
+                _fkLeadSuppress,
+                _fkBgvSuppress,
                 _fkDeviceMenu,
                 _fkInputsMenu,
-                fkModeMenu,
                 fkLockAll,
                 fkClear,
                 _fkSpectrumItem,
@@ -222,20 +225,15 @@ public sealed class App : Application
     }
 
     // ---- feedback engine ----------------------------------------------------
-    private NativeMenuItem FkModeItem(string label, FkMode mode)
+    private void ToggleSuppress(int channel)
     {
-        var item = new NativeMenuItem(label) { ToggleType = NativeMenuItemToggleType.Radio };
-        item.Click += (_, _) => SelectFkMode(mode);
-        return item;
-    }
-
-    private void SelectFkMode(FkMode mode)
-    {
-        _fkMode = mode;
-        _fkOff!.IsChecked = mode == FkMode.Off;
-        _fkAssist!.IsChecked = mode == FkMode.Assist;
-        _fkAuto!.IsChecked = mode == FkMode.Auto;
-        _feedback?.SetMode(mode);
+        if (_feedback is null)
+        {
+            return;
+        }
+        var on = channel == 0 ? !_feedback.SuppressLead : !_feedback.SuppressBgv;
+        _feedback.SetSuppress(channel, on);
+        RenderFk();
     }
 
     private void OnFkEngineClick(object? sender, EventArgs e)
@@ -253,9 +251,9 @@ public sealed class App : Application
             controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
             controller.DevicesChanged += () => Dispatcher.UIThread.Post(RebuildDeviceMenu);
             controller.ChannelsChanged += () => Dispatcher.UIThread.Post(RebuildChannelMenus);
+            controller.SuppressChanged += () => Dispatcher.UIThread.Post(RenderFk);
             _feedback = controller;
-            controller.SetMode(_fkMode);   // reflect the menu's current mode
-            controller.Start();
+            controller.Start();   // per-channel suppress is loaded + replayed by the controller
             _fkEngineItem.IsChecked = true;
         }
         else
@@ -278,21 +276,35 @@ public sealed class App : Application
             return;
         }
 
+        var on = _feedback is not null;
+        var cutting = on && (_feedback!.SuppressLead || _feedback.SuppressBgv);
+
         _fkStatusItem.Header = _feedback is null
             ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
-            : (_feedback.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine down — audio bypassed");
+            : !_feedback.EngineOk ? "Feedback: ◍ engine down — audio bypassed"
+            : cutting ? "Feedback: ● suppressing" : "Feedback: ● listening (no cut)";
 
+        if (_fkLeadSuppress is not null)
+        {
+            _fkLeadSuppress.IsEnabled = on;
+            _fkLeadSuppress.IsChecked = on && _feedback!.SuppressLead;
+        }
+        if (_fkBgvSuppress is not null)
+        {
+            _fkBgvSuppress.IsEnabled = on;
+            _fkBgvSuppress.IsChecked = on && _feedback!.SuppressBgv;
+        }
         if (_fkSpectrumItem is not null)
         {
-            _fkSpectrumItem.IsEnabled = _feedback is not null;
+            _fkSpectrumItem.IsEnabled = on;
         }
         if (_fkDeviceMenu is not null)
         {
-            _fkDeviceMenu.IsEnabled = _feedback is not null;
+            _fkDeviceMenu.IsEnabled = on;
         }
         if (_fkInputsMenu is not null)
         {
-            _fkInputsMenu.IsEnabled = _feedback is not null;
+            _fkInputsMenu.IsEnabled = on;
         }
     }
 

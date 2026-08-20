@@ -74,6 +74,7 @@ private:
         const auto a = m.getAddressPattern().toString();
 
         if      (a == "/fk/mode"         && m.size() >= 1) engine.setMode ((AudioEngine::Mode) m[0].getInt32());
+        else if (a == "/fk/suppress"     && m.size() >= 2) engine.setSuppress (m[0].getInt32(), m[1].getInt32() != 0);
         else if (a == "/fk/notch/place"  && m.size() >= 3) engine.placeNotch  (m[0].getInt32(), m[1].getFloat32(), m[2].getFloat32());
         else if (a == "/fk/notch/remove" && m.size() >= 2) engine.removeNotch (m[0].getInt32(), m[1].getInt32());
         else if (a == "/fk/notch/lock"   && m.size() >= 3) engine.lockNotch   (m[0].getInt32(), m[1].getInt32(), m[2].getInt32() != 0);
