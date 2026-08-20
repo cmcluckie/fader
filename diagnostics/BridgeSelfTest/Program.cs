@@ -203,6 +203,32 @@ internal static class Program
         Check("non-local source has no local headamp", X32Headamp.HeadampForSource(40) == -1);
         Check("headamp 0.5833 par is ~+30 dB", Math.Abs(X32Headamp.ParToDb(0.5833f) - 30f) < 0.1f);
         Check("headamp dB round-trips", Math.Abs(X32Headamp.ParToDb(X32Headamp.DbToPar(24f)) - 24f) < 0.01f);
+
+        // Correlation: an engine detection corroborated by an RTA peak.
+        var corr = new Correlator(tolFraction: 0.06f, rtaThresholdDb: -50f);
+        var floor = Enumerable.Repeat(X32Rta.FloorDb, X32Rta.BandCount).ToArray();
+        Check("no RTA peak -> no correlation",
+            corr.Match(new FkDetection(0, 1200f, -20f), floor) is null);
+
+        var band = Correlator.NearestRtaBand(1200f);
+        var hit = (float[]) floor.Clone();
+        hit[band] = -18f;
+        var match = corr.Match(new FkDetection(0, 1200f, -20f), hit);
+        Check("engine + RTA at same freq -> correlated",
+            match is not null && match.Channel == 0 && Math.Abs(match.RtaHz - 1200f) < 1200f * 0.06f);
+
+        var elsewhere = (float[]) floor.Clone();
+        elsewhere[Correlator.NearestRtaBand(500f)] = -18f;
+        Check("RTA peak at a different freq -> no correlation",
+            corr.Match(new FkDetection(0, 1200f, -20f), elsewhere) is null);
+
+        var quiet = (float[]) floor.Clone();
+        quiet[band] = -55f;
+        Check("RTA peak below threshold -> no correlation",
+            corr.Match(new FkDetection(0, 1200f, -20f), quiet) is null);
+
+        Check("NearestRtaBand(1000) is ~1000 Hz",
+            Math.Abs(X32Rta.BandHz(Correlator.NearestRtaBand(1000f)) - 1000f) < 40f);
     }
 
     // ------------------------------------------------------------ integration
