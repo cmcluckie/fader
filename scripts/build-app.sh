@@ -26,6 +26,16 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -R "$PUB"/* "$APP/Contents/MacOS/"
 chmod +x "$APP/Contents/MacOS/$EXE"
 
+# Bundle the feedback engine next to the app binary if it has been built, so the
+# tray app finds it via AppContext.BaseDirectory/fk-engine (see App.FindEngine).
+ENGINE="$ROOT/engine/build/fk-engine_artefacts/Release/fk-engine"
+if [ -x "$ENGINE" ]; then
+  cp "$ENGINE" "$APP/Contents/MacOS/fk-engine"
+  echo "==> Bundled fk-engine"
+else
+  echo "==> fk-engine not built; tray app will show 'engine not built' (build engine/ to include it)"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"

@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using Fader.Bridge.Feedback;
 
 namespace Fader.MenuBar;
 
@@ -21,6 +22,16 @@ public sealed class App : Application
     private NativeMenuItem? _midiItem;
     private NativeMenuItem? _startStopItem;
     private NativeMenuItem? _marqueeItem;
+
+    // Feedback engine (Phase 1): supervised out-of-process, controlled over OSC.
+    private EngineSupervisor? _engine;
+    private string? _enginePath;
+    private FkMode _fkMode = FkMode.Assist;
+    private NativeMenuItem? _fkStatusItem;
+    private NativeMenuItem? _fkEngineItem;
+    private NativeMenuItem? _fkOff;
+    private NativeMenuItem? _fkAssist;
+    private NativeMenuItem? _fkAuto;
 
     // No XAML; everything is built in code.
     public override void Initialize()
@@ -47,6 +58,31 @@ public sealed class App : Application
         };
         _marqueeItem.Click += OnMarqueeClick;
 
+        // ---- feedback engine section ----------------------------------------
+        _enginePath = FindEngine();
+
+        _fkStatusItem = new NativeMenuItem(_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
+        {
+            IsEnabled = false,
+        };
+
+        _fkEngineItem = new NativeMenuItem("Feedback engine")
+        {
+            ToggleType = NativeMenuItemToggleType.CheckBox,
+            IsChecked = false,
+            IsEnabled = _enginePath is not null,
+        };
+        _fkEngineItem.Click += OnFkEngineClick;
+
+        _fkOff    = FkModeItem("Off",    FkMode.Off);
+        _fkAssist = FkModeItem("Assist", FkMode.Assist);
+        _fkAuto   = FkModeItem("Auto",   FkMode.Auto);
+        _fkAssist.IsChecked = true;   // default assist
+        var fkModeMenu = new NativeMenuItem("Feedback mode")
+        {
+            Menu = new NativeMenu { Items = { _fkOff, _fkAssist, _fkAuto } },
+        };
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -60,6 +96,10 @@ public sealed class App : Application
                 new NativeMenuItemSeparator(),
                 _startStopItem,
                 _marqueeItem,
+                new NativeMenuItemSeparator(),
+                _fkStatusItem,
+                _fkEngineItem,
+                fkModeMenu,
                 new NativeMenuItemSeparator(),
                 quitItem,
             },
@@ -141,8 +181,87 @@ public sealed class App : Application
         _marqueeItem.IsChecked = on;
     }
 
+    // ---- feedback engine ----------------------------------------------------
+    private NativeMenuItem FkModeItem(string label, FkMode mode)
+    {
+        var item = new NativeMenuItem(label) { ToggleType = NativeMenuItemToggleType.Radio };
+        item.Click += (_, _) => SelectFkMode(mode);
+        return item;
+    }
+
+    private void SelectFkMode(FkMode mode)
+    {
+        _fkMode = mode;
+        _fkOff!.IsChecked = mode == FkMode.Off;
+        _fkAssist!.IsChecked = mode == FkMode.Assist;
+        _fkAuto!.IsChecked = mode == FkMode.Auto;
+        _engine?.Client.SetMode(mode);
+    }
+
+    private void OnFkEngineClick(object? sender, EventArgs e)
+    {
+        if (_enginePath is null || _fkEngineItem is null)
+        {
+            return;
+        }
+
+        if (_engine is null)
+        {
+            var supervisor = new EngineSupervisor(_enginePath);
+            supervisor.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
+            supervisor.EngineStarted += () => supervisor.Client.SetMode(_fkMode);   // replay after each (re)start
+            _engine = supervisor;
+            supervisor.Start();
+            _fkEngineItem.IsChecked = true;
+        }
+        else
+        {
+            var supervisor = _engine;
+            _engine = null;
+            _fkEngineItem.IsChecked = false;
+            _ = supervisor.DisposeAsync();
+        }
+
+        RenderFk();
+    }
+
+    private void RenderFk()
+    {
+        if (_fkStatusItem is null)
+        {
+            return;
+        }
+
+        _fkStatusItem.Header = _engine is null
+            ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
+            : (_engine.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine starting…");
+    }
+
+    private static string? FindEngine()
+    {
+        var env = Environment.GetEnvironmentVariable("FK_ENGINE_PATH");
+        if (!string.IsNullOrEmpty(env) && File.Exists(env))
+        {
+            return env;
+        }
+
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "fk-engine") };
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            candidates.Add(Path.Combine(dir.FullName, "engine", "build",
+                "fk-engine_artefacts", "Release", "fk-engine"));
+        }
+        return candidates.FirstOrDefault(File.Exists);
+    }
+
     private async void OnQuitClick(object? sender, EventArgs e)
     {
+        if (_engine is not null)
+        {
+            await _engine.DisposeAsync();
+        }
+
         if (_controller is not null)
         {
             await _controller.DisposeAsync();
