@@ -38,6 +38,9 @@ public sealed class App : Application
     private NativeMenuItem? _fkAuto;
     private NativeMenuItem? _fkSpectrumItem;
     private NativeMenuItem? _fkDeviceMenu;
+    private NativeMenuItem? _fkInputsMenu;
+    private NativeMenu? _fkLeadMenu;
+    private NativeMenu? _fkBgvMenu;
     private SpectrumWindow? _spectrumWindow;
 
     // No XAML; everything is built in code.
@@ -100,6 +103,21 @@ public sealed class App : Application
 
         _fkDeviceMenu = new NativeMenuItem("Audio input") { IsEnabled = false, Menu = new NativeMenu() };
 
+        _fkLeadMenu = new NativeMenu();
+        _fkBgvMenu = new NativeMenu();
+        _fkInputsMenu = new NativeMenuItem("Feedback inputs")
+        {
+            IsEnabled = false,
+            Menu = new NativeMenu
+            {
+                Items =
+                {
+                    new NativeMenuItem("LEAD input") { Menu = _fkLeadMenu },
+                    new NativeMenuItem("BGV input") { Menu = _fkBgvMenu },
+                },
+            },
+        };
+
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
 
@@ -117,6 +135,7 @@ public sealed class App : Application
                 _fkStatusItem,
                 _fkEngineItem,
                 _fkDeviceMenu,
+                _fkInputsMenu,
                 fkModeMenu,
                 fkLockAll,
                 fkClear,
@@ -233,6 +252,7 @@ public sealed class App : Application
             var controller = new FeedbackController(_enginePath, dataDir);
             controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
             controller.DevicesChanged += () => Dispatcher.UIThread.Post(RebuildDeviceMenu);
+            controller.ChannelsChanged += () => Dispatcher.UIThread.Post(RebuildChannelMenus);
             _feedback = controller;
             controller.SetMode(_fkMode);   // reflect the menu's current mode
             controller.Start();
@@ -248,6 +268,7 @@ public sealed class App : Application
 
         RenderFk();
         RebuildDeviceMenu();
+        RebuildChannelMenus();
     }
 
     private void RenderFk()
@@ -269,6 +290,56 @@ public sealed class App : Application
         {
             _fkDeviceMenu.IsEnabled = _feedback is not null;
         }
+        if (_fkInputsMenu is not null)
+        {
+            _fkInputsMenu.IsEnabled = _feedback is not null;
+        }
+    }
+
+    private void RebuildChannelMenus()
+    {
+        if (_fkLeadMenu is null || _fkBgvMenu is null)
+        {
+            return;
+        }
+
+        _fkLeadMenu.Items.Clear();
+        _fkBgvMenu.Items.Clear();
+        if (_feedback is null)
+        {
+            return;
+        }
+
+        foreach (var (index, name) in _feedback.InputChannels)
+        {
+            // Skip the device's unpatched slots.
+            if (name.StartsWith("NONE", StringComparison.OrdinalIgnoreCase) || name == "None")
+            {
+                continue;
+            }
+            _fkLeadMenu.Items.Add(ChannelItem(index, name, isLead: true));
+            _fkBgvMenu.Items.Add(ChannelItem(index, name, isLead: false));
+        }
+    }
+
+    private NativeMenuItem ChannelItem(int index, string name, bool isLead)
+    {
+        var current = isLead ? _feedback!.LeadChannel : _feedback!.BgvChannel;
+        var item = new NativeMenuItem(name)
+        {
+            ToggleType = NativeMenuItemToggleType.Radio,
+            IsChecked = index == current,
+        };
+        item.Click += (_, _) =>
+        {
+            if (_feedback is null)
+            {
+                return;
+            }
+            if (isLead) _feedback.SetChannels(index, _feedback.BgvChannel);
+            else _feedback.SetChannels(_feedback.LeadChannel, index);
+        };
+        return item;
     }
 
     private void RebuildDeviceMenu()

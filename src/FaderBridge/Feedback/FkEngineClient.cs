@@ -35,6 +35,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public event Action<FkSpectrum>? SpectrumReceived;
     public event Action<FkAudioState>? AudioStateReceived;
     public event Action<string>? DeviceListed;
+    public event Action<int, string>? ChannelListed;
     public event Action<string>? Error;
 
     public void Start(CancellationToken token)
@@ -55,6 +56,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void LockAll(int ch)                      => Send(new OscMessage("/fk/lockall", ch));
     public void SetAudio(string device, int sampleRate, int bufferSize)
         => Send(new OscMessage("/fk/audio", device, sampleRate, bufferSize));
+    public void SetChannels(int lead, int bgv)       => Send(new OscMessage("/fk/channels/set", lead, bgv));
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
 
     private void Send(OscMessage message)
@@ -120,6 +122,10 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/device" when m.Arguments is [string name]:
                 DeviceListed?.Invoke(name);
+                break;
+
+            case "/fk/channel" when m.Arguments is [int index, string label]:
+                ChannelListed?.Invoke(index, label);
                 break;
         }
     }

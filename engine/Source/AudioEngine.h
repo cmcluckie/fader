@@ -62,6 +62,9 @@ public:
     float cpuLoad() const noexcept { return cpu.load(); }
     bool  running() const noexcept { return isRunning.load(); }
 
+    /// <summary>Which enabled-input pointer feeds each engine channel (LEAD, BGV).</summary>
+    void setInputMap (int leadSrc, int bgvSrc) noexcept { srcMap0.store (leadSrc); srcMap1.store (bgvSrc); }
+
     // ---- AudioIODeviceCallback ---------------------------------------------
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override
     {
@@ -98,12 +101,20 @@ public:
         p.floorDb        = floorDb.load();
         const float q    = notchQ.load();
 
-        const int chans = juce::jmin (numChans, juce::jmin (numInputs, numOutputs));
+        // Each engine channel reads a selected enabled-input pointer (the chosen
+        // physical channels, e.g. ADAT 3/4), and writes the matching output.
+        const int srcs[numChans] = { srcMap0.load(), srcMap1.load() };
 
-        for (int ch = 0; ch < chans; ++ch)
+        for (int ch = 0; ch < numChans; ++ch)
         {
-            const float* in  = inputs[ch];
-            float*       out = outputs[ch];
+            const int s = srcs[ch];
+            if (s < 0 || s >= numInputs || s >= numOutputs || inputs[s] == nullptr || outputs[s] == nullptr)
+            {
+                continue;
+            }
+
+            const float* in  = inputs[s];
+            float*       out = outputs[s];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
             auto& det  = detectors[(size_t) ch];
@@ -123,9 +134,10 @@ public:
             bank.process (out, numSamples, m == Mode::Off);       // Off passes audio untouched
         }
 
-        // any output channels we don't drive get silence, never garbage
-        for (int ch = chans; ch < numOutputs; ++ch)
-            if (outputs[ch] != nullptr) juce::FloatVectorOperations::clear (outputs[ch], numSamples);
+        // any output channel we don't drive gets silence, never garbage
+        for (int c = 0; c < numOutputs; ++c)
+            if (c != srcs[0] && c != srcs[1] && outputs[c] != nullptr)
+                juce::FloatVectorOperations::clear (outputs[c], numSamples);
 
         elapsed += numSamples / sr;
         if (elapsed - lastReleaseCheck > 1.0)
@@ -189,6 +201,7 @@ private:
     std::atomic<int>   persistFrames { 5 };
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };
+    std::atomic<int>   srcMap0 { 0 }, srcMap1 { 1 };   // engine ch -> enabled-input index
 
     static constexpr float stepDb = 3.0f;
     static constexpr int   cmdQueueSize = 128;

@@ -21,10 +21,13 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly FkNotch[][] _latest = { Array.Empty<FkNotch>(), Array.Empty<FkNotch>() };
 
     private readonly List<string> _devices = new();
+    private readonly SortedDictionary<int, string> _channels = new();
     private FkMode _mode = FkMode.Assist;   // §8: default assist
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
+    private int _leadChannel = 0;
+    private int _bgvChannel = 1;
     private volatile bool _pendingReplay;
     // Persistence is gated off from a (re)start until the replay is applied, so a
     // fresh engine's empty notch frames cannot clobber the stored locked filters.
@@ -45,6 +48,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
         _supervisor.Client.DeviceListed += OnDeviceListed;
+        _supervisor.Client.ChannelListed += OnChannelListed;
         _supervisor.Client.AudioStateReceived += OnAudioState;
     }
 
@@ -79,6 +83,26 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         _selectedDevice = device;
         _supervisor.Client.SetAudio(device, 48000, 64);
+    }
+
+    /// <summary>The current device's input channels (index, name).</summary>
+    public IReadOnlyList<(int Index, string Name)> InputChannels
+    {
+        get { lock (_lock) { return _channels.Select(kv => (kv.Key, kv.Value)).ToArray(); } }
+    }
+
+    public int LeadChannel => _leadChannel;
+    public int BgvChannel => _bgvChannel;
+
+    /// <summary>The engine or the channel selection changed.</summary>
+    public event Action? ChannelsChanged;
+
+    /// <summary>Map physical input channels to the two engine channels (LEAD, BGV).</summary>
+    public void SetChannels(int lead, int bgv)
+    {
+        _leadChannel = lead;
+        _bgvChannel = bgv;
+        _supervisor.Client.SetChannels(lead, bgv);
     }
 
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
@@ -121,6 +145,7 @@ public sealed class FeedbackController : IAsyncDisposable
             if (_selectedDevice is { } device)
             {
                 _supervisor.Client.SetAudio(device, 48000, 64);   // re-apply the chosen device
+                _supervisor.Client.SetChannels(_leadChannel, _bgvChannel);
             }
             var toReplay = _store.Load();   // intact - persistence was gated off until now
             if (toReplay.Count > 0)
@@ -186,9 +211,21 @@ public sealed class FeedbackController : IAsyncDisposable
         if (added) DevicesChanged?.Invoke();
     }
 
+    private void OnChannelListed(int index, string name)
+    {
+        lock (_lock) { _channels[index] = name; }
+        ChannelsChanged?.Invoke();
+    }
+
     private void OnAudioState(FkAudioState state)
     {
+        var deviceChanged = state.Device != _currentDevice;
         _currentDevice = state.Device;
+        if (deviceChanged)
+        {
+            lock (_lock) { _channels.Clear(); }   // new device -> new channel set incoming
+            ChannelsChanged?.Invoke();
+        }
         DevicesChanged?.Invoke();
     }
 

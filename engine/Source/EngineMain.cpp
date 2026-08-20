@@ -80,7 +80,8 @@ private:
         else if (a == "/fk/clear"        && m.size() >= 2) engine.clearNotches (m[0].getInt32(), m[1].getInt32() != 0);
         else if (a == "/fk/lockall"      && m.size() >= 1) engine.lockAll     (m[0].getInt32());
         else if (a == "/fk/param"        && m.size() >= 2) applyParam (m[0].getString(), m[1].getFloat32());
-        else if (a == "/fk/audio"        && m.size() >= 3) requestReconfigure (m[0].getString(), m[1].getInt32(), m[2].getInt32());
+        else if (a == "/fk/audio"        && m.size() >= 3) requestAudio (m[0].getString(), m[1].getInt32(), m[2].getInt32());
+        else if (a == "/fk/channels/set" && m.size() >= 2) requestChannels (m[0].getInt32(), m[1].getInt32());
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();
@@ -98,12 +99,23 @@ private:
         else if (name == "floorDb")        engine.setFloorDb (v);
     }
 
-    // Device changes are marshalled to the telemetry thread; AudioDeviceManager
-    // is not safe to reconfigure from the OSC reader thread.
-    void requestReconfigure (const juce::String& device, int sampleRate, int bufferSize)
+    // Device/channel changes are marshalled to the telemetry thread;
+    // AudioDeviceManager is not safe to reconfigure from the OSC reader thread.
+    void requestAudio (const juce::String& device, int sampleRate, int bufferSize)
     {
         const juce::ScopedLock sl (reconfigLock);
-        pending = Reconfig { true, device, sampleRate, bufferSize };
+        _desired.device = device;
+        _desired.sampleRate = sampleRate;
+        _desired.bufferSize = bufferSize;
+        _dirty = true;
+    }
+
+    void requestChannels (int lead, int bgv)
+    {
+        const juce::ScopedLock sl (reconfigLock);
+        _desired.lead = lead;
+        _desired.bgv = bgv;
+        _dirty = true;
     }
 
     // ------------------------------------------------------------------ telemetry
@@ -113,7 +125,7 @@ private:
         while (keepRunning.load())
         {
             applyPendingReconfigure();
-            if (devicesDirty.exchange (false)) sendDevices();
+            if (devicesDirty.exchange (false)) { sendDevices(); sendChannels(); }
 
             const int mask = subscribeMask.load();
 
@@ -132,20 +144,48 @@ private:
 
     void applyPendingReconfigure()
     {
-        Reconfig r;
+        Desired d;
         {
             const juce::ScopedLock sl (reconfigLock);
-            if (! pending.valid) return;
-            r = pending; pending.valid = false;
+            if (! _dirty) return;
+            d = _desired; _dirty = false;
         }
+
         devices.removeAudioCallback (&engine);
+
         juce::AudioDeviceManager::AudioDeviceSetup setup;
-        setup.outputDeviceName = r.device; setup.inputDeviceName = r.device;
-        setup.sampleRate = (double) r.sampleRate; setup.bufferSize = r.bufferSize;
-        setup.useDefaultInputChannels = true; setup.useDefaultOutputChannels = true;
+        setup.outputDeviceName = d.device;
+        setup.inputDeviceName  = d.device;
+        setup.sampleRate       = (double) d.sampleRate;
+        setup.bufferSize       = d.bufferSize;
+        setup.useDefaultInputChannels  = false;
+        setup.useDefaultOutputChannels = false;
+        setup.inputChannels.clear();  setup.inputChannels.setBit (d.lead);  setup.inputChannels.setBit (d.bgv);
+        setup.outputChannels.clear(); setup.outputChannels.setBit (d.lead); setup.outputChannels.setBit (d.bgv);
+
         devices.setAudioDeviceSetup (setup, true);
         devices.addAudioCallback (&engine);
-        sendAudioState (r.device, r.sampleRate, r.bufferSize);
+
+        // Enabled inputs arrive in ascending channel order, so LEAD reads the
+        // lower-numbered of the chosen pair.
+        const bool leadLower = d.lead <= d.bgv;
+        engine.setInputMap (leadLower ? 0 : 1, leadLower ? 1 : 0);
+
+        auto* cur = devices.getCurrentAudioDevice();
+        sendAudioState (cur ? cur->getName() : d.device,
+                        cur ? (int) cur->getCurrentSampleRate() : d.sampleRate,
+                        cur ? cur->getCurrentBufferSizeSamples() : d.bufferSize);
+        sendChannels();
+    }
+
+    // Report every input channel name of the current device (for the picker).
+    void sendChannels()
+    {
+        auto* cur = devices.getCurrentAudioDevice();
+        if (cur == nullptr) return;
+        const auto names = cur->getInputChannelNames();
+        for (int i = 0; i < names.size(); ++i)
+            sender.send (juce::OSCMessage ("/fk/channel", i, names[i]));
     }
 
     void sendNotches()
@@ -223,7 +263,7 @@ private:
         msg.addInt32 (engine.running() ? 1 : 0); sender.send (msg);
     }
 
-    struct Reconfig { bool valid = false; juce::String device; int sampleRate = 0; int bufferSize = 0; };
+    struct Desired { juce::String device; int sampleRate = 48000; int bufferSize = 64; int lead = 0; int bgv = 1; };
 
     juce::AudioDeviceManager devices;
     AudioEngine              engine;
@@ -234,7 +274,8 @@ private:
     std::atomic<int>         subscribeMask { 0xF };
     std::atomic<bool>        devicesDirty { true };   // send the device list once at start
     juce::CriticalSection    reconfigLock;
-    Reconfig                 pending;
+    Desired                  _desired;
+    bool                     _dirty = false;
 };
 
 } // namespace fk
