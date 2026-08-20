@@ -15,6 +15,7 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private readonly EngineSupervisor _supervisor;
     private readonly FkNotchStore _store;
+    private readonly FkAudioStore _audioStore;
     private readonly FkEventLog _log;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly object _lock = new();
@@ -35,7 +36,13 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public FeedbackController(string enginePath, string dataDir, string? device = null)
     {
-        _supervisor = new EngineSupervisor(enginePath, device);
+        _audioStore = new FkAudioStore(Path.Combine(dataDir, "audio.json"));
+        var audio = _audioStore.Load();
+        _selectedDevice = audio.Device;
+        _leadChannel = audio.Lead;
+        _bgvChannel = audio.Bgv;
+
+        _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
         _log = new FkEventLog(Path.Combine(dataDir, "logs"));
 
@@ -83,6 +90,7 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         _selectedDevice = device;
         _supervisor.Client.SetAudio(device, 48000, 64);
+        SaveAudio();
     }
 
     /// <summary>The current device's input channels (index, name).</summary>
@@ -103,7 +111,11 @@ public sealed class FeedbackController : IAsyncDisposable
         _leadChannel = lead;
         _bgvChannel = bgv;
         _supervisor.Client.SetChannels(lead, bgv);
+        SaveAudio();
     }
+
+    private void SaveAudio() =>
+        _audioStore.Save(new AudioSelection(_selectedDevice, _leadChannel, _bgvChannel));
 
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
 

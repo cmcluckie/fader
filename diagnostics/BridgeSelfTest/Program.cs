@@ -161,6 +161,12 @@ internal static class Program
                 lines.Length >= 2 && lines[1] == "12.345,LEAD,1234.56,-20.50,1");
             Check("csv logs a BGV detection as flagged-only",
                 lines.Length >= 3 && lines[2] == "15.000,BGV,800.00,-30.00,0");
+
+            var audio = new FkAudioStore(Path.Combine(dir, "audio.json"));
+            Check("empty audio store is default", audio.Load() == AudioSelection.Default);
+            audio.Save(new AudioSelection("Universal Audio Thunderbolt", 4, 5));
+            Check("audio store round-trips device + ADAT channels",
+                audio.Load() is { Device: "Universal Audio Thunderbolt", Lead: 4, Bgv: 5 });
         }
         finally
         {
