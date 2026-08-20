@@ -8,3 +8,7 @@ dist/
 .vs/
 .idea/
 .DS_Store
+
+# feedback engine
+engine/build/
+docs/FeedbackKiller.zip
