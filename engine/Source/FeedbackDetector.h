@@ -34,7 +34,7 @@ public:
         float  stabilityHz    = 5.0f;   // peak may drift at most this many Hz across the window
         float  growthDb       = 3.0f;   // net rise required over the window (loop gain > 1)
         float  harmonicDb     = 20.0f;  // energy at 2f/3f within this of f => musical
-        int    harmonicExtra  = 18;     // extra frames (~200 ms) required if harmonic-related
+        int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
         float  inputGateDb    = -55.0f; // skip detection when broadband input is below this
         float  minFreq        = 200.0f; // low edge of the watched band
@@ -51,7 +51,7 @@ public:
     static constexpr int fftOrder  = 11;              // 2048 -> 23.4 Hz bins at 48k
     static constexpr int fftSize   = 1 << fftOrder;
     static constexpr int numBins   = fftSize / 2;
-    static constexpr int hopSize   = fftSize / 4;     // 512 -> ~10.7 ms between frames
+    static constexpr int hopSize   = fftSize / 8;     // 256 -> ~5.3 ms between frames
     static constexpr int maxSuspects = 24;
     static constexpr int eventQueueSize = 16;
 
@@ -106,20 +106,29 @@ public:
     float getBinHz() const noexcept        { return binHz; }
 
 private:
+    static constexpr int windowSize = 48;   // >= any usable persistFrames
+
     struct Suspect
     {
         bool   active      = false;
         bool   harmonic    = false;   // looked harmonically-related when first seen
         float  freq        = 0.0f;
-        float  minFreq     = 0.0f;
-        float  maxFreq     = 0.0f;
-        float  firstLevel  = 0.0f;
         float  lastLevel   = 0.0f;
         int    frames      = 0;
         int    missed      = 0;
         bool   reported    = false;
         float  reportLevel = 0.0f;    // level at the last event, for escalation
         int    sinceReport = 0;
+
+        // Stability and growth are judged over a ROLLING window, not the suspect's
+        // whole life. Judging them cumulatively was a real bug: a tone that wandered
+        // while it built blew its +-5 Hz budget permanently, and since the envelope
+        // only ever widened it could never qualify again. That is exactly the moment
+        // feedback hops to a new frequency, so the fastest-moving rings were the ones
+        // we went blind to.
+        std::array<float, windowSize> wFreq {};
+        std::array<float, windowSize> wLevel {};
+        int    windowPos   = 0;
     };
 
     void analyse() noexcept
@@ -217,11 +226,23 @@ private:
             s.frames   += 1;
             s.lastLevel = levelDb;
             s.freq      = 0.8f * s.freq + 0.2f * freq;
-            s.minFreq   = juce::jmin (s.minFreq, freq);
-            s.maxFreq   = juce::jmax (s.maxFreq, freq);
 
-            const float spread = s.maxFreq - s.minFreq;                 // §4.2 absolute Hz
-            const float growth = s.lastLevel - s.firstLevel;           // §4.3 net rise
+            s.wFreq[(size_t) s.windowPos]  = freq;
+            s.wLevel[(size_t) s.windowPos] = levelDb;
+            s.windowPos = (s.windowPos + 1) % windowSize;
+
+            // §4.2/§4.3 over the last N frames only
+            const int n = juce::jlimit (1, windowSize, juce::jmin (s.frames, params.persistFrames));
+            float lo = 1.0e9f, hi = -1.0e9f;
+            for (int i = 1; i <= n; ++i)
+            {
+                const int idx = (s.windowPos - i + windowSize) % windowSize;
+                lo = juce::jmin (lo, s.wFreq[(size_t) idx]);
+                hi = juce::jmax (hi, s.wFreq[(size_t) idx]);
+            }
+            const int   oldest = (s.windowPos - n + windowSize) % windowSize;
+            const float spread = hi - lo;
+            const float growth = levelDb - s.wLevel[(size_t) oldest];
             const int   need   = params.persistFrames + (s.harmonic ? params.harmonicExtra : 0);
 
             if (! s.reported)
@@ -265,11 +286,11 @@ private:
             s.active     = true;
             s.harmonic   = harmonic;
             s.freq       = freq;
-            s.minFreq    = freq;
-            s.maxFreq    = freq;
-            s.firstLevel = levelDb;
             s.lastLevel  = levelDb;
             s.frames     = 1;
+            s.wFreq[0]   = freq;
+            s.wLevel[0]  = levelDb;
+            s.windowPos  = 1;
             return;
         }
     }
