@@ -29,10 +29,12 @@ class FeedbackDetector
 public:
     struct Params
     {
-        float  prominenceDb   = 12.0f;  // spike must stand this far above the local median
+        float  prominenceDb   = 10.0f;  // spike must stand this far above the local median
         int    persistFrames  = 6;      // stability window, ~64 ms at 512 hop / 48k
         float  stabilityHz    = 5.0f;   // peak may drift at most this many Hz across the window
-        float  growthDb       = 3.0f;   // net rise required over the window (loop gain > 1)
+        float  growthDb       = 3.0f;   // required rise expressed per 100 ms (loop gain > 1);
+                                        // scaled to the real window so the threshold does
+                                        // not silently change when the hop size does
         float  harmonicDb     = 20.0f;  // energy at 2f/3f within this of f => musical
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
@@ -243,11 +245,19 @@ private:
             const int   oldest = (s.windowPos - n + windowSize) % windowSize;
             const float spread = hi - lo;
             const float growth = levelDb - s.wLevel[(size_t) oldest];
+
+            // Growth is a RATE. Comparing a fixed dB figure against whatever the
+            // window happens to be couples the threshold to the hop size: halving
+            // the hop once made this test 3x stricter by accident, so only violently
+            // building rings qualified and steady ones were ignored until they were
+            // already loud. Scale the requirement to the window's real duration.
+            const float windowSec  = (float) (n * hopSize) / (float) sampleRate;
+            const float needGrowth = params.growthDb * (windowSec / 0.1f);
             const int   need   = params.persistFrames + (s.harmonic ? params.harmonicExtra : 0);
 
             if (! s.reported)
             {
-                if (s.frames >= need && spread <= params.stabilityHz && growth >= params.growthDb)
+                if (s.frames >= need && spread <= params.stabilityHz && growth >= needGrowth)
                 {
                     s.reported    = true;
                     s.reportLevel = s.lastLevel;

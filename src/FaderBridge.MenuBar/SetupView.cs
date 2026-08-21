@@ -150,9 +150,9 @@ public sealed class SetupView : UserControl
         foreach (var (label, value) in new[]
                  {
                      ("Search band", "200 Hz – 16 kHz"),
-                     ("Prominence", "12 dB over floor"),
-                     ("Stability", "±5 Hz / 64 ms"),
-                     ("Growth", "3 dB / 64 ms"),
+                     ("Prominence", "10 dB over floor"),
+                     ("Stability", "±5 Hz / 32 ms"),
+                     ("Growth", "30 dB / sec"),
                      ("Hold → bleed", "10 s, then 1.5 dB/s"),
                      ("Notch depth", "−12 → −30 dB, Q25"),
                  })
