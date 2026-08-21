@@ -24,7 +24,18 @@ public sealed class SetupView : UserControl
     private readonly GuardSpectrum _band = new() { Height = 150, Editable = true };
     private readonly TextBlock _bandLabel = Ui.Mono("", 12.5, Tokens.InkDim);
     private readonly ComboBox _lowEdge = new() { MinWidth = 150 };
+    private readonly ComboBox _attack = new() { MinWidth = 130 };
+    private readonly ComboBox _maxCut = new() { MinWidth = 130 };
     private bool _syncingEdge;
+
+    // Named in what the operator is deciding, not in what it sets underneath.
+    private static readonly string[] Attacks = { "Gentle", "Normal", "Fast" };
+    private static readonly (string Label, float Db)[] Cuts =
+    {
+        ("Light — −18 dB", -18f),
+        ("Normal — −24 dB", -24f),
+        ("Deep — −30 dB", -30f),
+    };
 
     // Somewhere to start without guessing. A vocal wedge rings above ~1 kHz, so
     // "1 kHz - vocal mic" is the one most rigs want.
@@ -99,16 +110,40 @@ public sealed class SetupView : UserControl
             _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
         };
 
+        _band.SetFloor(_feedback.FloorDb);
+        _band.FloorDragged += db =>
+        {
+            _feedback.SetFloor(db);
+            _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)} above {db:0} dB";
+        };
+
+        _attack.ItemsSource = Attacks;
+        _attack.SelectedIndex = _feedback.Attack;
+        _attack.SelectionChanged += (_, _) =>
+        {
+            if (_syncingEdge || _attack.SelectedIndex < 0) return;
+            _feedback.SetAttack(_attack.SelectedIndex);
+        };
+
+        _maxCut.ItemsSource = Cuts.Select(c => c.Label).ToArray();
+        _maxCut.SelectedIndex = Array.FindIndex(Cuts, c => Math.Abs(c.Db - _feedback.MaxCutDb) < 0.5f) is var ci && ci >= 0 ? ci : 1;
+        _maxCut.SelectionChanged += (_, _) =>
+        {
+            if (_syncingEdge || _maxCut.SelectedIndex < 0) return;
+            _feedback.SetMaxCut(Cuts[_maxCut.SelectedIndex].Db);
+        };
+
         var bandHead = Ui.Stack(Orientation.Horizontal, 12,
             Ui.Caption("Listen band"), _bandLabel);
         var bandBox = Ui.Stack(Orientation.Vertical, 8,
             bandHead,
             _band,
-            Ui.Stack(Orientation.Horizontal, 12,
+            Ui.Stack(Orientation.Horizontal, 16,
                 Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Low edge"), _lowEdge),
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption(" "),
-                    Ui.Text("Pick a low edge, or drag the teal handles. Greyed = ignored — keep it above your voice.",
-                            12.5, Tokens.InkFaint))));
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Attack"), _attack),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Max cut"), _maxCut)),
+            Ui.Text("It cuts what lands inside the box: between the teal handles and above the dashed line. Drag any of the three.",
+                    12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
         var disclosure = BuildDisclosure();

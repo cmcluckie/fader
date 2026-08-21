@@ -83,6 +83,7 @@ internal static class Program
         var spectrum = new GuardSpectrum { Height = 200, Editable = true };
         spectrum.SetSlot(0, SynthSpectrum());
         spectrum.SetRange(1000f, 16000f);
+        spectrum.SetFloor(-55f);
         var many = new List<(float, float)>();
         for (var i = 0; i < 20; i++) many.Add((180f + i * 42f, -3f - i * 1.2f));
         many.Add((2140f, -24f)); many.Add((9840f, -30f));
@@ -154,7 +155,10 @@ internal static class Program
         band.SetSlot(0, SynthSpectrum());
         band.SetRange(200f, 16000f);
         (float Lo, float Hi) range = (200f, 16000f);
+        var floor = -70f;
+        band.SetFloor(floor);
         band.RangeDragged += (lo, hi) => range = (lo, hi);
+        band.FloorDragged += db => floor = db;
 
         var window = new Window { Width = 900, Height = 200, Background = Tokens.Ground, Content = band };
         window.Show();

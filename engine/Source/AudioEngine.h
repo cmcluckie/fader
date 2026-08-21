@@ -58,6 +58,7 @@ public:
     void setTestTone (float hz) noexcept     { testTone.store (hz); }
 
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
+    void setInitialCutDb (float v) noexcept  { initialCut.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
     void setProminenceDb (float v) noexcept  { prominenceDb.store (v); }
@@ -159,6 +160,8 @@ public:
             auto& bank = banks[(size_t) ch];
             det.setParams (p);
             bank.defaultQ    = q;
+            bank.initialCutDb = initialCut.load();
+            bank.fastTrackCutDb = initialCut.load() - 6.0f;
             bank.softCapDb   = softCap;              // user "max cut" == the soft cap
             bank.hardCapDb   = softCap - 6.0f;       // one more step for a stubborn tone
             bank.holdSeconds = (double) releaseSeconds.load();
@@ -264,6 +267,7 @@ private:
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
+    std::atomic<float> initialCut { -12.0f };
     std::atomic<int>   persistFrames { 6 };
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };

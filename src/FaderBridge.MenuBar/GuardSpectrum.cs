@@ -23,13 +23,16 @@ public sealed class GuardSpectrum : Control
 
     // Usable travel for the band edges. The 1.5x gap keeps them from crossing or
     // pinching into a slot too narrow to detect anything in.
+    public const float MinFloorDb = -90f;
+    public const float MaxFloorDb = -20f;
     public const float MinEdgeHz = 40f;
     public const float MaxLowHz = 8000f;
     public const float MinHighHz = 1000f;
     public const float MaxEdgeHz = 18000f;
 
     private float _minHz = 200f, _maxHz = 16000f;
-    private int _dragging;                                          // -1 low edge, +1 high edge, 0 none
+    private float _floorDb = -70f;
+    private int _dragging;                          // -1 low edge, +1 high edge, 2 floor, 0 none
 
     private readonly Dictionary<int, float[]> _slots = new();       // engine slot -> log bands
     private readonly List<(float Hz, float Depth, long Ticks)> _notches = new();
@@ -56,6 +59,15 @@ public sealed class GuardSpectrum : Control
     {
         _minHz = minHz;
         _maxHz = maxHz;
+        InvalidateVisual();
+    }
+
+    /// <summary>Raised while dragging the floor line, with the new level.</summary>
+    public event Action<float>? FloorDragged;
+
+    public void SetFloor(float db)
+    {
+        _floorDb = db;
         InvalidateVisual();
     }
 
@@ -130,6 +142,16 @@ public sealed class GuardSpectrum : Control
         if (lo > 0) ctx.FillRectangle(shade, new Rect(0, 0, lo, h - 16));
         if (hi < w) ctx.FillRectangle(shade, new Rect(hi, 0, w - hi, h - 16));
 
+        // The floor closes the box: with the two edges it reads as one rule -
+        // "cut things inside this rectangle" - which is the whole model in a glance.
+        var fy = FloorY(_floorDb, h);
+        ctx.FillRectangle(shade, new Rect(lo, fy, Math.Max(0, hi - lo), Math.Max(0, (h - 16) - fy)));
+
+        var floorPen = new Pen(Tokens.Accent, Editable ? 2 : 1) { DashStyle = new DashStyle(new double[] { 4, 3 }, 0) };
+        ctx.DrawLine(floorPen, new Point(lo, fy), new Point(hi, fy));
+        if (Editable)
+            ctx.DrawEllipse(Tokens.Ground, new Pen(Tokens.Accent, 2), new Point((lo + hi) / 2, fy), 8, 8);
+
         var pen = new Pen(Tokens.Accent, Editable ? 2 : 1);
         foreach (var x in new[] { lo, hi })
         {
@@ -146,6 +168,13 @@ public sealed class GuardSpectrum : Control
     /// </summary>
     private static double HandleX(double hz, double w) =>
         Math.Clamp(XForHz(hz, w), 8, Math.Max(8, w - 8));
+
+    private static double FloorY(double db, double h) =>
+        Math.Clamp(YForDb(db, h), 8, Math.Max(8, (h - 16) - 8));
+
+    /// <summary>Inverse of YForDb: top of the plot is 0 dB, bottom is MinDb.</summary>
+    private static double DbForY(double y, double h) =>
+        Math.Clamp(MinDb * (y / Math.Max(1, h - 18)), MinFloorDb, MaxFloorDb);
 
     private void DrawNotches(DrawingContext ctx, double w, double h)
     {
@@ -185,10 +214,19 @@ public sealed class GuardSpectrum : Control
         if (!Editable) return;
         var x = e.GetPosition(this).X;
         var w = Bounds.Width;
+        var y = e.GetPosition(this).Y;
+        var h = Bounds.Height;
         var dLo = Math.Abs(x - HandleX(_minHz, w));
         var dHi = Math.Abs(x - HandleX(_maxHz, w));
-        if (Math.Min(dLo, dHi) > 30) return;
-        _dragging = dLo <= dHi ? -1 : 1;
+
+        if (Math.Min(dLo, dHi) <= 30)
+            _dragging = dLo <= dHi ? -1 : 1;
+        else if (Math.Abs(y - FloorY(_floorDb, h)) <= 16
+                 && x > HandleX(_minHz, w) && x < HandleX(_maxHz, w))
+            _dragging = 2;
+        else
+            return;
+
         e.Pointer.Capture(this);
     }
 
@@ -200,11 +238,23 @@ public sealed class GuardSpectrum : Control
         {
             if (!Editable) return;
             var px = e.GetPosition(this).X;
-            var near = Math.Min(Math.Abs(px - HandleX(_minHz, Bounds.Width)),
-                                Math.Abs(px - HandleX(_maxHz, Bounds.Width))) <= 30;
-            Cursor = new Cursor(near ? StandardCursorType.SizeWestEast : StandardCursorType.Arrow);
+            var py = e.GetPosition(this).Y;
+            var nearEdge = Math.Min(Math.Abs(px - HandleX(_minHz, Bounds.Width)),
+                                    Math.Abs(px - HandleX(_maxHz, Bounds.Width))) <= 30;
+            var nearFloor = !nearEdge && Math.Abs(py - FloorY(_floorDb, Bounds.Height)) <= 16;
+            Cursor = new Cursor(nearEdge ? StandardCursorType.SizeWestEast
+                              : nearFloor ? StandardCursorType.SizeNorthSouth
+                              : StandardCursorType.Arrow);
             return;
         }
+        if (_dragging == 2)
+        {
+            _floorDb = (float) DbForY(e.GetPosition(this).Y, Bounds.Height);
+            FloorDragged?.Invoke(_floorDb);
+            InvalidateVisual();
+            return;
+        }
+
         var hz = HzForX(e.GetPosition(this).X, Bounds.Width);
         if (_dragging < 0) _minHz = (float) Math.Clamp(hz, MinEdgeHz, Math.Min(_maxHz / 1.5, MaxLowHz));
         else               _maxHz = (float) Math.Clamp(hz, Math.Max(_minHz * 1.5, MinHighHz), MaxEdgeHz);

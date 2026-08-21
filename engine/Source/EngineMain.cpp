@@ -94,6 +94,7 @@ private:
     void applyParam (const juce::String& name, float v)
     {
         if      (name == "maxCutDb")       engine.setMaxCutDb (v);
+        else if (name == "initialCut")     engine.setInitialCutDb (v);
         else if (name == "notchQ")         engine.setNotchQ (v);
         else if (name == "releaseSeconds") engine.setReleaseSeconds (v);
         else if (name == "prominenceDb")   engine.setProminenceDb (v);

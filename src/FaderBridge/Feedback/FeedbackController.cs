@@ -32,7 +32,8 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly Dictionary<int, int> _returns = new();    // physical input -> return output
     private readonly SortedDictionary<int, string> _outChannels = new();
 
-    private float _minHz = 200f, _maxHz = 16000f;
+    private float _minHz = 200f, _maxHz = 16000f, _floorDb = -70f, _maxCutDb = -24f;
+    private int _attack = 1;
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
@@ -55,6 +56,9 @@ public sealed class FeedbackController : IAsyncDisposable
         }
         _minHz = audio.MinHz > 0 ? audio.MinHz : 200f;
         _maxHz = audio.MaxHz > 0 ? audio.MaxHz : 16000f;
+        _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -70f;
+        _maxCutDb = audio.MaxCutDb < 0 ? audio.MaxCutDb : -24f;
+        _attack = Math.Clamp(audio.Attack, 0, 2);
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -110,6 +114,56 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         _supervisor.Client.SetParam("minFreq", _minHz);
         _supervisor.Client.SetParam("maxFreq", _maxHz);
+    }
+
+    /// <summary>Ignore anything quieter than this - the lid on the "cut inside this box" rule.</summary>
+    public float FloorDb => _floorDb;
+
+    public void SetFloor(float db)
+    {
+        db = Math.Clamp(db, -90f, -20f);
+        if (Math.Abs(db - _floorDb) < 0.5f) return;
+        _floorDb = db;
+        _supervisor.Client.SetParam("floorDb", _floorDb);
+        SaveAudio();
+        SearchRangeChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// How eagerly it reacts, 0 gentle / 1 normal / 2 fast. One control moving the
+    /// several parameters that together make up "attack" - you think "react
+    /// quicker", not "set persistFrames to 4".
+    /// </summary>
+    public int Attack => _attack;
+
+    public void SetAttack(int level)
+    {
+        _attack = Math.Clamp(level, 0, 2);
+        PushAttack();
+        SaveAudio();
+    }
+
+    private void PushAttack()
+    {
+        // confirm frames, first-strike depth
+        var (frames, firstCut) = _attack switch
+        {
+            0 => (10f, -6f),    // gentle: more evidence, ease in
+            2 => (4f, -18f),    // fast: act on less, hit hard
+            _ => (6f, -12f),    // normal
+        };
+        _supervisor.Client.SetParam("persistFrames", frames);
+        _supervisor.Client.SetParam("initialCut", firstCut);
+    }
+
+    /// <summary>How deep a single notch may go - the tone-versus-safety trade.</summary>
+    public float MaxCutDb => _maxCutDb;
+
+    public void SetMaxCut(float db)
+    {
+        _maxCutDb = Math.Clamp(db, -36f, -9f);
+        _supervisor.Client.SetParam("maxCutDb", _maxCutDb);
+        SaveAudio();
     }
     public event Action? DevicesChanged;
     public event Action? ChannelsChanged;                     // channel list or enabled set changed
@@ -259,7 +313,8 @@ public sealed class FeedbackController : IAsyncDisposable
             returns = _returns.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
         }
         _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
-            Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz));
+            Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz,
+            FloorDb: _floorDb, Attack: _attack, MaxCutDb: _maxCutDb));
     }
 
     // ---- lifecycle + notch ops ---------------------------------------------
@@ -310,6 +365,9 @@ public sealed class FeedbackController : IAsyncDisposable
             }
             PushRouting();
             PushSearchRange();
+            PushAttack();
+            _supervisor.Client.SetParam("floorDb", _floorDb);
+            _supervisor.Client.SetParam("maxCutDb", _maxCutDb);
             if (IsBypassed) _supervisor.Client.SetBypass(true);   // a fresh engine starts un-bypassed
 
             // Replay locked notches, mapping their physical channel to its slot.
