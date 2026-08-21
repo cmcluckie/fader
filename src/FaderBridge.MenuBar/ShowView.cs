@@ -64,6 +64,7 @@ public sealed class ShowView : UserControl
 
         _spectrum.Height = 230;
         _spectrum.SetRange(feedback.MinHz, feedback.MaxHz);
+        _spectrum.SetFloor(feedback.FloorDb);
 
         _bypass.Clicked += () => _feedback.SetBypass(!_feedback.IsBypassed);
         _panic.Fired += () => _feedback.ClearAll(includeLocked: true);
@@ -143,8 +144,13 @@ public sealed class ShowView : UserControl
         _spectrum.InvalidateVisual();
     }
 
-    private void OnRange() => Dispatcher.UIThread.Post(
-        () => _spectrum.SetRange(_feedback.MinHz, _feedback.MaxHz));
+    // Both edges AND the floor - Show mirrors the whole box, or the two screens
+    // disagree about what is being policed.
+    private void OnRange() => Dispatcher.UIThread.Post(() =>
+    {
+        _spectrum.SetRange(_feedback.MinHz, _feedback.MaxHz);
+        _spectrum.SetFloor(_feedback.FloorDb);
+    });
 
     private void OnChannels() => Dispatcher.UIThread.Post(RebuildTiles);
     private void OnEngineOk(bool _) => Dispatcher.UIThread.Post(RenderState);
