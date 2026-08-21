@@ -38,6 +38,10 @@ public sealed class App : Application
 
     public override void Initialize()
     {
+        // Code-only app (no App.axaml): load a control theme so templated controls
+        // (ComboBox, CheckBox, ScrollViewer, …) actually render. Dark to match.
+        Styles.Add(new Avalonia.Themes.Fluent.FluentTheme());
+        RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
     }
 
     public override void OnFrameworkInitializationCompleted()

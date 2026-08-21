@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 
 namespace Fader.MenuBar;
 
@@ -16,6 +18,14 @@ internal static class Program
         if (args is ["--render-spectrum", var path])
         {
             RenderSpectrum(path);
+            return;
+        }
+
+        // Hidden: render a themed ComboBox + CheckBox to a PNG, to verify the
+        // control theme is actually loaded (templated controls draw, not blank).
+        if (args is ["--render-config", var cpath])
+        {
+            RenderConfigControls(cpath);
             return;
         }
 
@@ -40,6 +50,48 @@ internal static class Program
         var bitmap = new RenderTargetBitmap(new PixelSize(760, 380), new Vector(96, 96));
         bitmap.Render(view);
         bitmap.Save(path);
+        Console.WriteLine($"wrote {path}");
+    }
+
+    private static void RenderConfigControls(string path)
+    {
+        // A real windowing root is required for Application.Styles (the theme) to
+        // apply, so use the headless platform with real (Skia) drawing and capture
+        // the rendered frame.
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        var window = new Window
+        {
+            Width = 320,
+            Height = 170,
+            Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x12, 0x14, 0x1A)),
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20),
+                Spacing = 14,
+                Children =
+                {
+                    new TextBlock { Text = "Device", Foreground = Avalonia.Media.Brushes.Gray },
+                    new ComboBox
+                    {
+                        PlaceholderText = "Select audio device…",
+                        ItemsSource = new[] { "Universal Audio Thunderbolt", "MacBook Pro Microphone" },
+                        SelectedIndex = 0,
+                        Width = 260,
+                    },
+                    new CheckBox { Content = "Ch 1", IsChecked = true },
+                },
+            },
+        };
+
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        using var frame = window.CaptureRenderedFrame();
+        frame!.Save(path);
         Console.WriteLine($"wrote {path}");
     }
 
