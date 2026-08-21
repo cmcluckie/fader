@@ -28,6 +28,7 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly List<string> _devices = new();
     private readonly SortedDictionary<int, string> _channels = new();
     private readonly List<int> _enabled = new();          // physical indices, sorted
+    private readonly Dictionary<int, string> _names = new();   // physical index -> user label
 
     private string _savedSignature = "";
     private string? _currentDevice;
@@ -41,6 +42,10 @@ public sealed class FeedbackController : IAsyncDisposable
         var audio = _audioStore.Load();
         _selectedDevice = audio.Device;
         _enabled.AddRange((audio.Inputs ?? Array.Empty<int>()).Distinct().OrderBy(x => x).Take(MaxChans));
+        foreach (var (key, value) in audio.Names ?? new Dictionary<string, string>())
+        {
+            if (int.TryParse(key, out var index)) _names[index] = value;
+        }
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -51,6 +56,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.EngineStarted += () => { _pendingReplay = true; _allowPersist = false; };
         _supervisor.EngineOkChanged += OnEngineOk;
         _supervisor.Log += m => Log?.Invoke(m);
+        _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
@@ -67,6 +73,7 @@ public sealed class FeedbackController : IAsyncDisposable
     public event Action<int, FkNotch[]>? NotchesChanged;      // slot, notches
     public event Action<FkSpectrum>? SpectrumChanged;         // slot in .Channel
     public event Action<FkDetection>? DetectionReceived;      // slot in .Channel
+    public event Action<FkStatus>? StatusChanged;             // engine running + CPU load
     public event Action? DevicesChanged;
     public event Action? ChannelsChanged;                     // channel list or enabled set changed
 
@@ -76,7 +83,9 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public void SetDevice(string device)
     {
-        lock (_lock) { _selectedDevice = device; _enabled.Clear(); }   // new device -> new channel space
+        // A new device is a new channel space: arms and labels no longer refer to
+        // the same physical inputs, so both are cleared rather than silently wrong.
+        lock (_lock) { _selectedDevice = device; _enabled.Clear(); _names.Clear(); }
         _supervisor.Client.SetAudio(device, 48000, 64);
         _supervisor.Client.SetInputs(EnabledSnapshot());
         SaveAudio();
@@ -95,7 +104,41 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public bool IsInputEnabled(int channel) { lock (_lock) { return _enabled.Contains(channel); } }
 
-    public string ChannelName(int channel) { lock (_lock) { return _channels.GetValueOrDefault(channel, $"Ch {channel + 1}"); } }
+    /// <summary>
+    /// What to call this input. A name the user gave it wins over the interface's own
+    /// channel name: on stage you look for "Lead", not "Input 4 (Thunderbolt)".
+    /// </summary>
+    public string ChannelName(int channel)
+    {
+        lock (_lock)
+        {
+            if (_names.TryGetValue(channel, out var custom) && !string.IsNullOrWhiteSpace(custom)) return custom;
+            return _channels.GetValueOrDefault(channel, $"Ch {channel + 1}");
+        }
+    }
+
+    /// <summary>The interface's own name for the input, ignoring any user label.</summary>
+    public string HardwareName(int channel)
+    {
+        lock (_lock) { return _channels.GetValueOrDefault(channel, $"Ch {channel + 1}"); }
+    }
+
+    public bool HasCustomName(int channel)
+    {
+        lock (_lock) { return _names.ContainsKey(channel); }
+    }
+
+    /// <summary>Rename an input. Blank clears the label and falls back to the hardware name.</summary>
+    public void SetChannelName(int channel, string? name)
+    {
+        lock (_lock)
+        {
+            if (string.IsNullOrWhiteSpace(name)) _names.Remove(channel);
+            else _names[channel] = name.Trim();
+        }
+        SaveAudio();
+        ChannelsChanged?.Invoke();
+    }
 
     /// <summary>Check or uncheck a physical channel for feedback (monitor + cut).</summary>
     public void SetInputEnabled(int channel, bool on)
@@ -128,7 +171,12 @@ public sealed class FeedbackController : IAsyncDisposable
 
     // The controller only exists while feedback is enabled, so persist Enabled=true
     // whenever it saves; the app writes Enabled=false when it is switched off.
-    private void SaveAudio() => _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true));
+    private void SaveAudio()
+    {
+        Dictionary<string, string> names;
+        lock (_lock) { names = _names.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value); }
+        _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true, Names: names));
+    }
 
     // ---- lifecycle + notch ops ---------------------------------------------
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
@@ -136,6 +184,21 @@ public sealed class FeedbackController : IAsyncDisposable
     /// <summary>Hand-place a locked notch on an engine slot (used by tests).</summary>
     public void PlaceManualNotch(int slot, float hz, float depthDb) =>
         _supervisor.Client.PlaceNotch(slot, hz, depthDb);
+
+    /// <summary>
+    /// Show-mode bypass: audio passes clean while every notch keeps its state, so
+    /// un-bypassing restores the guard exactly as it was. Replayed on engine restart.
+    /// </summary>
+    public bool IsBypassed { get; private set; }
+
+    public void SetBypass(bool on)
+    {
+        IsBypassed = on;
+        _supervisor.Client.SetBypass(on);
+        BypassChanged?.Invoke(on);
+    }
+
+    public event Action<bool>? BypassChanged;
 
     public void LockAll()
     {
@@ -162,6 +225,7 @@ public sealed class FeedbackController : IAsyncDisposable
                 _supervisor.Client.SetAudio(device, 48000, 64);
             }
             _supervisor.Client.SetInputs(EnabledSnapshot());
+            if (IsBypassed) _supervisor.Client.SetBypass(true);   // a fresh engine starts un-bypassed
 
             // Replay locked notches, mapping their physical channel to its slot.
             var toReplay = _store.Load();

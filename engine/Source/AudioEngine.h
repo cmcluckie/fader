@@ -31,6 +31,10 @@ public:
     void setActiveChannels (int n) noexcept { activeChans.store (juce::jlimit (0, maxChans, n)); }
     int  activeChannels() const noexcept    { return activeChans.load(); }
 
+    /// <summary>Pass audio through untouched, keeping every notch's state intact.</summary>
+    void setBypass (bool b) noexcept         { bypassed.store (b); }
+    bool isBypassed() const noexcept         { return bypassed.load(); }
+
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
@@ -111,7 +115,8 @@ public:
         const float q       = notchQ.load();
         const float softCap = maxCutDb.load();
 
-        const int active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
+        const int  active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
+        const bool bypass = bypassed.load();
 
         for (int ch = 0; ch < active; ++ch)
         {
@@ -138,7 +143,8 @@ public:
                 pushEvent ({ ch, ev.freq, ev.levelDb });   // C# logs + displays it
             }
 
-            bank.process (out, numSamples, false);
+            // Bypassed: notch state still tracks, the audio just isn't filtered.
+            bank.process (out, numSamples, bypass);
         }
 
         // outputs we don't drive get silence, never garbage
@@ -209,6 +215,7 @@ private:
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
     std::atomic<int>   persistFrames { 9 };
+    std::atomic<bool>  bypassed { false };
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };
 

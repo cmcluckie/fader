@@ -36,7 +36,7 @@ public sealed class App : Application
     private NativeMenuItem? _fkConfigItem;
     private NativeMenuItem? _fkSpectrumItem;
     private SpectrumWindow? _spectrumWindow;
-    private ConfigWindow? _configWindow;
+    private FaderWindow? _faderWindow;
 
     public override void Initialize()
     {
@@ -46,8 +46,20 @@ public sealed class App : Application
         RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark;
     }
 
+    /// <summary>
+    /// Set for the hidden render-to-PNG modes: build the app shell for its styles but
+    /// start no tray icon, bridge, or engine.
+    /// </summary>
+    public static bool RenderOnly { get; set; }
+
     public override void OnFrameworkInitializationCompleted()
     {
+        if (RenderOnly)
+        {
+            base.OnFrameworkInitializationCompleted();
+            return;
+        }
+
         _configPath = Path.Combine(AppContext.BaseDirectory, "config.json");
         _controller = new BridgeController(_configPath);
         _controller.StatusChanged += OnStatusChanged;
@@ -85,10 +97,12 @@ public sealed class App : Application
         };
         _fkEngineItem.Click += OnFkEngineClick;
 
-        _fkConfigItem = new NativeMenuItem("Configure feedback inputs…") { IsEnabled = false };
-        _fkConfigItem.Click += OnFkConfigClick;
+        // The tray is a launcher and a glance, not a config surface: everything that
+        // used to live here as menu items is now Show/Setup inside the window.
+        _fkConfigItem = new NativeMenuItem("Open Fader…") { IsEnabled = false };
+        _fkConfigItem.Click += OnOpenFaderClick;
 
-        _fkSpectrumItem = new NativeMenuItem("Show spectrum window") { IsEnabled = false };
+        _fkSpectrumItem = new NativeMenuItem("X32 RTA overlay…") { IsEnabled = false };
         _fkSpectrumItem.Click += OnFkSpectrumClick;
 
         var fkLockAll = new NativeMenuItem("Lock all feedback filters");
@@ -212,7 +226,7 @@ public sealed class App : Application
     {
         if (_fkEngineItem is null || _feedback is null) return;
 
-        _configWindow?.Close();
+        _faderWindow?.Close();
         var controller = _feedback;
         _feedback = null;
         _fkEngineItem.IsChecked = false;
@@ -241,14 +255,16 @@ public sealed class App : Application
         if (_fkSpectrumItem is not null) _fkSpectrumItem.IsEnabled = on;
     }
 
-    private void OnFkConfigClick(object? sender, EventArgs e)
+    private void OnOpenFaderClick(object? sender, EventArgs e) => OpenFader();
+
+    private void OpenFader()
     {
         if (_feedback is null) return;
-        if (_configWindow is not null) { _configWindow.Activate(); return; }
+        if (_faderWindow is not null) { _faderWindow.Activate(); return; }
 
-        var window = new ConfigWindow(_feedback);
-        window.Closed += (_, _) => _configWindow = null;
-        _configWindow = window;
+        var window = new FaderWindow(_feedback);
+        window.Closed += (_, _) => _faderWindow = null;
+        _faderWindow = window;
         window.Show();
     }
 

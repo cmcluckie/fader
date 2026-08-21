@@ -59,6 +59,8 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void SetInputs(IReadOnlyList<int> channels)
         => Send(new OscMessage("/fk/inputs", channels.Cast<object>().ToArray()));
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
+    /// <summary>Pass audio through untouched; notch state is kept, just not applied.</summary>
+    public void SetBypass(bool on)                   => Send(new OscMessage("/fk/bypass", on ? 1 : 0));
 
     private void Send(OscMessage message)
     {

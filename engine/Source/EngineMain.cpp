@@ -83,6 +83,7 @@ private:
         else if (a == "/fk/param"        && m.size() >= 2) applyParam (m[0].getString(), m[1].getFloat32());
         else if (a == "/fk/audio"        && m.size() >= 3) requestAudio (m[0].getString(), m[1].getInt32(), m[2].getInt32());
         else if (a == "/fk/inputs")                        requestInputs (m);
+        else if (a == "/fk/bypass"       && m.size() >= 1) engine.setBypass (m[0].getInt32() != 0);
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();

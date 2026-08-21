@@ -21,11 +21,11 @@ internal static class Program
             return;
         }
 
-        // Hidden: render a themed ComboBox + CheckBox to a PNG, to verify the
-        // control theme is actually loaded (templated controls draw, not blank).
-        if (args is ["--render-config", var cpath])
+        // Hidden: render the Show/Setup controls with synthetic data, to verify the
+        // control theme is loaded and every custom control draws.
+        if (args is ["--render-controls", var cpath])
         {
-            RenderConfigControls(cpath);
+            RenderControls(cpath);
             return;
         }
 
@@ -34,6 +34,7 @@ internal static class Program
 
     private static void RenderSpectrum(string path)
     {
+        App.RenderOnly = true;
         BuildAvaloniaApp().SetupWithoutStarting();
 
         var view = new SpectrumView();
@@ -53,46 +54,88 @@ internal static class Program
         Console.WriteLine($"wrote {path}");
     }
 
-    private static void RenderConfigControls(string path)
+    /// <summary>
+    /// Render the real custom controls with synthetic data, so the Show/Setup visual
+    /// language can be checked without a rig, an engine, or a display. These are the
+    /// same control classes the app runs - not a mock-up of them - so a rendering
+    /// regression shows up here.
+    /// </summary>
+    private static void RenderControls(string path)
     {
-        // A real windowing root is required for Application.Styles (the theme) to
-        // apply, so use the headless platform with real (Skia) drawing and capture
-        // the rendered frame.
+        App.RenderOnly = true;
+        // A real windowing root is required for Application.Styles (the control theme)
+        // to apply, so use the headless platform with real (Skia) drawing.
         AppBuilder.Configure<App>()
             .UseSkia()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
             .SetupWithoutStarting();
 
+        var spectrum = new GuardSpectrum { Height = 200 };
+        spectrum.SetSlot(0, SynthSpectrum());
+        spectrum.SetNotches(new[] { (2140f, -12f), (4700f, -6f) });
+        spectrum.AddCatch(2140f);
+
+        var tiles = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12 };
+        var lead = new ChannelTile("Lead", "CH 4");
+        lead.SetLevel(0.74, -8f);
+        lead.SetNotches(2);
+        lead.FlagCatch();
+        var bgv = new ChannelTile("BGV L", "CH 5");
+        bgv.SetLevel(0.46, -16f);
+        bgv.SetNotches(1);
+        tiles.Children.Add(lead);
+        tiles.Children.Add(bgv);
+
+        var strip = new ChannelStrip(4, "Lead", "Input 4 (Thunderbolt)");
+        strip.SyncArm(true);
+        strip.SetLevel(0.72);
+        strip.SetNotches(new[] { 2140f, 4700f });
+
+        var buttons = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14 };
+        buttons.Children.Add(new TapButton("Bypass All", "tap · returns clean signal"));
+        buttons.Children.Add(new HoldButton("Panic", "hold 1s · clears every notch", Tokens.Clip));
+
         var window = new Window
         {
-            Width = 320,
-            Height = 170,
-            Background = new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.FromRgb(0x12, 0x14, 0x1A)),
+            Width = 900,
+            Height = 560,
+            Background = Tokens.Ground,
             Content = new StackPanel
             {
                 Margin = new Thickness(20),
-                Spacing = 14,
-                Children =
-                {
-                    new TextBlock { Text = "Device", Foreground = Avalonia.Media.Brushes.Gray },
-                    new ComboBox
-                    {
-                        PlaceholderText = "Select audio device…",
-                        ItemsSource = new[] { "Universal Audio Thunderbolt", "MacBook Pro Microphone" },
-                        SelectedIndex = 0,
-                        Width = 260,
-                    },
-                    new CheckBox { Content = "Ch 1", IsChecked = true },
-                },
+                Spacing = 16,
+                Children = { spectrum, tiles, strip, buttons },
             },
         };
 
         window.Show();
-        Dispatcher.UIThread.RunJobs();
+
+        // Ballistics settle over a few frames; tick them so the meters aren't at zero.
+        for (var i = 0; i < 40; i++)
+        {
+            lead.Tick();
+            bgv.Tick();
+            strip.Tick();
+            Dispatcher.UIThread.RunJobs();
+        }
 
         using var frame = window.CaptureRenderedFrame();
         frame!.Save(path);
         Console.WriteLine($"wrote {path}");
+    }
+
+    /// <summary>A ringing spectrum: a noise floor with two resonant peaks.</summary>
+    private static float[] SynthSpectrum()
+    {
+        var bands = new float[GuardSpectrum.Bands];
+        for (var i = 0; i < bands.Length; i++)
+        {
+            var floor = -74f + 5f * MathF.Sin(i * 0.7f);
+            var peak1 = 44f * MathF.Exp(-MathF.Pow((i - 62) / 1.6f, 2));
+            var peak2 = 30f * MathF.Exp(-MathF.Pow((i - 74) / 1.8f, 2));
+            bands[i] = floor + peak1 + peak2;
+        }
+        return bands;
     }
 
     private static float[] SynthRta()

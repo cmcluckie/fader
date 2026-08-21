@@ -7,9 +7,13 @@ namespace Fader.Bridge.Feedback;
 /// indices), and whether the feedback engine itself was running - so a restart
 /// comes back exactly as it was left.
 /// </summary>
-public sealed record AudioSelection(string? Device, int[] Inputs, bool Enabled = false)
+public sealed record AudioSelection(
+    string? Device,
+    int[] Inputs,
+    bool Enabled = false,
+    Dictionary<string, string>? Names = null)
 {
-    public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false);
+    public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null);
 }
 
 /// <summary>

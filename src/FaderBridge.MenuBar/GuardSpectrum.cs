@@ -1,0 +1,176 @@
+using System.Globalization;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Media;
+
+namespace Fader.MenuBar;
+
+/// <summary>
+/// The Show-mode spectrum: what the guard is hearing, right now.
+///
+/// Unlike the old two-channel display this is N-channel - it draws the loudest
+/// armed channel per band, because on stage you care that <em>something</em> is
+/// ringing at 2 kHz, not which mic got there first (the tiles below say which).
+///
+/// Colour follows the system: the spectrum is metering, so it is green; a notch is
+/// an event the guard caused, so it is magenta and can never be confused for level.
+/// </summary>
+public sealed class GuardSpectrum : Control
+{
+    public const int Bands = 100;
+    private const float MinDb = -100f;
+
+    private readonly Dictionary<int, float[]> _slots = new();       // engine slot -> log bands
+    private readonly List<(float Hz, float Depth, long Ticks)> _notches = new();
+    private readonly List<(float Hz, long Ticks)> _catches = new();
+
+    private static readonly IPen GridPen = new Pen(new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)), 1);
+    private static readonly IPen Curve = new Pen(new SolidColorBrush(Color.FromArgb(0xCC, 0x78, 0xF0, 0xAA)), 1.5);
+    private static readonly IBrush LabelBrush = Tokens.InkFaint;
+
+    private static readonly (float Hz, string Text)[] Ticks =
+        { (100f, "100"), (1000f, "1k"), (3000f, "3k"), (6000f, "6k"), (12000f, "12k") };
+
+    /// <summary>Push a frame for one engine slot. Pass null to drop a slot that went idle.</summary>
+    public void SetSlot(int slot, float[]? logBands)
+    {
+        if (logBands is null) _slots.Remove(slot);
+        else if (logBands.Length == Bands) _slots[slot] = logBands;
+    }
+
+    public void ClearSlots() => _slots.Clear();
+
+    /// <summary>Replace the notch markers (frequency + how deep the cut is).</summary>
+    public void SetNotches(IEnumerable<(float Hz, float Depth)> notches)
+    {
+        _notches.Clear();
+        foreach (var (hz, depth) in notches) _notches.Add((hz, depth, 0));
+    }
+
+    /// <summary>Flag a fresh catch, which pulses for a couple of seconds.</summary>
+    public void AddCatch(float hz) => _catches.Add((hz, Environment.TickCount64));
+
+    public override void Render(DrawingContext ctx)
+    {
+        var w = Bounds.Width;
+        var h = Bounds.Height;
+        if (w <= 2 || h <= 2) return;
+
+        ctx.FillRectangle(Tokens.Ground2, new Rect(0, 0, w, h), (float) Tokens.RadiusMd.TopLeft);
+
+        foreach (var (hz, text) in Ticks)
+        {
+            var x = XForHz(hz, w);
+            ctx.DrawLine(GridPen, new Point(x, 0), new Point(x, h - 16));
+            ctx.DrawText(Label(text), new Point(x + 4, h - 15));
+        }
+
+        var composite = Composite();
+        if (composite is not null)
+        {
+            ctx.DrawGeometry(AreaFill(h), null, Area(composite, w, h));
+            ctx.DrawGeometry(null, Curve, Line(composite, w, h));
+        }
+
+        DrawNotches(ctx, w, h);
+        DrawCatches(ctx, w, h);
+    }
+
+    /// <summary>Loudest armed channel per band - the "is anything ringing" view.</summary>
+    private float[]? Composite()
+    {
+        if (_slots.Count == 0) return null;
+        var outp = new float[Bands];
+        Array.Fill(outp, MinDb);
+        foreach (var bands in _slots.Values)
+        {
+            for (var i = 0; i < Bands; i++)
+            {
+                if (bands[i] > outp[i]) outp[i] = bands[i];
+            }
+        }
+        return outp;
+    }
+
+    private void DrawNotches(DrawingContext ctx, double w, double h)
+    {
+        foreach (var (hz, depth, _) in _notches)
+        {
+            if (hz <= 0f) continue;
+            var x = XForHz(hz, w);
+
+            var pen = new Pen(Tokens.Catch, 2);
+            ctx.DrawLine(pen, new Point(x, 6), new Point(x, h - 18));
+
+            var text = $"{Hz(hz)} · {depth:0.#} dB";
+            var ft = new FormattedText(text, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+                new Typeface(Tokens.Mono), 10.5, Tokens.Catch);
+            var tx = Math.Clamp(x - ft.Width / 2, 2, Math.Max(2, w - ft.Width - 2));
+            var box = new Rect(tx - 5, 6, ft.Width + 10, ft.Height + 5);
+            ctx.DrawRectangle(Tokens.CatchSoft, new Pen(Tokens.Catch, 1), new RoundedRect(box, 5));
+            ctx.DrawText(ft, new Point(tx, 8.5));
+        }
+    }
+
+    /// <summary>Recent catches pulse and fade — the moment the guard did its job.</summary>
+    private void DrawCatches(DrawingContext ctx, double w, double h)
+    {
+        var now = Environment.TickCount64;
+        _catches.RemoveAll(c => now - c.Ticks > 2200);
+        foreach (var (hz, ticks) in _catches)
+        {
+            var age = (now - ticks) / 2200.0;
+            var alpha = (byte) (190 * (1 - age));
+            var brush = new SolidColorBrush(Color.FromArgb(alpha, Tokens.CatchColor.R, Tokens.CatchColor.G, Tokens.CatchColor.B));
+            var x = XForHz(hz, w);
+            var r = 4 + 10 * age;   // expanding ring
+            ctx.DrawEllipse(null, new Pen(brush, 2), new Point(x, h / 2), r, r);
+        }
+    }
+
+    private static LinearGradientBrush AreaFill(double h) => new()
+    {
+        StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+        EndPoint = new RelativePoint(0, 1, RelativeUnit.Relative),
+        GradientStops =
+        {
+            new GradientStop(Color.FromArgb(0x6E, 0x35, 0xD0, 0x7A), 0),
+            new GradientStop(Color.FromArgb(0x06, 0x35, 0xD0, 0x7A), 1),
+        },
+    };
+
+    private static string Hz(float hz) => hz >= 1000f ? $"{hz / 1000f:0.##}k" : $"{hz:0}";
+
+    private static Geometry Area(float[] bands, double w, double h)
+    {
+        var geo = new StreamGeometry();
+        using var g = geo.Open();
+        g.BeginFigure(new Point(0, h), isFilled: true);
+        for (var i = 0; i < bands.Length; i++) g.LineTo(new Point(XForBand(i, w), YForDb(bands[i], h)));
+        g.LineTo(new Point(w, h));
+        g.EndFigure(isClosed: true);
+        return geo;
+    }
+
+    private static Geometry Line(float[] bands, double w, double h)
+    {
+        var geo = new StreamGeometry();
+        using var g = geo.Open();
+        g.BeginFigure(new Point(XForBand(0, w), YForDb(bands[0], h)), isFilled: false);
+        for (var i = 1; i < bands.Length; i++) g.LineTo(new Point(XForBand(i, w), YForDb(bands[i], h)));
+        g.EndFigure(isClosed: false);
+        return geo;
+    }
+
+    private static double XForBand(double band, double w) => band / (Bands - 1) * w;
+
+    public static double XForHz(double hz, double w) =>
+        XForBand(Math.Clamp(99.0 * Math.Log(hz / 20.0) / Math.Log(1000.0), 0, Bands - 1), w);
+
+    private static double YForDb(double db, double h) =>
+        Math.Clamp((0 - db) / -MinDb, 0, 1) * (h - 18);
+
+    private static FormattedText Label(string s) =>
+        new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+            new Typeface(Tokens.Mono), 10, LabelBrush);
+}
