@@ -126,7 +126,9 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private int[] EnabledSnapshot() { lock (_lock) { return _enabled.ToArray(); } }
 
-    private void SaveAudio() => _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot()));
+    // The controller only exists while feedback is enabled, so persist Enabled=true
+    // whenever it saves; the app writes Enabled=false when it is switched off.
+    private void SaveAudio() => _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true));
 
     // ---- lifecycle + notch ops ---------------------------------------------
     public void Start(CancellationToken token = default) => _supervisor.Start(token);

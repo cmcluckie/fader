@@ -29,6 +29,8 @@ public sealed class App : Application
     private FeedbackController? _feedback;
     private string? _enginePath;
     private string _configPath = "";
+    private string _fkDataDir = "";
+    private FkAudioStore? _fkAudioStore;
     private NativeMenuItem? _fkStatusItem;
     private NativeMenuItem? _fkEngineItem;
     private NativeMenuItem? _fkConfigItem;
@@ -66,6 +68,9 @@ public sealed class App : Application
 
         // ---- feedback section -----------------------------------------------
         _enginePath = FindEngine();
+        _fkDataDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FeedbackKiller");
+        _fkAudioStore = new FkAudioStore(Path.Combine(_fkDataDir, "audio.json"));
 
         _fkStatusItem = new NativeMenuItem(_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
         {
@@ -128,6 +133,14 @@ public sealed class App : Application
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
 
         _ = _controller.StartAsync();
+
+        // Restore the feedback engine if it was left running (device, channels and
+        // notches are then replayed by the controller from their own stores).
+        if (_enginePath is not null && (_fkAudioStore?.Load().Enabled ?? false))
+        {
+            EnableFeedback();
+        }
+
         base.OnFrameworkInitializationCompleted();
     }
 
@@ -178,28 +191,41 @@ public sealed class App : Application
     // ---- feedback engine ----------------------------------------------------
     private void OnFkEngineClick(object? sender, EventArgs e)
     {
-        if (_enginePath is null || _fkEngineItem is null) return;
+        if (_feedback is null) EnableFeedback();
+        else DisableFeedback();
+    }
 
-        if (_feedback is null)
-        {
-            var dataDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FeedbackKiller");
-            var controller = new FeedbackController(_enginePath, dataDir);
-            controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
-            _feedback = controller;
-            controller.Start();   // device, inputs, and notches are replayed by the controller
-            _fkEngineItem.IsChecked = true;
-        }
-        else
-        {
-            _configWindow?.Close();
-            var controller = _feedback;
-            _feedback = null;
-            _fkEngineItem.IsChecked = false;
-            _ = controller.DisposeAsync();
-        }
+    private void EnableFeedback()
+    {
+        if (_enginePath is null || _fkEngineItem is null || _feedback is not null) return;
 
+        var controller = new FeedbackController(_enginePath, _fkDataDir);
+        controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
+        _feedback = controller;
+        controller.Start();   // device, inputs, and notches are replayed by the controller
+        _fkEngineItem.IsChecked = true;
+        PersistEnabled(true);
         RenderFk();
+    }
+
+    private void DisableFeedback()
+    {
+        if (_fkEngineItem is null || _feedback is null) return;
+
+        _configWindow?.Close();
+        var controller = _feedback;
+        _feedback = null;
+        _fkEngineItem.IsChecked = false;
+        PersistEnabled(false);
+        _ = controller.DisposeAsync();
+        RenderFk();
+    }
+
+    // Persist only the on/off flag, leaving the saved device + channel choice intact.
+    private void PersistEnabled(bool enabled)
+    {
+        if (_fkAudioStore is null) return;
+        _fkAudioStore.Save(_fkAudioStore.Load() with { Enabled = enabled });
     }
 
     private void RenderFk()
