@@ -7,7 +7,7 @@
 
 namespace fk
 {
-constexpr int kMaxNotches = 12;
+constexpr int kMaxNotches = 24;
 constexpr int kMaxInputs  = 8;   // simultaneous feedback channels
 
 /**
@@ -258,7 +258,9 @@ private:
     std::array<FeedbackDetector, maxChans>       detectors;
 
     std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
-    std::atomic<float> maxCutDb { -18.0f }, notchQ { 40.0f }, releaseSeconds { 2.0f };  // spec §5-6 defaults
+    // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs
+// deeper cuts that stay put, not shallow ones that bleed out in 2 s.
+    std::atomic<float> maxCutDb { -24.0f }, notchQ { 40.0f }, releaseSeconds { 10.0f };
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };

@@ -268,8 +268,8 @@ public:
 
     // ---- depth policy (spec §5, §10) ----------------------------------------
     double defaultQ       = 40.0;    // 30-60; narrow enough to spare the programme
-    double initialCutDb   = -6.0;    // first strike
-    double fastTrackCutDb = -12.0;   // first strike on a known repeat offender
+    double initialCutDb   = -9.0;    // first strike
+    double fastTrackCutDb = -15.0;   // first strike on a known repeat offender
     double stepDb         = -6.0;    // deepen per re-trigger (negative)
     double softCapDb      = -18.0;   // normal ceiling
     double hardCapDb      = -24.0;   // absolute ceiling for a stubborn tone

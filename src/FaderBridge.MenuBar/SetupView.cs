@@ -153,8 +153,8 @@ public sealed class SetupView : UserControl
                      ("Prominence", "12 dB over floor"),
                      ("Stability", "±5 Hz / 100 ms"),
                      ("Growth", "3 dB / 100 ms"),
-                     ("Hold → bleed", "2 s, then 1.5 dB/s"),
-                     ("Notch depth", "−6 → −24 dB, Q40"),
+                     ("Hold → bleed", "10 s, then 1.5 dB/s"),
+                     ("Notch depth", "−9 → −30 dB, Q40"),
                  })
         {
             grid.Children.Add(SpecCard(label, value));
