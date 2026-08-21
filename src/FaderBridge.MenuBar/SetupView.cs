@@ -23,6 +23,21 @@ public sealed class SetupView : UserControl
     private readonly StackPanel _discBody = new() { Spacing = 10 };
     private readonly GuardSpectrum _band = new() { Height = 150, Editable = true };
     private readonly TextBlock _bandLabel = Ui.Mono("", 12.5, Tokens.InkDim);
+    private readonly ComboBox _lowEdge = new() { MinWidth = 150 };
+    private bool _syncingEdge;
+
+    // Somewhere to start without guessing. A vocal wedge rings above ~1 kHz, so
+    // "1 kHz - vocal mic" is the one most rigs want.
+    private static readonly (string Label, float Hz)[] LowEdges =
+    {
+        ("40 Hz — everything", 40f),
+        ("200 Hz — default", 200f),
+        ("500 Hz", 500f),
+        ("800 Hz", 800f),
+        ("1 kHz — vocal mic", 1000f),
+        ("1.5 kHz", 1500f),
+        ("2 kHz — HF only", 2000f),
+    };
     private readonly TextBlock _discCaret = Ui.Mono("▾", 13, Tokens.InkFaint);
 
     private readonly Dictionary<int, ChannelStrip> _strip = new();
@@ -68,13 +83,32 @@ public sealed class SetupView : UserControl
         {
             _bandLabel.Text = $"listening {Hz(lo)} – {Hz(hi)}";
             _feedback.SetSearchRange(lo, hi);
+            SyncLowEdge();
         };
         _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
+
+        _lowEdge.ItemsSource = LowEdges.Select(e => e.Label).ToArray();
+        SyncLowEdge();
+        _lowEdge.SelectionChanged += (_, _) =>
+        {
+            if (_syncingEdge) return;
+            var i = _lowEdge.SelectedIndex;
+            if (i < 0 || i >= LowEdges.Length) return;
+            _feedback.SetSearchRange(LowEdges[i].Hz, _feedback.MaxHz);
+            _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
+            _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
+        };
+
+        var bandHead = Ui.Stack(Orientation.Horizontal, 12,
+            Ui.Caption("Listen band"), _bandLabel);
         var bandBox = Ui.Stack(Orientation.Vertical, 8,
-            Ui.Stack(Orientation.Horizontal, 12, Ui.Caption("Listen band"), _bandLabel),
+            bandHead,
             _band,
-            Ui.Text("Drag the teal handles. Anything greyed out is ignored — keep the low edge above your voice.",
-                    12.5, Tokens.InkFaint));
+            Ui.Stack(Orientation.Horizontal, 12,
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Low edge"), _lowEdge),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption(" "),
+                    Ui.Text("Pick a low edge, or drag the teal handles. Greyed = ignored — keep it above your voice.",
+                            12.5, Tokens.InkFaint))));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
         var disclosure = BuildDisclosure();
@@ -117,6 +151,18 @@ public sealed class SetupView : UserControl
     }
 
     private static string Hz(float hz) => hz >= 1000f ? $"{hz / 1000f:0.##} kHz" : $"{hz:0} Hz";
+
+    /// <summary>Point the dropdown at whichever preset is closest to the real value.</summary>
+    private void SyncLowEdge()
+    {
+        _syncingEdge = true;
+        var best = 0;
+        for (var i = 1; i < LowEdges.Length; i++)
+            if (Math.Abs(LowEdges[i].Hz - _feedback.MinHz) < Math.Abs(LowEdges[best].Hz - _feedback.MinHz))
+                best = i;
+        _lowEdge.SelectedIndex = best;
+        _syncingEdge = false;
+    }
 
     private static void AddCol(Grid g, Control c, int col)
     {

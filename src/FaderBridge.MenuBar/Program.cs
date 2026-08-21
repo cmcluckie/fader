@@ -29,6 +29,15 @@ internal static class Program
             return;
         }
 
+        // Hidden: drive a real pointer drag at the listen-band handle and report
+        // whether the control received it. Pointer plumbing is easy to get wrong and
+        // impossible to eyeball from a screenshot.
+        if (args is ["--test-drag"])
+        {
+            TestDrag();
+            return;
+        }
+
         BuildAvaloniaApp().StartWithClassicDesktopLifetime(args, ShutdownMode.OnExplicitShutdown);
     }
 
@@ -131,6 +140,46 @@ internal static class Program
         using var frame = window.CaptureRenderedFrame();
         frame!.Save(path);
         Console.WriteLine($"wrote {path}");
+    }
+
+    private static void TestDrag()
+    {
+        App.RenderOnly = true;
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        var band = new GuardSpectrum { Height = 150, Editable = true };
+        band.SetSlot(0, SynthSpectrum());
+        band.SetRange(200f, 16000f);
+        (float Lo, float Hi)? got = null;
+        band.RangeDragged += (lo, hi) => got = (lo, hi);
+
+        var window = new Window { Width = 900, Height = 200, Background = Tokens.Ground, Content = band };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+
+        var w = band.Bounds.Width;
+        var h = band.Bounds.Height;
+        Console.WriteLine($"band bounds: {w:0} x {h:0}");
+        if (w <= 0) { Console.WriteLine("FAIL: control has no size"); return; }
+
+        // the low handle sits at 200 Hz on a 20 Hz..20 kHz log axis
+        var x = w * (99.0 * Math.Log(200.0 / 20.0) / Math.Log(1000.0)) / 99.0;
+        var y = h / 2;
+        Console.WriteLine($"pressing at x={x:0}, y={y:0} (low handle)");
+
+        window.MouseDown(new Point(x, y), Avalonia.Input.MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+        window.MouseMove(new Point(x + 120, y));
+        Dispatcher.UIThread.RunJobs();
+        window.MouseUp(new Point(x + 120, y), Avalonia.Input.MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+
+        Console.WriteLine(got is { } g
+            ? $"OK: drag received, range now {g.Lo:0} Hz - {g.Hi:0} Hz"
+            : "FAIL: control never received the drag");
     }
 
     /// <summary>A ringing spectrum: a noise floor with two resonant peaks.</summary>

@@ -173,7 +173,7 @@ public sealed class GuardSpectrum : Control
         var w = Bounds.Width;
         var dLo = Math.Abs(x - XForHz(_minHz, w));
         var dHi = Math.Abs(x - XForHz(_maxHz, w));
-        if (Math.Min(dLo, dHi) > 18) return;
+        if (Math.Min(dLo, dHi) > 30) return;
         _dragging = dLo <= dHi ? -1 : 1;
         e.Pointer.Capture(this);
     }
@@ -181,7 +181,16 @@ public sealed class GuardSpectrum : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_dragging == 0) return;
+
+        if (_dragging == 0)
+        {
+            if (!Editable) return;
+            var px = e.GetPosition(this).X;
+            var near = Math.Min(Math.Abs(px - XForHz(_minHz, Bounds.Width)),
+                                Math.Abs(px - XForHz(_maxHz, Bounds.Width))) <= 30;
+            Cursor = new Cursor(near ? StandardCursorType.SizeWestEast : StandardCursorType.Arrow);
+            return;
+        }
         var hz = HzForX(e.GetPosition(this).X, Bounds.Width);
         if (_dragging < 0) _minHz = (float) Math.Clamp(hz, 40, _maxHz - 200);
         else _maxHz = (float) Math.Clamp(hz, _minHz + 200, 20000);
