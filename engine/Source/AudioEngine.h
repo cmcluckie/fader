@@ -264,7 +264,7 @@ private:
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
-    std::atomic<int>   persistFrames { 9 };
+    std::atomic<int>   persistFrames { 6 };
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };
     double             tonePhase = 0.0;

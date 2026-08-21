@@ -84,9 +84,13 @@ public:
     void prepare (double sampleRate, int blockSize) noexcept
     {
         fs = sampleRate;
-        // one-pole smoothing coefficient, ~30 ms time constant, applied per block
+        // Gain smoothing is deliberately asymmetric, one coefficient per direction.
+        // Deepening is the emergency - it must land almost immediately or the ring
+        // wins the race - while coming back out must stay slow, because that is
+        // where a fast gain change would be audible as a zip. 5 ms down, 40 ms up.
         const double blockSeconds = (double) blockSize / sampleRate;
-        smoothCoeff = 1.0 - std::exp (-blockSeconds / 0.030);
+        attackCoeff  = 1.0 - std::exp (-blockSeconds / 0.005);
+        releaseCoeff = 1.0 - std::exp (-blockSeconds / 0.040);
         for (auto& b : filters) b.reset();
         // the histogram's decay clock rides the transport, which restarts here
         for (auto& h : histogram) h = Bucket{};
@@ -221,7 +225,8 @@ public:
             if (! s.active && std::abs (s.currentDb) < 0.01) { filters[i].setBypass(); continue; }
 
             const double target = s.active ? s.targetDb : 0.0;
-            s.currentDb += (target - s.currentDb) * smoothCoeff;
+            const double coeff = (target < s.currentDb) ? attackCoeff : releaseCoeff;
+            s.currentDb += (target - s.currentDb) * coeff;
 
             if (std::abs (s.currentDb) < 0.01) filters[i].setBypass();
             else                               filters[i].setPeaking (fs, s.freq, s.q, s.currentDb);
@@ -353,7 +358,8 @@ private:
     std::array<Biquad,    MaxNotches> filters {};
     std::array<Bucket, (size_t) histBuckets> histogram {};
     double fs = 48000.0;
-    double smoothCoeff = 0.2;
+    double attackCoeff = 0.23;    // toward a deeper cut - fast
+    double releaseCoeff = 0.03;   // back toward flat - slow
 };
 
 } // namespace fk

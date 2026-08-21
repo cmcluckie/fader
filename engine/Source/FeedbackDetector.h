@@ -30,7 +30,7 @@ public:
     struct Params
     {
         float  prominenceDb   = 12.0f;  // spike must stand this far above the local median
-        int    persistFrames  = 9;      // stability window, ~100 ms at 512 hop / 48k
+        int    persistFrames  = 6;      // stability window, ~64 ms at 512 hop / 48k
         float  stabilityHz    = 5.0f;   // peak may drift at most this many Hz across the window
         float  growthDb       = 3.0f;   // net rise required over the window (loop gain > 1)
         float  harmonicDb     = 20.0f;  // energy at 2f/3f within this of f => musical
@@ -246,7 +246,7 @@ private:
                 // (trigger() also refreshes the notch's hold, so a notch can never
                 // bleed away underneath a tone that is still present).
                 ++s.sinceReport;
-                const bool climbing  = s.sinceReport >= 5  && s.lastLevel - s.reportLevel >= 1.0f;
+                const bool climbing  = s.sinceReport >= 3  && s.lastLevel - s.reportLevel >= 1.0f;
                 const bool surviving = s.sinceReport >= 24;                 // ~250 ms
                 if (climbing || surviving)
                 {

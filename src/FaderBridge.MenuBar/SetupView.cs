@@ -151,8 +151,8 @@ public sealed class SetupView : UserControl
                  {
                      ("Search band", "200 Hz – 16 kHz"),
                      ("Prominence", "12 dB over floor"),
-                     ("Stability", "±5 Hz / 100 ms"),
-                     ("Growth", "3 dB / 100 ms"),
+                     ("Stability", "±5 Hz / 64 ms"),
+                     ("Growth", "3 dB / 64 ms"),
                      ("Hold → bleed", "10 s, then 1.5 dB/s"),
                      ("Notch depth", "−12 → −30 dB, Q25"),
                  })
