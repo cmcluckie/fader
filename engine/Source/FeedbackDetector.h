@@ -236,10 +236,19 @@ private:
             }
             else
             {
-                // §5 progressive escalation: keep firing (each deepens the notch a
-                // step) while the peak is still climbing, throttled to ~50 ms.
+                // §5 progressive escalation. Two ways to re-fire:
+                //  - fast: the peak is still climbing (+1 dB), throttled to ~50 ms;
+                //  - sustain: the tone simply survives ~250 ms after the last cut.
+                // The sustain path is what handles feedback that has PLATEAUED - it
+                // grows, saturates, and then never again exceeds its own maximum, so
+                // a growth-only gate goes permanently silent while it rings. Merely
+                // still being tracked means it out-lived the last cut: deepen again
+                // (trigger() also refreshes the notch's hold, so a notch can never
+                // bleed away underneath a tone that is still present).
                 ++s.sinceReport;
-                if (s.sinceReport >= 5 && s.lastLevel - s.reportLevel >= 1.0f)
+                const bool climbing  = s.sinceReport >= 5  && s.lastLevel - s.reportLevel >= 1.0f;
+                const bool surviving = s.sinceReport >= 24;                 // ~250 ms
+                if (climbing || surviving)
                 {
                     s.reportLevel = s.lastLevel;
                     s.sinceReport = 0;

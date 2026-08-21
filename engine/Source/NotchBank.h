@@ -169,7 +169,11 @@ public:
         for (auto& s : slots)
         {
             if (! s.active || s.locked) continue;
-            if (nowSeconds - s.lastHitS < holdSeconds) continue;     // still holding
+            if (nowSeconds - s.lastHitS < holdSeconds)               // still holding:
+            {
+                s.lastRelS = nowSeconds;                             // bleed clock only
+                continue;                                            // runs after hold
+            }
             const double dt = nowSeconds - s.lastRelS;
             if (dt < minReleaseGap) continue;                        // not yet
 
