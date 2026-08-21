@@ -98,6 +98,8 @@ private:
         else if (name == "pitchTolerance") engine.setPitchTolerance (v);
         else if (name == "harmonicDb")     engine.setHarmonicDb (v);
         else if (name == "floorDb")        engine.setFloorDb (v);
+        else if (name == "minFreq")        engine.setMinFreq (v);
+        else if (name == "maxFreq")        engine.setMaxFreq (v);
     }
 
     // Device/channel changes are marshalled to the telemetry thread;

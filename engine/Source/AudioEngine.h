@@ -39,6 +39,8 @@ public:
     void setPitchTolerance (float v) noexcept{ pitchTolerance.store (v); }
     void setHarmonicDb (float v) noexcept    { harmonicDb.store (v); }
     void setFloorDb (float v) noexcept       { floorDb.store (v); }
+    void setMinFreq (float v) noexcept       { minFreq.store (v); }
+    void setMaxFreq (float v) noexcept       { maxFreq.store (v); }
 
     void placeNotch  (int ch, float hz, float depthDb) noexcept { push ({ Cmd::Place, ch, 0, hz, depthDb }); }
     void removeNotch (int ch, int slot) noexcept                { push ({ Cmd::Remove, ch, slot, 0, 0 }); }
@@ -98,6 +100,8 @@ public:
         p.pitchTolerance = pitchTolerance.load();
         p.harmonicDb     = harmonicDb.load();
         p.floorDb        = floorDb.load();
+        p.minFreq        = minFreq.load();
+        p.maxFreq        = maxFreq.load();
         const float q    = notchQ.load();
 
         const int active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
@@ -192,6 +196,7 @@ private:
     std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
     std::atomic<float> maxCutDb { -12.0f }, notchQ { 20.0f }, releaseSeconds { 120.0f };
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
+    std::atomic<float> minFreq { 80.0f }, maxFreq { 12000.0f };
     std::atomic<int>   persistFrames { 5 };
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };

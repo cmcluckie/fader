@@ -34,6 +34,8 @@ public:
         float  pitchTolerance = 0.006f; // max fractional frequency drift across those frames
         float  harmonicDb     = 20.0f;  // if 2f or 3f is within this of f, treat as musical
         float  floorDb        = -70.0f; // ignore everything quieter than this
+        float  minFreq        = 80.0f;  // low edge of the watched band
+        float  maxFreq        = 12000.0f; // high edge (raised from a hard 8 kHz cap)
     };
 
     struct Event
@@ -140,8 +142,8 @@ private:
 
         // --- test 1: prominent narrow peaks -------------------------------------
         constexpr int floorHalfWidth = 24;   // ~560 Hz either side at 48k
-        const int firstBin = juce::jmax (2, (int) (80.0f / binHz));
-        const int lastBin  = juce::jmin (numBins - 3, (int) (8000.0f / binHz));
+        const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
+        const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
         for (int i = firstBin; i <= lastBin; ++i)
         {
