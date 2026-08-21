@@ -100,6 +100,9 @@ private:
         else if (name == "floorDb")        engine.setFloorDb (v);
         else if (name == "minFreq")        engine.setMinFreq (v);
         else if (name == "maxFreq")        engine.setMaxFreq (v);
+        else if (name == "stabilityHz")    engine.setStabilityHz (v);
+        else if (name == "growthDb")       engine.setGrowthDb (v);
+        else if (name == "inputGate")      engine.setInputGate (v);
     }
 
     // Device/channel changes are marshalled to the telemetry thread;

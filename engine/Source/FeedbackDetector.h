@@ -29,13 +29,17 @@ class FeedbackDetector
 public:
     struct Params
     {
-        float  prominenceDb   = 12.0f;  // how far above the local floor a spike must sit
-        int    persistFrames  = 5;      // consecutive frames required
-        float  pitchTolerance = 0.006f; // max fractional frequency drift across those frames
-        float  harmonicDb     = 20.0f;  // if 2f or 3f is within this of f, treat as musical
-        float  floorDb        = -70.0f; // ignore everything quieter than this
-        float  minFreq        = 80.0f;  // low edge of the watched band
-        float  maxFreq        = 12000.0f; // high edge (raised from a hard 8 kHz cap)
+        float  prominenceDb   = 12.0f;  // spike must stand this far above the local median
+        int    persistFrames  = 9;      // stability window, ~100 ms at 512 hop / 48k
+        float  stabilityHz    = 5.0f;   // peak may drift at most this many Hz across the window
+        float  growthDb       = 3.0f;   // net rise required over the window (loop gain > 1)
+        float  harmonicDb     = 20.0f;  // energy at 2f/3f within this of f => musical
+        int    harmonicExtra  = 18;     // extra frames (~200 ms) required if harmonic-related
+        float  floorDb        = -70.0f; // ignore bins quieter than this
+        float  inputGateDb    = -55.0f; // skip detection when broadband input is below this
+        float  minFreq        = 200.0f; // low edge of the watched band
+        float  maxFreq        = 16000.0f; // high edge; still clamped to Nyquist by bin count
+        float  pitchTolerance = 0.006f; // (retained for compatibility; superseded by stabilityHz)
     };
 
     struct Event
@@ -104,15 +108,18 @@ public:
 private:
     struct Suspect
     {
-        bool   active     = false;
-        float  freq       = 0.0f;
-        float  minFreq    = 0.0f;
-        float  maxFreq    = 0.0f;
-        float  firstLevel = 0.0f;
-        float  lastLevel  = 0.0f;
-        int    frames     = 0;
-        int    missed     = 0;
-        bool   reported   = false;
+        bool   active      = false;
+        bool   harmonic    = false;   // looked harmonically-related when first seen
+        float  freq        = 0.0f;
+        float  minFreq     = 0.0f;
+        float  maxFreq     = 0.0f;
+        float  firstLevel  = 0.0f;
+        float  lastLevel   = 0.0f;
+        int    frames      = 0;
+        int    missed      = 0;
+        bool   reported    = false;
+        float  reportLevel = 0.0f;    // level at the last event, for escalation
+        int    sinceReport = 0;
     };
 
     void analyse() noexcept
@@ -125,6 +132,11 @@ private:
             r = (r + 1) & (ringSize - 1);
         }
         std::fill (scratch.begin() + fftSize, scratch.end(), 0.0f);
+
+        // input gate: broadband level of the frame (before windowing scales it)
+        double sumSq = 0.0;
+        for (int i = 0; i < fftSize; ++i) sumSq += (double) scratch[(size_t) i] * scratch[(size_t) i];
+        const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / fftSize), -120.0f);
 
         window.multiplyWithWindowingTable (scratch.data(), (size_t) fftSize);
         fft.performFrequencyOnlyForwardTransform (scratch.data());
@@ -140,30 +152,31 @@ private:
 
         for (auto& s : suspects) if (s.active) ++s.missed;
 
-        // --- test 1: prominent narrow peaks -------------------------------------
-        constexpr int floorHalfWidth = 24;   // ~560 Hz either side at 48k
-        const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
-        const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
-
-        for (int i = firstBin; i <= lastBin; ++i)
+        // §4.5 input gate: don't chase noise between songs (spectrum still published)
+        if (rmsDb >= params.inputGateDb)
         {
-            const float here = mag[(size_t) i];
-            if (here < params.floorDb) continue;
-            if (here <= mag[(size_t) (i - 1)] || here <= mag[(size_t) (i + 1)]) continue;
+            constexpr int floorHalfWidth = 20;   // ±20 bins for the local median (§4.1)
+            const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
+            const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
-            const float localFloor = medianAround (i, floorHalfWidth);
-            if (here - localFloor < params.prominenceDb) continue;
+            for (int i = firstBin; i <= lastBin; ++i)
+            {
+                const float here = mag[(size_t) i];
+                if (here < params.floorDb) continue;
+                if (here <= mag[(size_t) (i - 1)] || here <= mag[(size_t) (i + 1)]) continue;
 
-            // parabolic interpolation for sub-bin frequency accuracy
-            const float ym1 = mag[(size_t) (i - 1)], y0 = here, yp1 = mag[(size_t) (i + 1)];
-            const float denom = (ym1 - 2.0f * y0 + yp1);
-            const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
-            const float freq  = (i + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
+                const float localFloor = medianAround (i, floorHalfWidth);
+                if (here - localFloor < params.prominenceDb) continue;
 
-            // --- test 4: harmonic content -------------------------------------
-            if (hasHarmonicSupport (freq, here)) continue;
+                // parabolic interpolation for sub-bin frequency accuracy (§3)
+                const float ym1 = mag[(size_t) (i - 1)], y0 = here, yp1 = mag[(size_t) (i + 1)];
+                const float denom = (ym1 - 2.0f * y0 + yp1);
+                const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
+                const float freq  = (i + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
 
-            track (freq, here);
+                // §4.4 harmonic guard: soft - flag it, track() then demands extra time
+                track (freq, here, hasHarmonicSupport (freq, here));
+            }
         }
 
         for (auto& s : suspects)
@@ -191,30 +204,47 @@ private:
         return false;
     }
 
-    void track (float freq, float levelDb) noexcept
+    void track (float freq, float levelDb, bool harmonic) noexcept
     {
-        // --- test 2 and 3: persistence and pitch lock ---------------------------
+        // Associate with an existing candidate (a wider window than the stability
+        // test - the peak may wander a little before it locks).
         for (auto& s : suspects)
         {
             if (! s.active) continue;
-            if (std::abs (s.freq - freq) / freq > 0.03f) continue;
+            if (std::abs (s.freq - freq) > 20.0f) continue;
 
-            s.missed   = 0;
-            s.frames  += 1;
-            s.lastLevel= levelDb;
-            s.freq     = 0.7f * s.freq + 0.3f * freq;
-            s.minFreq  = juce::jmin (s.minFreq, freq);
-            s.maxFreq  = juce::jmax (s.maxFreq, freq);
+            s.missed    = 0;
+            s.frames   += 1;
+            s.lastLevel = levelDb;
+            s.freq      = 0.8f * s.freq + 0.2f * freq;
+            s.minFreq   = juce::jmin (s.minFreq, freq);
+            s.maxFreq   = juce::jmax (s.maxFreq, freq);
 
-            const float spread = (s.maxFreq - s.minFreq) / s.freq;
+            const float spread = s.maxFreq - s.minFreq;                 // §4.2 absolute Hz
+            const float growth = s.lastLevel - s.firstLevel;           // §4.3 net rise
+            const int   need   = params.persistFrames + (s.harmonic ? params.harmonicExtra : 0);
 
-            if (! s.reported
-                && s.frames >= params.persistFrames
-                && spread   <= params.pitchTolerance
-                && s.lastLevel >= s.firstLevel - 1.5f)   // steady or growing, not decaying
+            if (! s.reported)
             {
-                s.reported = true;
-                pushEvent ({ s.freq, s.lastLevel });
+                if (s.frames >= need && spread <= params.stabilityHz && growth >= params.growthDb)
+                {
+                    s.reported    = true;
+                    s.reportLevel = s.lastLevel;
+                    s.sinceReport = 0;
+                    pushEvent ({ s.freq, s.lastLevel });
+                }
+            }
+            else
+            {
+                // §5 progressive escalation: keep firing (each deepens the notch a
+                // step) while the peak is still climbing, throttled to ~50 ms.
+                ++s.sinceReport;
+                if (s.sinceReport >= 5 && s.lastLevel - s.reportLevel >= 1.0f)
+                {
+                    s.reportLevel = s.lastLevel;
+                    s.sinceReport = 0;
+                    pushEvent ({ s.freq, s.lastLevel });
+                }
             }
             return;
         }
@@ -224,6 +254,7 @@ private:
             if (s.active) continue;
             s = Suspect{};
             s.active     = true;
+            s.harmonic   = harmonic;
             s.freq       = freq;
             s.minFreq    = freq;
             s.maxFreq    = freq;
