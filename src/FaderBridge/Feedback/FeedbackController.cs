@@ -29,6 +29,8 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly SortedDictionary<int, string> _channels = new();
     private readonly List<int> _enabled = new();          // physical indices, sorted
     private readonly Dictionary<int, string> _names = new();   // physical index -> user label
+    private readonly Dictionary<int, int> _returns = new();    // physical input -> return output
+    private readonly SortedDictionary<int, string> _outChannels = new();
 
     private string _savedSignature = "";
     private string? _currentDevice;
@@ -46,6 +48,10 @@ public sealed class FeedbackController : IAsyncDisposable
         {
             if (int.TryParse(key, out var index)) _names[index] = value;
         }
+        foreach (var (key, value) in audio.Returns ?? new Dictionary<string, int>())
+        {
+            if (int.TryParse(key, out var index)) _returns[index] = value;
+        }
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -62,6 +68,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
         _supervisor.Client.DeviceListed += OnDeviceListed;
         _supervisor.Client.ChannelListed += OnChannelListed;
+        _supervisor.Client.OutChannelListed += OnOutChannelListed;
         _supervisor.Client.AudioStateReceived += OnAudioState;
     }
 
@@ -85,9 +92,9 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         // A new device is a new channel space: arms and labels no longer refer to
         // the same physical inputs, so both are cleared rather than silently wrong.
-        lock (_lock) { _selectedDevice = device; _enabled.Clear(); _names.Clear(); }
+        lock (_lock) { _selectedDevice = device; _enabled.Clear(); _names.Clear(); _returns.Clear(); _outChannels.Clear(); }
         _supervisor.Client.SetAudio(device, 48000, 64);
-        _supervisor.Client.SetInputs(EnabledSnapshot());
+        PushRouting();
         SaveAudio();
         ChannelsChanged?.Invoke();
     }
@@ -151,9 +158,50 @@ public sealed class FeedbackController : IAsyncDisposable
             else return;
             _enabled.Sort();
         }
-        _supervisor.Client.SetInputs(EnabledSnapshot());
+        PushRouting();
         SaveAudio();
         ChannelsChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// Where an armed input's processed audio is returned. Defaults to the same
+    /// index as the input (the plain passthrough case); on an insert rig this is
+    /// the output that feeds the console - e.g. mic on ANALOG 5, return on ADAT 3.
+    /// </summary>
+    public int ReturnFor(int channel)
+    {
+        lock (_lock) { return _returns.GetValueOrDefault(channel, channel); }
+    }
+
+    public void SetReturn(int channel, int output)
+    {
+        lock (_lock)
+        {
+            if (output == channel) _returns.Remove(channel);   // default: mirror
+            else _returns[channel] = output;
+        }
+        PushRouting();
+        SaveAudio();
+        ChannelsChanged?.Invoke();
+    }
+
+    /// <summary>Every output channel the current device exposes (index, name).</summary>
+    public IReadOnlyList<(int Index, string Name)> OutputChannels
+    {
+        get { lock (_lock) { return _outChannels.Select(kv => (kv.Key, kv.Value)).ToArray(); } }
+    }
+
+    /// <summary>Send the armed inputs and their parallel returns to the engine.</summary>
+    private void PushRouting()
+    {
+        int[] inputs; int[] outputs;
+        lock (_lock)
+        {
+            inputs = _enabled.ToArray();
+            outputs = inputs.Select(i => _returns.GetValueOrDefault(i, i)).ToArray();
+        }
+        _supervisor.Client.SetInputs(inputs);
+        _supervisor.Client.SetOutputs(outputs);
     }
 
     /// <summary>Physical channel driving an engine slot, or -1.</summary>
@@ -174,8 +222,14 @@ public sealed class FeedbackController : IAsyncDisposable
     private void SaveAudio()
     {
         Dictionary<string, string> names;
-        lock (_lock) { names = _names.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value); }
-        _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true, Names: names));
+        Dictionary<string, int> returns;
+        lock (_lock)
+        {
+            names = _names.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
+            returns = _returns.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
+        }
+        _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
+            Names: names, Returns: returns));
     }
 
     // ---- lifecycle + notch ops ---------------------------------------------
@@ -224,7 +278,7 @@ public sealed class FeedbackController : IAsyncDisposable
             {
                 _supervisor.Client.SetAudio(device, 48000, 64);
             }
-            _supervisor.Client.SetInputs(EnabledSnapshot());
+            PushRouting();
             if (IsBypassed) _supervisor.Client.SetBypass(true);   // a fresh engine starts un-bypassed
 
             // Replay locked notches, mapping their physical channel to its slot.
@@ -292,6 +346,12 @@ public sealed class FeedbackController : IAsyncDisposable
     private void OnChannelListed(int index, string name)
     {
         lock (_lock) { _channels[index] = name; }
+        ChannelsChanged?.Invoke();
+    }
+
+    private void OnOutChannelListed(int index, string name)
+    {
+        lock (_lock) { _outChannels[index] = name; }
         ChannelsChanged?.Invoke();
     }
 

@@ -36,6 +36,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     public event Action<FkAudioState>? AudioStateReceived;
     public event Action<string>? DeviceListed;
     public event Action<int, string>? ChannelListed;
+    public event Action<int, string>? OutChannelListed;
     public event Action<string>? Error;
 
     public void Start(CancellationToken token)
@@ -58,6 +59,12 @@ public sealed class FkEngineClient : IAsyncDisposable
     /// <summary>The checked physical input channel indices; the engine opens exactly these.</summary>
     public void SetInputs(IReadOnlyList<int> channels)
         => Send(new OscMessage("/fk/inputs", channels.Cast<object>().ToArray()));
+    /// <summary>
+    /// Per-slot return outputs, parallel to the sorted input list: where each armed
+    /// channel's processed audio is written (e.g. an ADAT out back to the console).
+    /// </summary>
+    public void SetOutputs(IReadOnlyList<int> channels)
+        => Send(new OscMessage("/fk/outputs", channels.Cast<object>().ToArray()));
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
     /// <summary>Pass audio through untouched; notch state is kept, just not applied.</summary>
     public void SetBypass(bool on)                   => Send(new OscMessage("/fk/bypass", on ? 1 : 0));
@@ -129,6 +136,9 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/channel" when m.Arguments is [int index, string label]:
                 ChannelListed?.Invoke(index, label);
+                break;
+            case "/fk/outchannel" when m.Arguments is [int oIndex, string oLabel]:
+                OutChannelListed?.Invoke(oIndex, oLabel);
                 break;
         }
     }

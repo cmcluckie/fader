@@ -11,9 +11,10 @@ public sealed record AudioSelection(
     string? Device,
     int[] Inputs,
     bool Enabled = false,
-    Dictionary<string, string>? Names = null)
+    Dictionary<string, string>? Names = null,
+    Dictionary<string, int>? Returns = null)
 {
-    public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null);
+    public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null, null);
 }
 
 /// <summary>

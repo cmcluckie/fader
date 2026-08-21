@@ -31,9 +31,31 @@ public:
     void setActiveChannels (int n) noexcept { activeChans.store (juce::jlimit (0, maxChans, n)); }
     int  activeChannels() const noexcept    { return activeChans.load(); }
 
+    /// <summary>
+    /// Where each slot's processed audio goes, as a RANK into the device's enabled
+    /// output channels (JUCE hands the callback one dense pointer per enabled
+    /// channel, ascending). Slot i defaults to rank i - the old mirror behaviour.
+    /// Call only while the device is being (re)configured, not mid-callback.
+    /// </summary>
+    void setOutputMap (const int* ranks, int count) noexcept
+    {
+        for (int i = 0; i < maxChans; ++i)
+            outRank[(size_t) i] = (i < count && ranks[i] >= 0) ? ranks[i] : i;
+    }
+
     /// <summary>Pass audio through untouched, keeping every notch's state intact.</summary>
     void setBypass (bool b) noexcept         { bypassed.store (b); }
     bool isBypassed() const noexcept         { return bypassed.load(); }
+
+    /// <summary>
+    /// Return-path diagnostic. Replaces what every armed slot writes to its return:
+    ///   0  = off (normal audio)
+    ///  <0  = hard silence
+    ///  >0  = sine at that frequency
+    /// This answers the only question a routing bug ever asks - "is the console
+    /// actually listening to MY output?" - without touching the signal chain.
+    /// </summary>
+    void setTestTone (float hz) noexcept     { testTone.store (hz); }
 
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
@@ -115,15 +137,22 @@ public:
         const float q       = notchQ.load();
         const float softCap = maxCutDb.load();
 
-        const int  active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
+        const int  active = juce::jmin (activeChans.load(), maxChans, numInputs);
         const bool bypass = bypassed.load();
+
+        // Clear every output first; slots then write into their mapped returns.
+        // Anything not driven is silence, never garbage.
+        for (int c = 0; c < numOutputs; ++c)
+            if (outputs[c] != nullptr) juce::FloatVectorOperations::clear (outputs[c], numSamples);
 
         for (int ch = 0; ch < active; ++ch)
         {
-            if (inputs[ch] == nullptr || outputs[ch] == nullptr) continue;
+            const int rank = outRank[(size_t) ch];
+            if (rank < 0 || rank >= numOutputs) continue;
+            if (inputs[ch] == nullptr || outputs[rank] == nullptr) continue;
 
             const float* in  = inputs[ch];
-            float*       out = outputs[ch];
+            float*       out = outputs[rank];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
             auto& det  = detectors[(size_t) ch];
@@ -147,9 +176,28 @@ public:
             bank.process (out, numSamples, bypass);
         }
 
-        // outputs we don't drive get silence, never garbage
-        for (int c = active; c < numOutputs; ++c)
-            if (outputs[c] != nullptr) juce::FloatVectorOperations::clear (outputs[c], numSamples);
+        // Diagnostic override, applied last so it replaces whatever the slot wrote.
+        const float tone = testTone.load();
+        if (tone != 0.0f)
+        {
+            for (int ch = 0; ch < active; ++ch)
+            {
+                const int rank = outRank[(size_t) ch];
+                if (rank < 0 || rank >= numOutputs || outputs[rank] == nullptr) continue;
+                float* out = outputs[rank];
+                if (tone < 0.0f)
+                {
+                    juce::FloatVectorOperations::clear (out, numSamples);
+                }
+                else
+                {
+                    const double step = 2.0 * juce::MathConstants<double>::pi * tone / sr;
+                    double p = tonePhase;
+                    for (int n = 0; n < numSamples; ++n) { out[n] = 0.2f * (float) std::sin (p); p += step; }
+                    if (ch == active - 1) tonePhase = std::fmod (p, 2.0 * juce::MathConstants<double>::pi);
+                }
+            }
+        }
 
         elapsed += numSamples / sr;
         if (elapsed - lastReleaseCheck > 1.0)
@@ -216,6 +264,9 @@ private:
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
     std::atomic<int>   persistFrames { 9 };
     std::atomic<bool>  bypassed { false };
+    std::atomic<float> testTone { 0.0f };
+    double             tonePhase = 0.0;
+    std::array<int, maxChans> outRank { 0, 1, 2, 3, 4, 5, 6, 7 };   // slot -> dense output rank
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };
 

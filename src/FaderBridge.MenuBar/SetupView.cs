@@ -52,10 +52,11 @@ public sealed class SetupView : UserControl
         AddCol(header, Ui.Caption("Arm"), 0);
         AddCol(header, Ui.Caption("Channel"), 1);
         AddCol(header, Ui.Caption("Input"), 2);
-        AddCol(header, Ui.Caption("Level"), 3);
+        AddCol(header, Ui.Caption("Return"), 3);
+        AddCol(header, Ui.Caption("Level"), 4);
         var notchCap = Ui.Caption("Notches");
         notchCap.HorizontalAlignment = HorizontalAlignment.Right;
-        AddCol(header, notchCap, 4);
+        AddCol(header, notchCap, 5);
 
         var disclosure = BuildDisclosure();
 
@@ -235,15 +236,17 @@ public sealed class SetupView : UserControl
 
         _hint.Text = channels.Length == 0
             ? "Pick an audio device above to see its input channels."
-            : "Switch on the mics to guard. Double-click a name to call it what the band calls it.";
+            : "Switch on the mics to guard; Return is the output the cut signal is sent back on. Double-click a name to rename.";
         _hint.Margin = new Thickness(0, 0, 0, 14);
 
         if (indices.SequenceEqual(_built))
         {
+            var outs = _feedback.OutputChannels;
             foreach (var (physical, strip) in _strip)
             {
                 strip.SyncArm(_feedback.IsInputEnabled(physical));
                 strip.SetName(_feedback.ChannelName(physical));
+                strip.SyncReturn(outs, _feedback.ReturnFor(physical));
             }
             return;
         }
@@ -257,8 +260,10 @@ public sealed class SetupView : UserControl
         {
             var strip = new ChannelStrip(index, _feedback.ChannelName(index), hardwareName);
             strip.SyncArm(_feedback.IsInputEnabled(index));
+            strip.SyncReturn(_feedback.OutputChannels, _feedback.ReturnFor(index));
             strip.ArmToggled += on => _feedback.SetInputEnabled(index, on);
             strip.Renamed += name => _feedback.SetChannelName(index, name);
+            strip.ReturnChanged += output => _feedback.SetReturn(index, output);
             _strip[index] = strip;
             _strips.Children.Add(strip);
         }
@@ -268,13 +273,16 @@ public sealed class SetupView : UserControl
 /// <summary>One input channel as a row: arm, name, hardware input, level, notches.</summary>
 public sealed class ChannelStrip : Border
 {
-    public const string Columns = "62,1.1*,1.2*,1.4*,Auto";
+    public const string Columns = "62,1.1*,1.1*,1.0*,1.3*,Auto";
 
     private readonly ArmSwitch _arm = new();
     private readonly TextBox _nameBox;
     private readonly TextBlock _nameText;
     private readonly LevelMeter _meter = new() { Height = 9, VerticalAlignment = VerticalAlignment.Center };
     private readonly TextBlock _notches = Ui.Mono("—", 12.5, Tokens.InkDim);
+    private readonly ComboBox _return = new() { FontSize = 12.5, MinWidth = 110 };
+    private (int Index, string Name)[] _outs = Array.Empty<(int, string)>();
+    private bool _syncingReturn;
 
     public ChannelStrip(int physical, string name, string hardwareName)
     {
@@ -318,9 +326,17 @@ public sealed class ChannelStrip : Border
         Add(grid, nameCell, 1);
         input.Margin = new Thickness(14, 0, 0, 0);
         Add(grid, input, 2);
+        _return.Margin = new Thickness(14, 0, 0, 0);
+        _return.SelectionChanged += (_, _) =>
+        {
+            if (_syncingReturn) return;
+            if (_return.SelectedIndex >= 0 && _return.SelectedIndex < _outs.Length)
+                ReturnChanged?.Invoke(_outs[_return.SelectedIndex].Index);
+        };
+        Add(grid, _return, 3);
         _meter.Margin = new Thickness(14, 0, 14, 0);
-        Add(grid, _meter, 3);
-        Add(grid, _notches, 4);
+        Add(grid, _meter, 4);
+        Add(grid, _notches, 5);
         Child = grid;
 
         Restyle();
@@ -328,6 +344,23 @@ public sealed class ChannelStrip : Border
 
     public event Action<bool>? ArmToggled;
     public event Action<string>? Renamed;
+    public event Action<int>? ReturnChanged;
+
+    /// <summary>Populate the return picker with the device's outputs and select this channel's.</summary>
+    public void SyncReturn(IReadOnlyList<(int Index, string Name)> outputs, int selected)
+    {
+        _syncingReturn = true;
+        var outs = outputs.ToArray();
+        if (!outs.SequenceEqual(_outs))
+        {
+            _outs = outs;
+            _return.ItemsSource = outs.Select(o => o.Name).ToArray();
+        }
+        var sel = Array.FindIndex(_outs, o => o.Index == selected);
+        _return.SelectedIndex = sel;
+        _return.PlaceholderText = sel < 0 ? $"Out {selected + 1}" : null;
+        _syncingReturn = false;
+    }
 
     private static void Add(Grid g, Control c, int col)
     {

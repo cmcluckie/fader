@@ -83,7 +83,9 @@ private:
         else if (a == "/fk/param"        && m.size() >= 2) applyParam (m[0].getString(), m[1].getFloat32());
         else if (a == "/fk/audio"        && m.size() >= 3) requestAudio (m[0].getString(), m[1].getInt32(), m[2].getInt32());
         else if (a == "/fk/inputs")                        requestInputs (m);
+        else if (a == "/fk/outputs")                       requestOutputs (m);
         else if (a == "/fk/bypass"       && m.size() >= 1) engine.setBypass (m[0].getInt32() != 0);
+        else if (a == "/fk/testtone"     && m.size() >= 1) engine.setTestTone (m[0].isFloat32() ? m[0].getFloat32() : (float) m[0].getInt32());
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();
@@ -129,6 +131,21 @@ private:
 
         const juce::ScopedLock sl (reconfigLock);
         _desired.inputs = std::move (ins);
+        _dirty = true;
+    }
+
+    // Per-slot return outputs, parallel to the SORTED input list: the i-th value
+    // is the physical output channel slot i writes to. Empty = mirror the inputs
+    // (the old behaviour). This is what lets the engine sit as an insert - e.g.
+    // read a mic on ANALOG 5 and return it to the console on ADAT 3.
+    void requestOutputs (const juce::OSCMessage& m)
+    {
+        std::vector<int> outs;
+        for (int i = 0; i < m.size() && (int) outs.size() < AudioEngine::maxChans; ++i)
+            if (m[i].isInt32()) outs.push_back (m[i].getInt32());
+
+        const juce::ScopedLock sl (reconfigLock);
+        _desired.outputs = std::move (outs);
         _dirty = true;
     }
 
@@ -179,20 +196,47 @@ private:
             setup.useDefaultInputChannels  = true;
             setup.useDefaultOutputChannels = true;
         }
+        // Slot i reads the i-th checked input (ascending) and writes its chosen
+        // return output - or, with no explicit returns, mirrors its input index.
+        std::vector<int> returns;
+        for (size_t i = 0; i < d.inputs.size(); ++i)
+            returns.push_back (i < d.outputs.size() && d.outputs[i] >= 0 ? d.outputs[i]
+                                                                         : d.inputs[i]);
+
+        if (d.inputs.empty())
+        {
+            // Nothing checked: keep the device open on defaults but idle.
+            setup.useDefaultInputChannels  = true;
+            setup.useDefaultOutputChannels = true;
+        }
         else
         {
             setup.useDefaultInputChannels  = false;
             setup.useDefaultOutputChannels = false;
             setup.inputChannels.clear();
             setup.outputChannels.clear();
-            for (int idx : d.inputs) { setup.inputChannels.setBit (idx); setup.outputChannels.setBit (idx); }
+            for (int idx : d.inputs)  setup.inputChannels.setBit (idx);
+            for (int idx : returns)   setup.outputChannels.setBit (idx);
         }
 
         devices.setAudioDeviceSetup (setup, true);
-        devices.addAudioCallback (&engine);
 
-        // Enabled channels arrive ascending, so slot i is the i-th checked input,
-        // reading and writing the same physical channel.
+        // JUCE hands the callback one dense pointer per enabled output channel,
+        // ascending - so each slot's return becomes a rank into that dense list.
+        // Two slots sharing a return simply write the same channel (last wins).
+        {
+            std::vector<int> sortedOuts (returns);
+            std::sort (sortedOuts.begin(), sortedOuts.end());
+            sortedOuts.erase (std::unique (sortedOuts.begin(), sortedOuts.end()), sortedOuts.end());
+
+            std::array<int, AudioEngine::maxChans> ranks {};
+            for (size_t i = 0; i < returns.size() && i < ranks.size(); ++i)
+                ranks[i] = (int) (std::lower_bound (sortedOuts.begin(), sortedOuts.end(), returns[i])
+                                  - sortedOuts.begin());
+            engine.setOutputMap (ranks.data(), (int) returns.size());
+        }
+
+        devices.addAudioCallback (&engine);
         engine.setActiveChannels ((int) d.inputs.size());
 
         auto* cur = devices.getCurrentAudioDevice();
@@ -202,14 +246,18 @@ private:
         sendChannels();
     }
 
-    // Report every input channel name of the current device (for the picker).
+    // Report every input and output channel name of the current device, so the
+    // pickers (mic in, return out) can show real names like "ADAT 3".
     void sendChannels()
     {
         auto* cur = devices.getCurrentAudioDevice();
         if (cur == nullptr) return;
-        const auto names = cur->getInputChannelNames();
-        for (int i = 0; i < names.size(); ++i)
-            sender.send (juce::OSCMessage ("/fk/channel", i, names[i]));
+        const auto ins = cur->getInputChannelNames();
+        for (int i = 0; i < ins.size(); ++i)
+            sender.send (juce::OSCMessage ("/fk/channel", i, ins[i]));
+        const auto outs = cur->getOutputChannelNames();
+        for (int i = 0; i < outs.size(); ++i)
+            sender.send (juce::OSCMessage ("/fk/outchannel", i, outs[i]));
     }
 
     void sendNotches()
@@ -287,7 +335,14 @@ private:
         msg.addInt32 (engine.running() ? 1 : 0); sender.send (msg);
     }
 
-    struct Desired { juce::String device; int sampleRate = 48000; int bufferSize = 64; std::vector<int> inputs; };
+    struct Desired
+    {
+        juce::String device;
+        int sampleRate = 48000;
+        int bufferSize = 64;
+        std::vector<int> inputs;    // checked physical inputs, sorted
+        std::vector<int> outputs;   // per-slot returns, parallel to inputs; empty = mirror
+    };
 
     juce::AudioDeviceManager devices;
     AudioEngine              engine;
