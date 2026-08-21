@@ -51,6 +51,11 @@ public sealed class SetupView : UserControl
     };
     private readonly TextBlock _discCaret = Ui.Mono("▾", 13, Tokens.InkFaint);
 
+    private readonly StackPanel _notchList = new() { Spacing = 6 };
+    private readonly TextBlock _ringOutState = Ui.Text("", 12.5, Tokens.InkFaint);
+    private readonly Button _lockFound;
+    private string _notchSignature = "";
+
     private readonly Dictionary<int, ChannelStrip> _strip = new();
     private int[] _built = Array.Empty<int>();
     private bool _syncing;
@@ -146,6 +151,10 @@ public sealed class SetupView : UserControl
                     12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
+        _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
+        var ringOut = BuildRingOut();
+        var filters = BuildFilterList();
+
         var disclosure = BuildDisclosure();
 
         var root = new DockPanel { Margin = new Thickness(20), LastChildFill = true };
@@ -158,7 +167,7 @@ public sealed class SetupView : UserControl
         {
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = _strips,
+            Content = Ui.Stack(Orientation.Vertical, 18, _strips, ringOut, filters),
         });
         Content = root;
 
@@ -169,6 +178,7 @@ public sealed class SetupView : UserControl
 
         RefreshDevices();
         RebuildStrips();
+        RebuildNotchList();   // show the empty state before any telemetry arrives
     }
 
     public void Teardown()
@@ -295,6 +305,121 @@ public sealed class SetupView : UserControl
             Ui.Mono(value, 14, Tokens.Ink, FontWeight.SemiBold)),
     };
 
+    /// <summary>
+    /// Ring-out: the standard live practice, which the engine could already do but
+    /// never offered. Clear the unlocked filters, push the monitors until the room
+    /// rings, let it find the modes, then hold them - so the show starts with the
+    /// real modes already notched instead of learning them during song one.
+    /// </summary>
+    private Control BuildRingOut()
+    {
+        var start = Ui.Small("Start ring-out");
+        start.Click += (_, _) =>
+        {
+            _feedback.ClearAll(includeLocked: false);
+            _ringOutState.Text = "listening — push the monitors until they ring";
+            _ringOutState.Foreground = Tokens.Accent;
+        };
+
+        _lockFound.Click += (_, _) =>
+        {
+            _feedback.LockAll();
+            _ringOutState.Text = "held — these filters now survive a restart";
+            _ringOutState.Foreground = Tokens.Accent;
+        };
+
+        var unlock = Ui.Small("Release all");
+        unlock.Click += (_, _) =>
+        {
+            _feedback.UnlockAll();
+            _ringOutState.Text = "released — filters will fade out again on their own";
+            _ringOutState.Foreground = Tokens.InkFaint;
+        };
+
+        _ringOutState.Text = "clear the filters, ring the room, then hold what it finds";
+
+        return Ui.Card(Ui.Stack(Orientation.Vertical, 10,
+            Ui.Caption("Ring out"),
+            Ui.Stack(Orientation.Horizontal, 10, start, _lockFound, unlock),
+            _ringOutState), background: Tokens.Ground2);
+    }
+
+    private Control BuildFilterList() =>
+        Ui.Card(Ui.Stack(Orientation.Vertical, 10,
+            Ui.Caption("Filters in place"),
+            _notchList), background: Tokens.Ground2);
+
+    /// <summary>
+    /// One row per deployed filter, so a wrong grab can be removed on its own
+    /// instead of reaching for Panic and losing every good filter with it.
+    /// </summary>
+    private void RebuildNotchList()
+    {
+        var rows = new List<(int Slot, int Index, string Name, FkNotch N)>();
+        foreach (var physical in _feedback.EnabledInputs)
+        {
+            var slot = _feedback.EnabledInputs.ToList().IndexOf(physical);
+            foreach (var (index, n) in _feedback.ActiveNotches(slot))
+                rows.Add((slot, index, _feedback.ChannelName(physical), n));
+        }
+
+        var sig = string.Join(";", rows.Select(r => $"{r.Slot}:{r.Index}:{(int) r.N.FreqHz}:{r.N.Locked}"));
+        if (sig == _notchSignature) return;      // same filters: don't churn the UI
+        _notchSignature = sig;
+
+        _notchList.Children.Clear();
+        _lockFound.Content = new TextBlock
+        {
+            Text = rows.Count == 0 ? "Lock found filters" : $"Lock {rows.Count} found",
+            FontSize = 12.5, Foreground = Tokens.Accent,
+        };
+
+        if (rows.Count == 0)
+        {
+            _notchList.Children.Add(Ui.Text("Nothing deployed. Filters appear here as feedback is caught.",
+                12.5, Tokens.InkFaint));
+            return;
+        }
+
+        foreach (var row in rows.OrderBy(r => r.N.FreqHz))
+        {
+            _notchList.Children.Add(BuildNotchRow(row.Slot, row.Index, row.Name, row.N));
+        }
+    }
+
+    private Control BuildNotchRow(int slot, int index, string channel, FkNotch n)
+    {
+        var hold = Ui.Small(n.Locked ? "Held" : "Hold", n.Locked ? Tokens.Accent : Tokens.InkDim);
+        hold.Click += (_, _) => _feedback.LockNotch(slot, index, !n.Locked);
+
+        var kill = Ui.Small("Remove", Tokens.Clip);
+        kill.Click += (_, _) => _feedback.RemoveNotch(slot, index);
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("1.1*,90,80,Auto,Auto") };
+        void Add(Control c, int col, double left = 0)
+        {
+            Grid.SetColumn(c, col);
+            c.VerticalAlignment = VerticalAlignment.Center;
+            c.Margin = new Thickness(left, 0, 0, 0);
+            grid.Children.Add(c);
+        }
+        Add(Ui.Text(channel, 13.5, Tokens.Ink, FontWeight.Medium), 0);
+        Add(Ui.Mono(Hz(n.FreqHz), 13.5, Tokens.Catch, FontWeight.SemiBold), 1, 10);
+        Add(Ui.Mono($"{n.CurrentDb:0.#} dB", 13, Tokens.InkDim), 2, 10);
+        Add(hold, 3, 10);
+        Add(kill, 4, 8);
+
+        return new Border
+        {
+            Background = n.Locked ? Tokens.AccentSoft : Tokens.Panel,
+            BorderBrush = n.Locked ? Tokens.AccentLine : Tokens.LineSoft,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Tokens.RadiusMd,
+            Padding = new Thickness(10, 7),
+            Child = grid,
+        };
+    }
+
     private void OnDevices() => Dispatcher.UIThread.Post(RefreshDevices);
     private void OnChannels() => Dispatcher.UIThread.Post(RebuildStrips);
 
@@ -334,6 +459,7 @@ public sealed class SetupView : UserControl
         Dispatcher.UIThread.Post(() =>
         {
             if (_strip.TryGetValue(physical, out var s)) s.SetNotches(active);
+            RebuildNotchList();
         });
     }
 

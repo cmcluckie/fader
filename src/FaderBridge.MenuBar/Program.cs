@@ -32,6 +32,15 @@ internal static class Program
         // Hidden: drive a real pointer drag at the listen-band handle and report
         // whether the control received it. Pointer plumbing is easy to get wrong and
         // impossible to eyeball from a screenshot.
+        // Hidden: compose the whole Setup screen against a real controller (never
+        // started, so no engine) and render it - the screen has grown enough panels
+        // that "does it still lay out" is worth proving.
+        if (args is ["--render-setup", var spath])
+        {
+            RenderSetup(spath);
+            return;
+        }
+
         if (args is ["--test-drag"])
         {
             TestDrag();
@@ -141,6 +150,28 @@ internal static class Program
         using var frame = window.CaptureRenderedFrame();
         frame!.Save(path);
         Console.WriteLine($"wrote {path}");
+    }
+
+    private static void RenderSetup(string path)
+    {
+        App.RenderOnly = true;
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        var dir = Path.Combine(Path.GetTempPath(), "fk-render-" + Guid.NewGuid().ToString("N"));
+        var feedback = new Fader.Bridge.Feedback.FeedbackController("/nonexistent/fk-engine", dir);
+        var view = new SetupView(feedback);
+
+        var window = new Window { Width = 1000, Height = 760, Background = Tokens.Ground, Content = view };
+        window.Show();
+        for (var i = 0; i < 10; i++) { view.Tick(); Dispatcher.UIThread.RunJobs(); }
+
+        using var frame = window.CaptureRenderedFrame();
+        frame!.Save(path);
+        Console.WriteLine($"wrote {path}");
+        try { Directory.Delete(dir, true); } catch { }
     }
 
     private static void TestDrag()

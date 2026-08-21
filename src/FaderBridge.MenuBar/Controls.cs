@@ -171,6 +171,17 @@ internal static class Ui
         Child = child,
     };
 
+    /// <summary>A small button in the app's own language, not the platform default.</summary>
+    public static Button Small(string text, IBrush? ink = null) => new()
+    {
+        Content = new TextBlock { Text = text, FontSize = 12.5, Foreground = ink ?? Tokens.Ink },
+        Background = Tokens.Panel2,
+        BorderBrush = Tokens.Line,
+        BorderThickness = new Thickness(1),
+        CornerRadius = Tokens.RadiusMd,
+        Padding = new Thickness(12, 7),
+    };
+
     public static StackPanel Stack(Orientation o, double spacing, params Control[] children)
     {
         var p = new StackPanel { Orientation = o, Spacing = spacing };

@@ -339,6 +339,50 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public event Action<bool>? BypassChanged;
 
+    /// <summary>Lock or unlock one filter, by its slot index within the channel.</summary>
+    public void LockNotch(int slot, int index, bool on)
+    {
+        if (slot < 0 || slot >= MaxChans) return;
+        _supervisor.Client.LockNotch(slot, index, on);
+    }
+
+    /// <summary>Remove one filter outright - the surgical alternative to Panic.</summary>
+    public void RemoveNotch(int slot, int index)
+    {
+        if (slot < 0 || slot >= MaxChans) return;
+        _supervisor.Client.RemoveNotch(slot, index);
+    }
+
+    /// <summary>The filters currently deployed on a slot (active ones only).</summary>
+    public IReadOnlyList<(int Index, FkNotch Notch)> ActiveNotches(int slot)
+    {
+        if (slot < 0 || slot >= MaxChans) return Array.Empty<(int, FkNotch)>();
+        lock (_lock)
+        {
+            var list = new List<(int, FkNotch)>();
+            var latest = _latest[slot];
+            for (var i = 0; i < latest.Length; i++)
+            {
+                if (latest[i].Active) list.Add((i, latest[i]));
+            }
+            return list;
+        }
+    }
+
+    /// <summary>
+    /// Release every held filter. The way back from a ring-out that locked in
+    /// something you did not want - locked notches are otherwise permanent.
+    /// </summary>
+    public void UnlockAll()
+    {
+        for (var slot = 0; slot < MaxChans; slot++)
+        {
+            int count;
+            lock (_lock) { count = _latest[slot].Length; }
+            for (var i = 0; i < count; i++) _supervisor.Client.LockNotch(slot, i, false);
+        }
+    }
+
     public void LockAll()
     {
         for (var slot = 0; slot < MaxChans; slot++) _supervisor.Client.LockAll(slot);
