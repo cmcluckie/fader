@@ -96,8 +96,8 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public void SetSearchRange(float minHz, float maxHz)
     {
-        minHz = Math.Clamp(minHz, 40f, 12000f);
-        maxHz = Math.Clamp(maxHz, minHz + 200f, 20000f);
+        minHz = Math.Clamp(minHz, 40f, 8000f);
+        maxHz = Math.Clamp(maxHz, Math.Max(minHz * 1.5f, 1000f), 18000f);
         if (Math.Abs(minHz - _minHz) < 0.5f && Math.Abs(maxHz - _maxHz) < 0.5f) return;
         _minHz = minHz;
         _maxHz = maxHz;

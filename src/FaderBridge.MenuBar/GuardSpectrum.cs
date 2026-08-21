@@ -21,6 +21,13 @@ public sealed class GuardSpectrum : Control
     public const int Bands = 100;
     private const float MinDb = -100f;
 
+    // Usable travel for the band edges. The 1.5x gap keeps them from crossing or
+    // pinching into a slot too narrow to detect anything in.
+    public const float MinEdgeHz = 40f;
+    public const float MaxLowHz = 8000f;
+    public const float MinHighHz = 1000f;
+    public const float MaxEdgeHz = 18000f;
+
     private float _minHz = 200f, _maxHz = 16000f;
     private int _dragging;                                          // -1 low edge, +1 high edge, 0 none
 
@@ -117,8 +124,8 @@ public sealed class GuardSpectrum : Control
     /// <summary>The watched band: everything outside it is dimmed and ignored.</summary>
     private void DrawBand(DrawingContext ctx, double w, double h)
     {
-        var lo = XForHz(_minHz, w);
-        var hi = XForHz(_maxHz, w);
+        var lo = HandleX(_minHz, w);
+        var hi = HandleX(_maxHz, w);
         var shade = new SolidColorBrush(Color.FromArgb(0x9E, 0x09, 0x0B, 0x10));
         if (lo > 0) ctx.FillRectangle(shade, new Rect(0, 0, lo, h - 16));
         if (hi < w) ctx.FillRectangle(shade, new Rect(hi, 0, w - hi, h - 16));
@@ -126,12 +133,19 @@ public sealed class GuardSpectrum : Control
         var pen = new Pen(Tokens.Accent, Editable ? 2 : 1);
         foreach (var x in new[] { lo, hi })
         {
-            if (x <= 0 || x >= w) continue;
             ctx.DrawLine(pen, new Point(x, 0), new Point(x, h - 16));
             if (Editable)   // a grip you can see is a grip you can find in the dark
                 ctx.DrawEllipse(Tokens.Ground, new Pen(Tokens.Accent, 2), new Point(x, (h - 16) / 2), 8, 8);
         }
     }
+
+    /// <summary>
+    /// Where an edge is DRAWN and grabbed, held clear of the borders. Pinned to the
+    /// axis it would otherwise sit exactly on the plot edge at the extremes, where a
+    /// handle is both invisible and impossible to grab back.
+    /// </summary>
+    private static double HandleX(double hz, double w) =>
+        Math.Clamp(XForHz(hz, w), 8, Math.Max(8, w - 8));
 
     private void DrawNotches(DrawingContext ctx, double w, double h)
     {
@@ -171,8 +185,8 @@ public sealed class GuardSpectrum : Control
         if (!Editable) return;
         var x = e.GetPosition(this).X;
         var w = Bounds.Width;
-        var dLo = Math.Abs(x - XForHz(_minHz, w));
-        var dHi = Math.Abs(x - XForHz(_maxHz, w));
+        var dLo = Math.Abs(x - HandleX(_minHz, w));
+        var dHi = Math.Abs(x - HandleX(_maxHz, w));
         if (Math.Min(dLo, dHi) > 30) return;
         _dragging = dLo <= dHi ? -1 : 1;
         e.Pointer.Capture(this);
@@ -186,14 +200,14 @@ public sealed class GuardSpectrum : Control
         {
             if (!Editable) return;
             var px = e.GetPosition(this).X;
-            var near = Math.Min(Math.Abs(px - XForHz(_minHz, Bounds.Width)),
-                                Math.Abs(px - XForHz(_maxHz, Bounds.Width))) <= 30;
+            var near = Math.Min(Math.Abs(px - HandleX(_minHz, Bounds.Width)),
+                                Math.Abs(px - HandleX(_maxHz, Bounds.Width))) <= 30;
             Cursor = new Cursor(near ? StandardCursorType.SizeWestEast : StandardCursorType.Arrow);
             return;
         }
         var hz = HzForX(e.GetPosition(this).X, Bounds.Width);
-        if (_dragging < 0) _minHz = (float) Math.Clamp(hz, 40, _maxHz - 200);
-        else _maxHz = (float) Math.Clamp(hz, _minHz + 200, 20000);
+        if (_dragging < 0) _minHz = (float) Math.Clamp(hz, MinEdgeHz, Math.Min(_maxHz / 1.5, MaxLowHz));
+        else               _maxHz = (float) Math.Clamp(hz, Math.Max(_minHz * 1.5, MinHighHz), MaxEdgeHz);
         RangeDragged?.Invoke(_minHz, _maxHz);
         InvalidateVisual();
     }

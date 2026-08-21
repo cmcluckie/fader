@@ -153,8 +153,8 @@ internal static class Program
         var band = new GuardSpectrum { Height = 150, Editable = true };
         band.SetSlot(0, SynthSpectrum());
         band.SetRange(200f, 16000f);
-        (float Lo, float Hi)? got = null;
-        band.RangeDragged += (lo, hi) => got = (lo, hi);
+        (float Lo, float Hi) range = (200f, 16000f);
+        band.RangeDragged += (lo, hi) => range = (lo, hi);
 
         var window = new Window { Width = 900, Height = 200, Background = Tokens.Ground, Content = band };
         window.Show();
@@ -162,24 +162,39 @@ internal static class Program
 
         var w = band.Bounds.Width;
         var h = band.Bounds.Height;
-        Console.WriteLine($"band bounds: {w:0} x {h:0}");
-        if (w <= 0) { Console.WriteLine("FAIL: control has no size"); return; }
-
-        // the low handle sits at 200 Hz on a 20 Hz..20 kHz log axis
-        var x = w * (99.0 * Math.Log(200.0 / 20.0) / Math.Log(1000.0)) / 99.0;
         var y = h / 2;
-        Console.WriteLine($"pressing at x={x:0}, y={y:0} (low handle)");
+        var ok = true;
 
-        window.MouseDown(new Point(x, y), Avalonia.Input.MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
-        window.MouseMove(new Point(x + 120, y));
-        Dispatcher.UIThread.RunJobs();
-        window.MouseUp(new Point(x + 120, y), Avalonia.Input.MouseButton.Left);
-        Dispatcher.UIThread.RunJobs();
+        double HandleX(double hz) =>
+            Math.Clamp(GuardSpectrum.XForHz(hz, w), 8, w - 8);
 
-        Console.WriteLine(got is { } g
-            ? $"OK: drag received, range now {g.Lo:0} Hz - {g.Hi:0} Hz"
-            : "FAIL: control never received the drag");
+        void Drag(string what, double fromX, double toX)
+        {
+            window.MouseDown(new Point(fromX, y), Avalonia.Input.MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+            window.MouseMove(new Point(toX, y));
+            Dispatcher.UIThread.RunJobs();
+            window.MouseUp(new Point(toX, y), Avalonia.Input.MouseButton.Left);
+            Dispatcher.UIThread.RunJobs();
+
+            var lx = HandleX(range.Lo);
+            var hx = HandleX(range.Hi);
+            var onScreen = lx >= 0 && lx <= w && hx >= 0 && hx <= w;
+            var sane = range.Lo >= GuardSpectrum.MinEdgeHz && range.Lo <= GuardSpectrum.MaxLowHz
+                       && range.Hi <= GuardSpectrum.MaxEdgeHz && range.Hi > range.Lo;
+            if (!onScreen || !sane) ok = false;
+            Console.WriteLine($"  {what,-34} -> {range.Lo,7:0} Hz .. {range.Hi,6:0} Hz   handles x={lx:0}/{hx:0}  {(onScreen && sane ? "ok" : "BAD")}");
+        }
+
+        Console.WriteLine($"band {w:0}x{h:0}, dragging past both edges:");
+        Drag("low handle shoved far LEFT", HandleX(range.Lo), -400);
+        Drag("low handle shoved far RIGHT", HandleX(range.Lo), w + 400);
+        Drag("high handle shoved far RIGHT", HandleX(range.Hi), w + 400);
+        Drag("high handle shoved far LEFT", HandleX(range.Hi), -400);
+        Drag("low handle back to the middle", HandleX(range.Lo), w * 0.4);
+
+        Console.WriteLine(ok ? "PASS: handles stayed on screen and in range"
+                             : "FAIL: a handle escaped");
     }
 
     /// <summary>A ringing spectrum: a noise floor with two resonant peaks.</summary>
