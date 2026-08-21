@@ -110,9 +110,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
             }
         }
 
-        // Configure the fresh engine; level-triggered, so it self-heals on drops.
+        // Subscribe to telemetry; level-triggered, so it self-heals on drops.
+        // The controller applies the device, inputs, and notches on engineOk.
         _client.Subscribe(FkTelemetry.All);
-        _client.SetMode(FkMode.Assist);
         EngineStarted?.Invoke();
     }
 

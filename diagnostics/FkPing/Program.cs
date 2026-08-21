@@ -33,13 +33,19 @@ static async Task<bool> Plumbing(string binary)
     Console.WriteLine("[A] plumbing");
     var supervisor = new EngineSupervisor(binary);
     var status = 0; var notchFrames = 0; var spectrumFrames = 0;
+    var devices = new List<string>();
     FkNotch[] last = [];
     supervisor.Client.StatusReceived += _ => status++;
+    supervisor.Client.DeviceListed += d => { lock (devices) devices.Add(d); };
     supervisor.Client.NotchesReceived += (ch, n) => { if (ch == 0) { notchFrames++; last = n; } };
     supervisor.Client.SpectrumReceived += s => { if (s.Channel == 0) spectrumFrames++; };
 
     supervisor.Start();
-    await Task.Delay(4000);
+    await Task.Delay(1500);
+    var dev = PickDevice(devices);
+    if (dev is not null) { supervisor.Client.SetAudio(dev, 48000, 64); await Task.Delay(1200); }
+    supervisor.Client.SetInputs(new[] { 0 });   // enable one channel so slot 0 is active
+    await Task.Delay(2500);
     supervisor.Client.PlaceNotch(0, 1200f, -6f);
     await Task.Delay(1200);
 
@@ -67,12 +73,15 @@ static async Task<bool> Persistence(string binary)
         c1.Start();
         if (!await WaitFor(() => c1.EngineOk, 6000)) { Console.WriteLine("    engine never came up"); await c1.DisposeAsync(); return false; }
 
-        await WaitFor(() => c1.InputChannels.Count > 0, 2000);
+        await WaitFor(() => c1.Devices.Count > 0, 2000);
         Console.WriteLine($"    devices ({c1.Devices.Count}): {string.Join(", ", c1.Devices)}");
-        Console.WriteLine($"    channels ({c1.InputChannels.Count}): {string.Join(", ", c1.InputChannels.Take(6).Select(c => $"[{c.Index}]{c.Name}"))} ...");
+        var dev1 = PickDevice(c1.Devices);
+        if (dev1 is not null) { c1.SetDevice(dev1); await Task.Delay(1500); }
 
+        c1.SetInputEnabled(0, true);   // enable physical channel 0 -> slot 0
+        await Task.Delay(1500);
         c1.PlaceManualNotch(0, 1500f, -8f);
-        await Task.Delay(1200);
+        await Task.Delay(1500);
         var stored = new FkNotchStore(Path.Combine(dir, "notches.json")).Load();
         var persisted = stored.Any(n => n.Channel == 0 && Math.Abs(n.Hz - 1500f) < 5f);
         Console.WriteLine($"    session 1: placed 1500 Hz, persisted={persisted} (store has {stored.Count})");
@@ -103,6 +112,12 @@ static async Task<bool> Persistence(string binary)
         try { Directory.Delete(dir, recursive: true); } catch { /* temp */ }
     }
 }
+
+// Prefer a real interface (the Apollo) over the built-in mic / virtual devices,
+// so opening a channel subset keeps the audio device running.
+static string? PickDevice(IEnumerable<string> devices) =>
+    devices.FirstOrDefault(d => d.Contains("Thunderbolt", StringComparison.OrdinalIgnoreCase)
+                             || d.Contains("Apollo", StringComparison.OrdinalIgnoreCase));
 
 static async Task<bool> WaitFor(Func<bool> cond, int timeoutMs)
 {

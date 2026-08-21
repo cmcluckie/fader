@@ -5,13 +5,17 @@ namespace Fader.Bridge.Feedback;
 
 /// <summary>
 /// Ties the feedback engine to the C#-owned concerns (§4): supervises the engine,
-/// persists locked notches and replays them on every (re)start so they survive a
-/// restart (§8), and logs detections to CSV. The tray drives this; it does not
-/// touch the engine client directly.
+/// owns which input channels are enabled, persists locked notches (keyed by
+/// physical channel so they survive re-ordering) and replays everything on each
+/// (re)start, and logs detections.
+///
+/// The engine works in slots 0..N-1 (one per checked channel, ascending); this
+/// class maps slot &lt;-&gt; physical channel so callers and storage speak in
+/// physical channels.
 /// </summary>
 public sealed class FeedbackController : IAsyncDisposable
 {
-    private const int Channels = 2;
+    private const int MaxChans = 8;   // must match the engine's kMaxInputs
 
     private readonly EngineSupervisor _supervisor;
     private readonly FkNotchStore _store;
@@ -19,21 +23,16 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly FkEventLog _log;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly object _lock = new();
-    private readonly FkNotch[][] _latest = { Array.Empty<FkNotch>(), Array.Empty<FkNotch>() };
+    private readonly FkNotch[][] _latest = Enumerable.Range(0, MaxChans).Select(_ => Array.Empty<FkNotch>()).ToArray();
 
     private readonly List<string> _devices = new();
     private readonly SortedDictionary<int, string> _channels = new();
-    private FkMode _mode = FkMode.Assist;   // §8: default assist
+    private readonly List<int> _enabled = new();          // physical indices, sorted
+
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
-    private int _leadChannel = 0;
-    private int _bgvChannel = 1;
-    private bool _suppressLead;
-    private bool _suppressBgv;
     private volatile bool _pendingReplay;
-    // Persistence is gated off from a (re)start until the replay is applied, so a
-    // fresh engine's empty notch frames cannot clobber the stored locked filters.
     private volatile bool _allowPersist;
 
     public FeedbackController(string enginePath, string dataDir, string? device = null)
@@ -41,10 +40,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _audioStore = new FkAudioStore(Path.Combine(dataDir, "audio.json"));
         var audio = _audioStore.Load();
         _selectedDevice = audio.Device;
-        _leadChannel = audio.Lead;
-        _bgvChannel = audio.Bgv;
-        _suppressLead = audio.SuppressLead;
-        _suppressBgv = audio.SuppressBgv;
+        _enabled.AddRange((audio.Inputs ?? Array.Empty<int>()).Distinct().OrderBy(x => x).Take(MaxChans));
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -64,111 +60,96 @@ public sealed class FeedbackController : IAsyncDisposable
     }
 
     public bool EngineOk => _supervisor.EngineOk;
-    public FkMode Mode => _mode;
     public string LogPath => _log.Path;
-    public string StorePath => _store.Path;
 
     public event Action<bool>? EngineOkChanged;
     public event Action<string>? Log;
-
-    /// <summary>Latest notch state for a channel (for a display, and for tests).</summary>
-    public event Action<int, FkNotch[]>? NotchesChanged;
-
-    /// <summary>Latest engine spectrum frame for a channel (for a display).</summary>
-    public event Action<FkSpectrum>? SpectrumChanged;
-
-    /// <summary>A detection fired (for a display; also logged internally).</summary>
-    public event Action<FkDetection>? DetectionReceived;
-
-    /// <summary>The available input devices or the current selection changed.</summary>
+    public event Action<int, FkNotch[]>? NotchesChanged;      // slot, notches
+    public event Action<FkSpectrum>? SpectrumChanged;         // slot in .Channel
+    public event Action<FkDetection>? DetectionReceived;      // slot in .Channel
     public event Action? DevicesChanged;
+    public event Action? ChannelsChanged;                     // channel list or enabled set changed
 
-    /// <summary>Input devices the engine reported (Core Audio).</summary>
+    // ---- devices ------------------------------------------------------------
     public IReadOnlyList<string> Devices { get { lock (_lock) { return _devices.ToArray(); } } }
-
-    /// <summary>The device the engine is currently running on.</summary>
     public string? CurrentDevice => _currentDevice;
 
-    /// <summary>Switch the engine's audio device; remembered and re-applied on restart.</summary>
     public void SetDevice(string device)
     {
-        _selectedDevice = device;
+        lock (_lock) { _selectedDevice = device; _enabled.Clear(); }   // new device -> new channel space
         _supervisor.Client.SetAudio(device, 48000, 64);
+        _supervisor.Client.SetInputs(EnabledSnapshot());
         SaveAudio();
+        ChannelsChanged?.Invoke();
     }
 
-    /// <summary>The current device's input channels (index, name).</summary>
+    // ---- channels + enable/disable -----------------------------------------
+    /// <summary>Every input channel the current device exposes (index, name).</summary>
     public IReadOnlyList<(int Index, string Name)> InputChannels
     {
         get { lock (_lock) { return _channels.Select(kv => (kv.Key, kv.Value)).ToArray(); } }
     }
 
-    public int LeadChannel => _leadChannel;
-    public int BgvChannel => _bgvChannel;
+    /// <summary>Enabled physical channel indices (ascending), one engine slot each.</summary>
+    public IReadOnlyList<int> EnabledInputs => EnabledSnapshot();
 
-    /// <summary>The engine or the channel selection changed.</summary>
-    public event Action? ChannelsChanged;
+    public bool IsInputEnabled(int channel) { lock (_lock) { return _enabled.Contains(channel); } }
 
-    /// <summary>Map physical input channels to the two engine channels (LEAD, BGV).</summary>
-    public void SetChannels(int lead, int bgv)
+    public string ChannelName(int channel) { lock (_lock) { return _channels.GetValueOrDefault(channel, $"Ch {channel + 1}"); } }
+
+    /// <summary>Check or uncheck a physical channel for feedback (monitor + cut).</summary>
+    public void SetInputEnabled(int channel, bool on)
     {
-        _leadChannel = lead;
-        _bgvChannel = bgv;
-        _supervisor.Client.SetChannels(lead, bgv);
+        lock (_lock)
+        {
+            var has = _enabled.Contains(channel);
+            if (on && !has && _enabled.Count < MaxChans) _enabled.Add(channel);
+            else if (!on && has) _enabled.Remove(channel);
+            else return;
+            _enabled.Sort();
+        }
+        _supervisor.Client.SetInputs(EnabledSnapshot());
         SaveAudio();
+        ChannelsChanged?.Invoke();
     }
 
-    public bool SuppressLead => _suppressLead;
-    public bool SuppressBgv => _suppressBgv;
-
-    /// <summary>The engine or the per-channel suppress state changed.</summary>
-    public event Action? SuppressChanged;
-
-    /// <summary>Turn feedback cutting on or off for one channel (0 = LEAD, 1 = BGV).</summary>
-    public void SetSuppress(int channel, bool on)
+    /// <summary>Physical channel driving an engine slot, or -1.</summary>
+    public int PhysicalForSlot(int slot)
     {
-        if (channel == 0) _suppressLead = on; else _suppressBgv = on;
-        _supervisor.Client.SetSuppress(channel, on);
-        SaveAudio();
-        SuppressChanged?.Invoke();
+        lock (_lock) { return slot >= 0 && slot < _enabled.Count ? _enabled[slot] : -1; }
     }
 
-    private void SaveAudio() =>
-        _audioStore.Save(new AudioSelection(
-            _selectedDevice, _leadChannel, _bgvChannel, _suppressLead, _suppressBgv));
+    private int SlotForPhysical(int channel)
+    {
+        lock (_lock) { return _enabled.IndexOf(channel); }
+    }
 
+    private int[] EnabledSnapshot() { lock (_lock) { return _enabled.ToArray(); } }
+
+    private void SaveAudio() => _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot()));
+
+    // ---- lifecycle + notch ops ---------------------------------------------
     public void Start(CancellationToken token = default) => _supervisor.Start(token);
 
-    /// <summary>Hand-place a locked notch (the plugin's click-to-place). It persists and replays.</summary>
-    public void PlaceManualNotch(int channel, float hz, float depthDb) =>
-        _supervisor.Client.PlaceNotch(channel, hz, depthDb);
+    /// <summary>Hand-place a locked notch on an engine slot (used by tests).</summary>
+    public void PlaceManualNotch(int slot, float hz, float depthDb) =>
+        _supervisor.Client.PlaceNotch(slot, hz, depthDb);
 
-    // ---- tray-facing control ------------------------------------------------
-    public void SetMode(FkMode mode)
-    {
-        _mode = mode;
-        _supervisor.Client.SetMode(mode);
-    }
-
-    /// <summary>Lock every active notch on both channels (end of a ring-out pass).</summary>
     public void LockAll()
     {
-        for (var ch = 0; ch < Channels; ch++) _supervisor.Client.LockAll(ch);
+        for (var slot = 0; slot < MaxChans; slot++) _supervisor.Client.LockAll(slot);
     }
 
     public void ClearAll(bool includeLocked)
     {
-        for (var ch = 0; ch < Channels; ch++) _supervisor.Client.Clear(ch, includeLocked);
+        for (var slot = 0; slot < MaxChans; slot++) _supervisor.Client.Clear(slot, includeLocked);
     }
 
-    // ---- engine lifecycle ---------------------------------------------------
-    // Replay once the engine is actually up (first engineOk after a start), not
-    // on process spawn - a packet sent before the engine binds its port is lost.
     private void OnEngineOk(bool ok)
     {
         if (ok)
         {
-            _supervisor.Client.ListDevices();   // repopulate the picker whenever it comes up
+            _supervisor.Client.ListDevices();
         }
 
         if (ok && _pendingReplay)
@@ -176,50 +157,47 @@ public sealed class FeedbackController : IAsyncDisposable
             _pendingReplay = false;
             if (_selectedDevice is { } device)
             {
-                _supervisor.Client.SetAudio(device, 48000, 64);   // re-apply the chosen device
-                _supervisor.Client.SetChannels(_leadChannel, _bgvChannel);
+                _supervisor.Client.SetAudio(device, 48000, 64);
             }
-            var toReplay = _store.Load();   // intact - persistence was gated off until now
-            if (toReplay.Count > 0)
-            {
-                Log?.Invoke($"replaying {toReplay.Count} locked notch(es)");
-            }
+            _supervisor.Client.SetInputs(EnabledSnapshot());
+
+            // Replay locked notches, mapping their physical channel to its slot.
+            var toReplay = _store.Load();
+            var replayed = 0;
             foreach (var n in toReplay)
             {
-                _supervisor.Client.PlaceNotch(n.Channel, n.Hz, n.DepthDb);
+                var slot = SlotForPhysical(n.Channel);
+                if (slot >= 0) { _supervisor.Client.PlaceNotch(slot, n.Hz, n.DepthDb); replayed++; }
             }
-            _supervisor.Client.SetSuppress(0, _suppressLead);
-            _supervisor.Client.SetSuppress(1, _suppressBgv);
+            if (replayed > 0) Log?.Invoke($"replaying {replayed} locked notch(es)");
 
-            // Re-enable persistence once the engine has had time to reflect the
-            // replay, so the first saved frame carries the replayed notches.
             _ = Task.Delay(800).ContinueWith(_ => _allowPersist = true, TaskScheduler.Default);
         }
         EngineOkChanged?.Invoke(ok);
     }
 
-    private void OnNotches(int ch, FkNotch[] notches)
+    private void OnNotches(int slot, FkNotch[] notches)
     {
-        if (ch < 0 || ch >= Channels)
+        if (slot < 0 || slot >= MaxChans)
         {
             return;
         }
 
-        NotchesChanged?.Invoke(ch, notches);
+        NotchesChanged?.Invoke(slot, notches);
 
         IReadOnlyList<StoredNotch> locked;
         lock (_lock)
         {
-            _latest[ch] = notches;                  // always track for display
+            _latest[slot] = notches;
             if (!_allowPersist)
             {
-                return;                             // startup/replay window: don't save
+                return;
             }
             locked = CollectLocked();
             var sig = Signature(locked);
             if (sig == _savedSignature)
             {
-                return;   // nothing changed; don't churn the file at 10 Hz
+                return;
             }
             _savedSignature = sig;
         }
@@ -229,7 +207,8 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private void OnDetection(FkDetection d)
     {
-        _log.Write(d, _mode == FkMode.Auto, _clock.Elapsed.TotalSeconds);
+        // enabled channels always cut, so a detection on an active slot was applied
+        _log.Write(d, applied: true, _clock.Elapsed.TotalSeconds);
         DetectionReceived?.Invoke(d);
     }
 
@@ -256,22 +235,26 @@ public sealed class FeedbackController : IAsyncDisposable
         _currentDevice = state.Device;
         if (deviceChanged)
         {
-            lock (_lock) { _channels.Clear(); }   // new device -> new channel set incoming
+            lock (_lock) { _channels.Clear(); }
             ChannelsChanged?.Invoke();
         }
         DevicesChanged?.Invoke();
     }
 
+    // Locked notches, keyed by physical channel (via the slot mapping) so they
+    // are stable when the enabled set is re-ordered.
     private List<StoredNotch> CollectLocked()
     {
         var list = new List<StoredNotch>();
-        for (var ch = 0; ch < Channels; ch++)
+        for (var slot = 0; slot < MaxChans; slot++)
         {
-            foreach (var n in _latest[ch])
+            var physical = slot < _enabled.Count ? _enabled[slot] : -1;
+            if (physical < 0) continue;
+            foreach (var n in _latest[slot])
             {
                 if (n.Active && n.Locked)
                 {
-                    list.Add(new StoredNotch(ch, n.FreqHz, n.TargetDb, n.Manual));
+                    list.Add(new StoredNotch(physical, n.FreqHz, n.TargetDb, n.Manual));
                 }
             }
         }

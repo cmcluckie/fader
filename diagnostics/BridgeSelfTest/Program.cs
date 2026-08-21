@@ -163,10 +163,12 @@ internal static class Program
                 lines.Length >= 3 && lines[2] == "15.000,BGV,800.00,-30.00,0");
 
             var audio = new FkAudioStore(Path.Combine(dir, "audio.json"));
-            Check("empty audio store is default", audio.Load() == AudioSelection.Default);
-            audio.Save(new AudioSelection("Universal Audio Thunderbolt", 4, 5, SuppressLead: true, SuppressBgv: false));
-            Check("audio store round-trips device, ADAT channels, and per-channel suppress",
-                audio.Load() is { Device: "Universal Audio Thunderbolt", Lead: 4, Bgv: 5, SuppressLead: true, SuppressBgv: false });
+            Check("empty audio store has no inputs", audio.Load().Inputs.Length == 0);
+            audio.Save(new AudioSelection("Universal Audio Thunderbolt", new[] { 2, 3, 6 }));
+            var reloaded = audio.Load();
+            Check("audio store round-trips device + enabled inputs",
+                reloaded.Device == "Universal Audio Thunderbolt"
+                && reloaded.Inputs.SequenceEqual(new[] { 2, 3, 6 }));
         }
         finally
         {

@@ -8,29 +8,29 @@
 namespace fk
 {
 constexpr int kMaxNotches = 12;
+constexpr int kMaxInputs  = 8;   // simultaneous feedback channels
 
 /**
-    Headless real-time engine. This is PluginProcessor::processBlock adapted to a
-    Core Audio callback: same DSP (FeedbackDetector, NotchBank), same lock-free
-    command intake and event telemetry, no GUI and no file logging (the C# app
-    owns logging via /fk/event).
+    Headless real-time engine. PluginProcessor::processBlock adapted to a Core
+    Audio callback, generalised to N channels: the device is opened with just the
+    checked input channels, and slot i drives the i-th of them (ascending order).
+    Each active slot both analyses (for the display/log) and notches its input.
 
-    Audio-thread rules hold exactly as in the plugin: nothing here allocates,
-    locks, or logs. Control comes in through an SPSC command queue; telemetry
-    goes out through an SPSC event queue and racy-by-design snapshot reads.
+    Audio-thread rules hold: nothing here allocates, locks, or logs. Control comes
+    in through an SPSC command queue; telemetry goes out through an SPSC event
+    queue and racy-by-design snapshot reads. Everything is preallocated for the
+    maximum channel count.
 */
 class AudioEngine : public juce::AudioIODeviceCallback
 {
 public:
-    enum class Mode { Off = 0, Assist = 1, Auto = 2 };
-    static constexpr int numChans = 2;                       // 0 = LEAD, 1 = BGV
+    static constexpr int maxChans = kMaxInputs;
 
     // ---- control (called from the OSC thread) -------------------------------
-    // Suppression is per channel now: detection always runs (display + log); a
-    // channel only *cuts* when its suppress flag is on. setMode is kept for the
-    // OSC compat path - Auto turns both on, Off/Assist turn both off.
-    void setMode (Mode m) noexcept              { const bool on = (m == Mode::Auto); suppress0.store (on); suppress1.store (on); }
-    void setSuppress (int ch, bool on) noexcept { (ch == 0 ? suppress0 : suppress1).store (on); }
+    /// <summary>How many input slots are live (= number of checked channels).</summary>
+    void setActiveChannels (int n) noexcept { activeChans.store (juce::jlimit (0, maxChans, n)); }
+    int  activeChannels() const noexcept    { return activeChans.load(); }
+
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
@@ -56,7 +56,7 @@ public:
         return true;
     }
 
-    /** Copy one channel's slot state. Racy by design; a torn field just makes one display frame odd. */
+    /** Copy one slot's notch state. Racy by design; a torn field just makes one display frame odd. */
     void snapshotNotches (int ch, std::array<NotchSlot, kMaxNotches>& out) const noexcept
     {
         for (int i = 0; i < kMaxNotches; ++i) out[(size_t) i] = banks[(size_t) ch].getSlot (i);
@@ -66,15 +66,12 @@ public:
     float cpuLoad() const noexcept { return cpu.load(); }
     bool  running() const noexcept { return isRunning.load(); }
 
-    /// <summary>Which enabled-input pointer feeds each engine channel (LEAD, BGV).</summary>
-    void setInputMap (int leadSrc, int bgvSrc) noexcept { srcMap0.store (leadSrc); srcMap1.store (bgvSrc); }
-
     // ---- AudioIODeviceCallback ---------------------------------------------
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override
     {
         sr = device->getCurrentSampleRate();
         const int block = device->getCurrentBufferSizeSamples();
-        for (int ch = 0; ch < numChans; ++ch)
+        for (int ch = 0; ch < maxChans; ++ch)
         {
             banks[(size_t) ch].prepare (sr, block);
             detectors[(size_t) ch].prepare (sr);
@@ -95,7 +92,6 @@ public:
 
         drainCommands();
 
-        // Level-triggered params, reassembled cheaply each block.
         FeedbackDetector::Params p;
         p.prominenceDb   = prominenceDb.load();
         p.persistFrames  = persistFrames.load();
@@ -104,21 +100,14 @@ public:
         p.floorDb        = floorDb.load();
         const float q    = notchQ.load();
 
-        // Each engine channel reads a selected enabled-input pointer (the chosen
-        // physical channels, e.g. ADAT 3/4), and writes the matching output.
-        const int  srcs[numChans] = { srcMap0.load(), srcMap1.load() };
-        const bool sup[numChans]  = { suppress0.load(), suppress1.load() };
+        const int active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
 
-        for (int ch = 0; ch < numChans; ++ch)
+        for (int ch = 0; ch < active; ++ch)
         {
-            const int s = srcs[ch];
-            if (s < 0 || s >= numInputs || s >= numOutputs || inputs[s] == nullptr || outputs[s] == nullptr)
-            {
-                continue;
-            }
+            if (inputs[ch] == nullptr || outputs[ch] == nullptr) continue;
 
-            const float* in  = inputs[s];
-            float*       out = outputs[s];
+            const float* in  = inputs[ch];
+            float*       out = outputs[ch];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
             auto& det  = detectors[(size_t) ch];
@@ -131,23 +120,23 @@ public:
             FeedbackDetector::Event ev;
             while (det.popEvent (ev))
             {
-                if (sup[ch]) bank.trigger (ev.freq, stepDb, maxCutDb.load(), elapsed);
-                pushEvent ({ ch, ev.freq, ev.levelDb });          // C# logs it either way
+                bank.trigger (ev.freq, stepDb, maxCutDb.load(), elapsed);   // checked = cut
+                pushEvent ({ ch, ev.freq, ev.levelDb });                    // C# logs + displays it
             }
 
-            bank.process (out, numSamples, ! sup[ch]);            // off -> pass audio untouched
+            bank.process (out, numSamples, false);
         }
 
-        // any output channel we don't drive gets silence, never garbage
-        for (int c = 0; c < numOutputs; ++c)
-            if (c != srcs[0] && c != srcs[1] && outputs[c] != nullptr)
-                juce::FloatVectorOperations::clear (outputs[c], numSamples);
+        // outputs we don't drive get silence, never garbage
+        for (int c = active; c < numOutputs; ++c)
+            if (outputs[c] != nullptr) juce::FloatVectorOperations::clear (outputs[c], numSamples);
 
         elapsed += numSamples / sr;
         if (elapsed - lastReleaseCheck > 1.0)
         {
             lastReleaseCheck = elapsed;
-            for (auto& b : banks) b.release (elapsed, (double) releaseSeconds.load(), 1.0);
+            for (int ch = 0; ch < active; ++ch)
+                banks[(size_t) ch].release (elapsed, (double) releaseSeconds.load(), 1.0);
         }
     }
 
@@ -174,7 +163,8 @@ private:
             const Cmd c = cmdQueue[(size_t) r];
             cmdRead.store ((r + 1) % cmdQueueSize);
 
-            auto& b = banks[(size_t) juce::jlimit (0, numChans - 1, c.ch)];
+            if (c.ch < 0 || c.ch >= maxChans) continue;
+            auto& b = banks[(size_t) c.ch];
             switch (c.type)
             {
                 case Cmd::Place:    b.placeManual (c.hz, c.depth, elapsed); break;
@@ -196,20 +186,19 @@ private:
         evtWrite = next;
     }
 
-    std::array<NotchBank<kMaxNotches>, numChans> banks;
-    std::array<FeedbackDetector, numChans>       detectors;
+    std::array<NotchBank<kMaxNotches>, maxChans> banks;
+    std::array<FeedbackDetector, maxChans>       detectors;
 
-    std::atomic<bool>  suppress0 { false }, suppress1 { false };   // per-channel cut enable (default off = assist)
+    std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
     std::atomic<float> maxCutDb { -12.0f }, notchQ { 20.0f }, releaseSeconds { 120.0f };
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<int>   persistFrames { 5 };
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };
-    std::atomic<int>   srcMap0 { 0 }, srcMap1 { 1 };   // engine ch -> enabled-input index
 
     static constexpr float stepDb = 3.0f;
     static constexpr int   cmdQueueSize = 128;
-    static constexpr int   evtQueueSize = 64;
+    static constexpr int   evtQueueSize = 128;
 
     std::array<Cmd, cmdQueueSize> cmdQueue {};
     std::atomic<int> cmdRead { 0 }, cmdWrite { 0 };

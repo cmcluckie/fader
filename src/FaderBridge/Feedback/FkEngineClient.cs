@@ -45,7 +45,6 @@ public sealed class FkEngineClient : IAsyncDisposable
     }
 
     // ---- control (app -> engine) -------------------------------------------
-    public void SetMode(FkMode mode)                 => Send(new OscMessage("/fk/mode", (int) mode));
     public void Subscribe(FkTelemetry mask)          => Send(new OscMessage("/fk/subscribe", (int) mask));
     public void Ping()                               => Send(new OscMessage("/fk/ping"));
     public void SetParam(string name, float value)   => Send(new OscMessage("/fk/param", name, value));
@@ -56,8 +55,9 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void LockAll(int ch)                      => Send(new OscMessage("/fk/lockall", ch));
     public void SetAudio(string device, int sampleRate, int bufferSize)
         => Send(new OscMessage("/fk/audio", device, sampleRate, bufferSize));
-    public void SetChannels(int lead, int bgv)       => Send(new OscMessage("/fk/channels/set", lead, bgv));
-    public void SetSuppress(int channel, bool on)    => Send(new OscMessage("/fk/suppress", channel, on ? 1 : 0));
+    /// <summary>The checked physical input channel indices; the engine opens exactly these.</summary>
+    public void SetInputs(IReadOnlyList<int> channels)
+        => Send(new OscMessage("/fk/inputs", channels.Cast<object>().ToArray()));
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
 
     private void Send(OscMessage message)

@@ -14,6 +14,8 @@
 #include <atomic>
 #include <thread>
 #include <csignal>
+#include <vector>
+#include <algorithm>
 #include "AudioEngine.h"
 
 namespace fk
@@ -36,7 +38,7 @@ public:
         setup.useDefaultInputChannels  = true;
         setup.useDefaultOutputChannels = true;
 
-        const auto err = devices.initialise (AudioEngine::numChans, AudioEngine::numChans,
+        const auto err = devices.initialise (AudioEngine::maxChans, AudioEngine::maxChans,
                                              nullptr, true, preferredDevice, &setup);
         if (err.isNotEmpty())
             juce::Logger::writeToLog ("audio init: " + err + " (staying up; pick a device via /fk/audio)");
@@ -73,16 +75,14 @@ private:
     {
         const auto a = m.getAddressPattern().toString();
 
-        if      (a == "/fk/mode"         && m.size() >= 1) engine.setMode ((AudioEngine::Mode) m[0].getInt32());
-        else if (a == "/fk/suppress"     && m.size() >= 2) engine.setSuppress (m[0].getInt32(), m[1].getInt32() != 0);
-        else if (a == "/fk/notch/place"  && m.size() >= 3) engine.placeNotch  (m[0].getInt32(), m[1].getFloat32(), m[2].getFloat32());
+        if      (a == "/fk/notch/place"  && m.size() >= 3) engine.placeNotch  (m[0].getInt32(), m[1].getFloat32(), m[2].getFloat32());
         else if (a == "/fk/notch/remove" && m.size() >= 2) engine.removeNotch (m[0].getInt32(), m[1].getInt32());
         else if (a == "/fk/notch/lock"   && m.size() >= 3) engine.lockNotch   (m[0].getInt32(), m[1].getInt32(), m[2].getInt32() != 0);
         else if (a == "/fk/clear"        && m.size() >= 2) engine.clearNotches (m[0].getInt32(), m[1].getInt32() != 0);
         else if (a == "/fk/lockall"      && m.size() >= 1) engine.lockAll     (m[0].getInt32());
         else if (a == "/fk/param"        && m.size() >= 2) applyParam (m[0].getString(), m[1].getFloat32());
         else if (a == "/fk/audio"        && m.size() >= 3) requestAudio (m[0].getString(), m[1].getInt32(), m[2].getInt32());
-        else if (a == "/fk/channels/set" && m.size() >= 2) requestChannels (m[0].getInt32(), m[1].getInt32());
+        else if (a == "/fk/inputs")                        requestInputs (m);
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();
@@ -111,11 +111,18 @@ private:
         _dirty = true;
     }
 
-    void requestChannels (int lead, int bgv)
+    // The checked physical input channel indices (0-based), any count up to the
+    // engine's max. Sorted ascending so a slot maps to the i-th enabled input.
+    void requestInputs (const juce::OSCMessage& m)
     {
+        std::vector<int> ins;
+        for (int i = 0; i < m.size() && (int) ins.size() < AudioEngine::maxChans; ++i)
+            if (m[i].isInt32()) ins.push_back (m[i].getInt32());
+        std::sort (ins.begin(), ins.end());
+        ins.erase (std::unique (ins.begin(), ins.end()), ins.end());
+
         const juce::ScopedLock sl (reconfigLock);
-        _desired.lead = lead;
-        _desired.bgv = bgv;
+        _desired.inputs = std::move (ins);
         _dirty = true;
     }
 
@@ -159,18 +166,28 @@ private:
         setup.inputDeviceName  = d.device;
         setup.sampleRate       = (double) d.sampleRate;
         setup.bufferSize       = d.bufferSize;
-        setup.useDefaultInputChannels  = false;
-        setup.useDefaultOutputChannels = false;
-        setup.inputChannels.clear();  setup.inputChannels.setBit (d.lead);  setup.inputChannels.setBit (d.bgv);
-        setup.outputChannels.clear(); setup.outputChannels.setBit (d.lead); setup.outputChannels.setBit (d.bgv);
+
+        if (d.inputs.empty())
+        {
+            // Nothing checked: keep the device open on defaults but idle.
+            setup.useDefaultInputChannels  = true;
+            setup.useDefaultOutputChannels = true;
+        }
+        else
+        {
+            setup.useDefaultInputChannels  = false;
+            setup.useDefaultOutputChannels = false;
+            setup.inputChannels.clear();
+            setup.outputChannels.clear();
+            for (int idx : d.inputs) { setup.inputChannels.setBit (idx); setup.outputChannels.setBit (idx); }
+        }
 
         devices.setAudioDeviceSetup (setup, true);
         devices.addAudioCallback (&engine);
 
-        // Enabled inputs arrive in ascending channel order, so LEAD reads the
-        // lower-numbered of the chosen pair.
-        const bool leadLower = d.lead <= d.bgv;
-        engine.setInputMap (leadLower ? 0 : 1, leadLower ? 1 : 0);
+        // Enabled channels arrive ascending, so slot i is the i-th checked input,
+        // reading and writing the same physical channel.
+        engine.setActiveChannels ((int) d.inputs.size());
 
         auto* cur = devices.getCurrentAudioDevice();
         sendAudioState (cur ? cur->getName() : d.device,
@@ -191,7 +208,7 @@ private:
 
     void sendNotches()
     {
-        for (int ch = 0; ch < AudioEngine::numChans; ++ch)
+        for (int ch = 0; ch < engine.activeChannels(); ++ch)
         {
             std::array<NotchSlot, kMaxNotches> slots;
             engine.snapshotNotches (ch, slots);
@@ -212,7 +229,7 @@ private:
     void sendSpectrum()
     {
         constexpr int outBins = 256;
-        for (int ch = 0; ch < AudioEngine::numChans; ++ch)
+        for (int ch = 0; ch < engine.activeChannels(); ++ch)
         {
             auto& det = engine.detector (ch);
             const float hzPerOut = det.getBinHz() * (float) FeedbackDetector::numBins / (float) outBins;
@@ -264,7 +281,7 @@ private:
         msg.addInt32 (engine.running() ? 1 : 0); sender.send (msg);
     }
 
-    struct Desired { juce::String device; int sampleRate = 48000; int bufferSize = 64; int lead = 0; int bgv = 1; };
+    struct Desired { juce::String device; int sampleRate = 48000; int bufferSize = 64; std::vector<int> inputs; };
 
     juce::AudioDeviceManager devices;
     AudioEngine              engine;

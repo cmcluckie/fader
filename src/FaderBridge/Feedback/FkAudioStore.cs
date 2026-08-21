@@ -2,11 +2,10 @@ using System.Text.Json;
 
 namespace Fader.Bridge.Feedback;
 
-/// <summary>The persisted audio selection: device, the two input channels, and per-channel suppress.</summary>
-public sealed record AudioSelection(
-    string? Device, int Lead, int Bgv, bool SuppressLead = false, bool SuppressBgv = false)
+/// <summary>The persisted audio selection: device and the enabled input channels (physical indices).</summary>
+public sealed record AudioSelection(string? Device, int[] Inputs)
 {
-    public static readonly AudioSelection Default = new(null, 0, 1);
+    public static readonly AudioSelection Default = new(null, Array.Empty<int>());
 }
 
 /// <summary>

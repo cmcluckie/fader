@@ -10,9 +10,10 @@ using Fader.Bridge.Feedback;
 namespace Fader.MenuBar;
 
 /// <summary>
-/// A tray-only Avalonia application: no windows, just a menu-bar icon whose
-/// menu starts/stops the bridge and shows its live status. All the real work is
-/// the referenced FaderBridge project, hosted in-process by <see cref="BridgeController"/>.
+/// A tray-only Avalonia application: the menu-bar icon plus the bridge and the
+/// feedback engine. The bridge is hosted in-process by <see cref="BridgeController"/>;
+/// the feedback engine is supervised out-of-process by <see cref="FeedbackController"/>,
+/// and its per-channel setup lives in a <see cref="ConfigWindow"/>.
 /// </summary>
 public sealed class App : Application
 {
@@ -25,23 +26,16 @@ public sealed class App : Application
     private NativeMenuItem? _startStopItem;
     private NativeMenuItem? _marqueeItem;
 
-    // Feedback engine: supervised out-of-process, controlled over OSC, with
-    // locked-notch persistence and CSV logging owned here (Phases 1-2).
     private FeedbackController? _feedback;
     private string? _enginePath;
     private string _configPath = "";
     private NativeMenuItem? _fkStatusItem;
     private NativeMenuItem? _fkEngineItem;
-    private NativeMenuItem? _fkLeadSuppress;
-    private NativeMenuItem? _fkBgvSuppress;
+    private NativeMenuItem? _fkConfigItem;
     private NativeMenuItem? _fkSpectrumItem;
-    private NativeMenuItem? _fkDeviceMenu;
-    private NativeMenuItem? _fkInputsMenu;
-    private NativeMenu? _fkLeadMenu;
-    private NativeMenu? _fkBgvMenu;
     private SpectrumWindow? _spectrumWindow;
+    private ConfigWindow? _configWindow;
 
-    // No XAML; everything is built in code.
     public override void Initialize()
     {
     }
@@ -66,7 +60,7 @@ public sealed class App : Application
         };
         _marqueeItem.Click += OnMarqueeClick;
 
-        // ---- feedback engine section ----------------------------------------
+        // ---- feedback section -----------------------------------------------
         _enginePath = FindEngine();
 
         _fkStatusItem = new NativeMenuItem(_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
@@ -82,43 +76,16 @@ public sealed class App : Application
         };
         _fkEngineItem.Click += OnFkEngineClick;
 
-        // Per-channel cut on/off. The master (engine) runs and analyses both mics;
-        // these decide which one actually gets notched.
-        _fkLeadSuppress = new NativeMenuItem("Suppress LEAD")
-        {
-            ToggleType = NativeMenuItemToggleType.CheckBox, IsChecked = false, IsEnabled = false,
-        };
-        _fkLeadSuppress.Click += (_, _) => ToggleSuppress(0);
-        _fkBgvSuppress = new NativeMenuItem("Suppress BGV")
-        {
-            ToggleType = NativeMenuItemToggleType.CheckBox, IsChecked = false, IsEnabled = false,
-        };
-        _fkBgvSuppress.Click += (_, _) => ToggleSuppress(1);
+        _fkConfigItem = new NativeMenuItem("Configure feedback inputs…") { IsEnabled = false };
+        _fkConfigItem.Click += OnFkConfigClick;
+
+        _fkSpectrumItem = new NativeMenuItem("Show spectrum window") { IsEnabled = false };
+        _fkSpectrumItem.Click += OnFkSpectrumClick;
 
         var fkLockAll = new NativeMenuItem("Lock all feedback filters");
         fkLockAll.Click += (_, _) => _feedback?.LockAll();
         var fkClear = new NativeMenuItem("Clear feedback filters");
         fkClear.Click += (_, _) => _feedback?.ClearAll(includeLocked: true);
-
-        _fkSpectrumItem = new NativeMenuItem("Show spectrum window") { IsEnabled = false };
-        _fkSpectrumItem.Click += OnFkSpectrumClick;
-
-        _fkDeviceMenu = new NativeMenuItem("Audio input") { IsEnabled = false, Menu = new NativeMenu() };
-
-        _fkLeadMenu = new NativeMenu();
-        _fkBgvMenu = new NativeMenu();
-        _fkInputsMenu = new NativeMenuItem("Feedback inputs")
-        {
-            IsEnabled = false,
-            Menu = new NativeMenu
-            {
-                Items =
-                {
-                    new NativeMenuItem("LEAD input") { Menu = _fkLeadMenu },
-                    new NativeMenuItem("BGV input") { Menu = _fkBgvMenu },
-                },
-            },
-        };
 
         var quitItem = new NativeMenuItem("Quit");
         quitItem.Click += OnQuitClick;
@@ -136,13 +103,10 @@ public sealed class App : Application
                 new NativeMenuItemSeparator(),
                 _fkStatusItem,
                 _fkEngineItem,
-                _fkLeadSuppress,
-                _fkBgvSuppress,
-                _fkDeviceMenu,
-                _fkInputsMenu,
+                _fkConfigItem,
+                _fkSpectrumItem,
                 fkLockAll,
                 fkClear,
-                _fkSpectrumItem,
                 new NativeMenuItemSeparator(),
                 quitItem,
             },
@@ -159,9 +123,7 @@ public sealed class App : Application
 
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
 
-        // Auto-start the bridge on launch; the menu reflects success or failure.
         _ = _controller.StartAsync();
-
         base.OnFrameworkInitializationCompleted();
     }
 
@@ -183,7 +145,6 @@ public sealed class App : Application
             : $"X32 {status.X32Endpoint}";
 
         _midiItem!.Header = $"MIDI: {status.MidiPort}";
-
         _startStopItem!.Header = status.Active ? "Stop" : "Start";
 
         _tray!.ToolTipText = status switch
@@ -197,51 +158,23 @@ public sealed class App : Application
 
     private async void OnStartStopClick(object? sender, EventArgs e)
     {
-        if (_controller is null)
-        {
-            return;
-        }
-
-        if (_controller.Active)
-        {
-            await _controller.StopAsync();
-        }
-        else
-        {
-            await _controller.StartAsync();
-        }
+        if (_controller is null) return;
+        if (_controller.Active) await _controller.StopAsync();
+        else await _controller.StartAsync();
     }
 
     private void OnMarqueeClick(object? sender, EventArgs e)
     {
-        if (_controller is null || _marqueeItem is null)
-        {
-            return;
-        }
-
+        if (_controller is null || _marqueeItem is null) return;
         var on = !_controller.MarqueeEnabled;
         _controller.SetMarqueeEnabled(on);
         _marqueeItem.IsChecked = on;
     }
 
     // ---- feedback engine ----------------------------------------------------
-    private void ToggleSuppress(int channel)
-    {
-        if (_feedback is null)
-        {
-            return;
-        }
-        var on = channel == 0 ? !_feedback.SuppressLead : !_feedback.SuppressBgv;
-        _feedback.SetSuppress(channel, on);
-        RenderFk();
-    }
-
     private void OnFkEngineClick(object? sender, EventArgs e)
     {
-        if (_enginePath is null || _fkEngineItem is null)
-        {
-            return;
-        }
+        if (_enginePath is null || _fkEngineItem is null) return;
 
         if (_feedback is null)
         {
@@ -249,15 +182,13 @@ public sealed class App : Application
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "FeedbackKiller");
             var controller = new FeedbackController(_enginePath, dataDir);
             controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
-            controller.DevicesChanged += () => Dispatcher.UIThread.Post(RebuildDeviceMenu);
-            controller.ChannelsChanged += () => Dispatcher.UIThread.Post(RebuildChannelMenus);
-            controller.SuppressChanged += () => Dispatcher.UIThread.Post(RenderFk);
             _feedback = controller;
-            controller.Start();   // per-channel suppress is loaded + replayed by the controller
+            controller.Start();   // device, inputs, and notches are replayed by the controller
             _fkEngineItem.IsChecked = true;
         }
         else
         {
+            _configWindow?.Close();
             var controller = _feedback;
             _feedback = null;
             _fkEngineItem.IsChecked = false;
@@ -265,163 +196,40 @@ public sealed class App : Application
         }
 
         RenderFk();
-        RebuildDeviceMenu();
-        RebuildChannelMenus();
     }
 
     private void RenderFk()
     {
-        if (_fkStatusItem is null)
-        {
-            return;
-        }
+        if (_fkStatusItem is null) return;
 
         var on = _feedback is not null;
-        var cutting = on && (_feedback!.SuppressLead || _feedback.SuppressBgv);
-
         _fkStatusItem.Header = _feedback is null
             ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
-            : !_feedback.EngineOk ? "Feedback: ◍ engine down — audio bypassed"
-            : cutting ? "Feedback: ● suppressing" : "Feedback: ● listening (no cut)";
+            : _feedback.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine down — audio bypassed";
 
-        if (_fkLeadSuppress is not null)
-        {
-            _fkLeadSuppress.IsEnabled = on;
-            _fkLeadSuppress.IsChecked = on && _feedback!.SuppressLead;
-        }
-        if (_fkBgvSuppress is not null)
-        {
-            _fkBgvSuppress.IsEnabled = on;
-            _fkBgvSuppress.IsChecked = on && _feedback!.SuppressBgv;
-        }
-        if (_fkSpectrumItem is not null)
-        {
-            _fkSpectrumItem.IsEnabled = on;
-        }
-        if (_fkDeviceMenu is not null)
-        {
-            _fkDeviceMenu.IsEnabled = on;
-        }
-        if (_fkInputsMenu is not null)
-        {
-            _fkInputsMenu.IsEnabled = on;
-        }
+        if (_fkConfigItem is not null) _fkConfigItem.IsEnabled = on;
+        if (_fkSpectrumItem is not null) _fkSpectrumItem.IsEnabled = on;
     }
 
-    private void RebuildChannelMenus()
+    private void OnFkConfigClick(object? sender, EventArgs e)
     {
-        if (_fkLeadMenu is null || _fkBgvMenu is null)
-        {
-            return;
-        }
+        if (_feedback is null) return;
+        if (_configWindow is not null) { _configWindow.Activate(); return; }
 
-        _fkLeadMenu.Items.Clear();
-        _fkBgvMenu.Items.Clear();
-
-        if (_feedback is null)
-        {
-            _fkLeadMenu.Items.Add(Hint("Turn on the feedback engine"));
-            _fkBgvMenu.Items.Add(Hint("Turn on the feedback engine"));
-            return;
-        }
-
-        var added = 0;
-        foreach (var (index, name) in _feedback.InputChannels)
-        {
-            // Skip the device's unpatched slots.
-            if (name.StartsWith("NONE", StringComparison.OrdinalIgnoreCase) || name == "None")
-            {
-                continue;
-            }
-            _fkLeadMenu.Items.Add(ChannelItem(index, name, isLead: true));
-            _fkBgvMenu.Items.Add(ChannelItem(index, name, isLead: false));
-            added++;
-        }
-
-        if (added == 0)
-        {
-            _fkLeadMenu.Items.Add(Hint("Pick an audio device first"));
-            _fkBgvMenu.Items.Add(Hint("Pick an audio device first"));
-        }
-    }
-
-    private static NativeMenuItem Hint(string text) => new(text) { IsEnabled = false };
-
-    private NativeMenuItem ChannelItem(int index, string name, bool isLead)
-    {
-        var current = isLead ? _feedback!.LeadChannel : _feedback!.BgvChannel;
-        var item = new NativeMenuItem(name)
-        {
-            ToggleType = NativeMenuItemToggleType.Radio,
-            IsChecked = index == current,
-        };
-        item.Click += (_, _) =>
-        {
-            if (_feedback is null)
-            {
-                return;
-            }
-            if (isLead) _feedback.SetChannels(index, _feedback.BgvChannel);
-            else _feedback.SetChannels(_feedback.LeadChannel, index);
-        };
-        return item;
-    }
-
-    private void RebuildDeviceMenu()
-    {
-        if (_fkDeviceMenu?.Menu is not { } menu)
-        {
-            return;
-        }
-
-        menu.Items.Clear();
-        if (_feedback is null)
-        {
-            menu.Items.Add(Hint("Turn on the feedback engine"));
-            return;
-        }
-        if (_feedback.Devices.Count == 0)
-        {
-            menu.Items.Add(Hint("Waiting for the engine…"));
-            return;
-        }
-
-        var current = _feedback.CurrentDevice;
-        foreach (var device in _feedback.Devices)
-        {
-            var name = device;
-            var item = new NativeMenuItem(name)
-            {
-                ToggleType = NativeMenuItemToggleType.Radio,
-                IsChecked = name == current,
-            };
-            item.Click += (_, _) => _feedback?.SetDevice(name);
-            menu.Items.Add(item);
-        }
+        var window = new ConfigWindow(_feedback);
+        window.Closed += (_, _) => _configWindow = null;
+        _configWindow = window;
+        window.Show();
     }
 
     private void OnFkSpectrumClick(object? sender, EventArgs e)
     {
-        if (_feedback is null)
-        {
-            return;
-        }
-
-        if (_spectrumWindow is not null)
-        {
-            _spectrumWindow.Activate();
-            return;
-        }
+        if (_feedback is null) return;
+        if (_spectrumWindow is not null) { _spectrumWindow.Activate(); return; }
 
         IPAddress address;
-        try
-        {
-            address = BridgeConfig.Load(_configPath).ResolvedAddress;
-        }
-        catch
-        {
-            return;   // no usable console address; nothing to show the RTA from
-        }
+        try { address = BridgeConfig.Load(_configPath).ResolvedAddress; }
+        catch { return; }
 
         var window = new SpectrumWindow(_feedback, address);
         window.Closed += (_, _) => _spectrumWindow = null;
@@ -432,10 +240,7 @@ public sealed class App : Application
     private static string? FindEngine()
     {
         var env = Environment.GetEnvironmentVariable("FK_ENGINE_PATH");
-        if (!string.IsNullOrEmpty(env) && File.Exists(env))
-        {
-            return env;
-        }
+        if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
         var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "fk-engine") };
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -449,16 +254,8 @@ public sealed class App : Application
 
     private async void OnQuitClick(object? sender, EventArgs e)
     {
-        if (_feedback is not null)
-        {
-            await _feedback.DisposeAsync();
-        }
-
-        if (_controller is not null)
-        {
-            await _controller.DisposeAsync();
-        }
-
+        if (_feedback is not null) await _feedback.DisposeAsync();
+        if (_controller is not null) await _controller.DisposeAsync();
         (ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)?.Shutdown();
     }
 }
