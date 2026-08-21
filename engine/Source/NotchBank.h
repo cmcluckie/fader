@@ -267,9 +267,13 @@ public:
     }
 
     // ---- depth policy (spec §5, §10) ----------------------------------------
-    double defaultQ       = 40.0;    // 30-60; narrow enough to spare the programme
-    double initialCutDb   = -9.0;    // first strike
-    double fastTrackCutDb = -15.0;   // first strike on a known repeat offender
+    // Q is wider than the spec's 30-60 because the rig disagreed with the spec:
+    // the room's worst mode wanders ~500 Hz, which a Q40 notch (240 Hz wide) cannot
+    // hold. Q25 spans ~390 Hz, so one filter keeps its grip instead of the tone
+    // sliding out and spawning a fresh shallow notch each time.
+    double defaultQ       = 25.0;
+    double initialCutDb   = -12.0;   // first strike
+    double fastTrackCutDb = -18.0;   // first strike on a known repeat offender
     double stepDb         = -6.0;    // deepen per re-trigger (negative)
     double softCapDb      = -18.0;   // normal ceiling
     double hardCapDb      = -24.0;   // absolute ceiling for a stubborn tone

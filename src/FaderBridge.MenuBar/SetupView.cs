@@ -154,7 +154,7 @@ public sealed class SetupView : UserControl
                      ("Stability", "±5 Hz / 100 ms"),
                      ("Growth", "3 dB / 100 ms"),
                      ("Hold → bleed", "10 s, then 1.5 dB/s"),
-                     ("Notch depth", "−9 → −30 dB, Q40"),
+                     ("Notch depth", "−12 → −30 dB, Q25"),
                  })
         {
             grid.Children.Add(SpecCard(label, value));
