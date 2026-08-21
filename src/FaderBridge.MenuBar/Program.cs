@@ -91,8 +91,12 @@ internal static class Program
         strip.SetLevel(0.72);
         strip.SetNotches(new[] { 2140f, 4700f });
 
+        // both guard states side by side, so the wording can be checked at a glance
+        var guardOn = new TapButton("Guard On", "tap to bypass") { IsLit = true };
+        var guardOff = new TapButton("Guard Off", "tap to protect") { IsLit = false };
         var buttons = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14 };
-        buttons.Children.Add(new TapButton("Bypass All", "tap · returns clean signal"));
+        buttons.Children.Add(guardOn);
+        buttons.Children.Add(guardOff);
         buttons.Children.Add(new HoldButton("Panic", "hold 1s · clears every notch", Tokens.Clip));
 
         var window = new Window

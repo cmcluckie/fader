@@ -28,7 +28,7 @@ public sealed class ShowView : UserControl
     private readonly GuardSpectrum _spectrum = new();
     private readonly WrapPanel _tiles = new() { Orientation = Orientation.Horizontal };
     private readonly TextBlock _lastCatch = Ui.Mono("nothing caught yet", 15, Tokens.InkDim, FontWeight.SemiBold);
-    private readonly TapButton _bypass = new("Bypass All", "tap · returns clean signal");
+    private readonly TapButton _bypass = new("Guard On", "tap to bypass");
     private readonly HoldButton _panic = new("Panic", "hold 1s · clears every notch", Tokens.Clip);
 
     private readonly Dictionary<int, ChannelTile> _byPhysical = new();
@@ -202,7 +202,7 @@ public sealed class ShowView : UserControl
         var (text, colour, pulsing) = !ok
             ? ("ENGINE DOWN", Tokens.Clip, false)
             : bypassed
-                ? ("BYPASSED", (IBrush) Tokens.InkDim, false)
+                ? ("GUARD OFF", (IBrush) Tokens.InkDim, false)
                 : ("GUARD ON", Tokens.Accent, true);
 
         _guardText.Text = text;
@@ -212,8 +212,12 @@ public sealed class ShowView : UserControl
         _guardPill.BorderBrush = colour;
         _guardPill.Background = !ok ? Tokens.ClipSoft : bypassed ? Tokens.Panel2 : Tokens.AccentSoft;
 
-        _bypass.IsLit = bypassed;
-        _bypass.Label = bypassed ? "GUARD ON" : "BYPASS ALL";
+        // One vocabulary, everywhere. The button says the SAME words as the pill so
+        // the two can never appear to disagree; the small line says what a tap does.
+        // Lit teal = protecting, dark = not. State first, action second.
+        _bypass.IsLit = ok && !bypassed;
+        _bypass.Label = !ok ? "ENGINE DOWN" : bypassed ? "GUARD OFF" : "GUARD ON";
+        _bypass.Hint = bypassed ? "tap to protect" : "tap to bypass";
         _bypass.InvalidateVisual();
 
         _rigValue.Text = ok ? "running" : "down";

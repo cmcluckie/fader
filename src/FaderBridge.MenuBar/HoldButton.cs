@@ -123,13 +123,12 @@ public sealed class HoldButton : Control
 /// <summary>A plain tap button in the same visual language (used for Bypass).</summary>
 public sealed class TapButton : Control
 {
-    private readonly string _hint;
     private bool _hover;
 
     public TapButton(string label, string hint)
     {
         Label = label.ToUpperInvariant();
-        _hint = hint;
+        Hint = hint;
         Cursor = new Cursor(StandardCursorType.Hand);
         Focusable = true;
         MinWidth = 150;
@@ -138,13 +137,16 @@ public sealed class TapButton : Control
 
     public string Label { get; set; }
 
-    /// <summary>Lit means the mode is engaged — for Bypass, that audio is running clean.</summary>
+    /// <summary>The small line under the label: what tapping will DO.</summary>
+    public string Hint { get; set; }
+
+    /// <summary>Lit means the thing this button names is currently active.</summary>
     public bool IsLit { get; set; }
 
     public event Action? Clicked;
 
     private string LabelText => Label;
-    private string HintText => _hint;
+    private string HintText => Hint;
 
     /// <summary>Size to the widest of label and hint — a button must never clip its own text.</summary>
     protected override Size MeasureOverride(Size availableSize)
@@ -181,7 +183,7 @@ public sealed class TapButton : Control
             new Typeface(Tokens.Display, FontStyle.Normal, FontWeight.Bold), 14, ink);
         ctx.DrawText(label, new Point((w - label.Width) / 2, h / 2 - label.Height + 2));
 
-        var hint = new FormattedText(_hint, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
+        var hint = new FormattedText(Hint, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
             new Typeface(Tokens.Mono), 10.5, Tokens.InkFaint);
         ctx.DrawText(hint, new Point((w - hint.Width) / 2, h / 2 + 4));
     }
