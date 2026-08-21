@@ -32,6 +32,7 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly Dictionary<int, int> _returns = new();    // physical input -> return output
     private readonly SortedDictionary<int, string> _outChannels = new();
 
+    private float _minHz = 200f, _maxHz = 16000f;
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
@@ -52,6 +53,8 @@ public sealed class FeedbackController : IAsyncDisposable
         {
             if (int.TryParse(key, out var index)) _returns[index] = value;
         }
+        _minHz = audio.MinHz > 0 ? audio.MinHz : 200f;
+        _maxHz = audio.MaxHz > 0 ? audio.MaxHz : 16000f;
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -81,6 +84,33 @@ public sealed class FeedbackController : IAsyncDisposable
     public event Action<FkSpectrum>? SpectrumChanged;         // slot in .Channel
     public event Action<FkDetection>? DetectionReceived;      // slot in .Channel
     public event Action<FkStatus>? StatusChanged;             // engine running + CPU load
+    public event Action? SearchRangeChanged;
+
+    /// <summary>
+    /// The band the detector watches. Narrowing the low edge is the direct fix for
+    /// a voice being notched: below roughly 1 kHz a sung note looks exactly like a
+    /// ring, and vocal feedback almost always lives above it.
+    /// </summary>
+    public float MinHz => _minHz;
+    public float MaxHz => _maxHz;
+
+    public void SetSearchRange(float minHz, float maxHz)
+    {
+        minHz = Math.Clamp(minHz, 40f, 12000f);
+        maxHz = Math.Clamp(maxHz, minHz + 200f, 20000f);
+        if (Math.Abs(minHz - _minHz) < 0.5f && Math.Abs(maxHz - _maxHz) < 0.5f) return;
+        _minHz = minHz;
+        _maxHz = maxHz;
+        PushSearchRange();
+        SaveAudio();
+        SearchRangeChanged?.Invoke();
+    }
+
+    private void PushSearchRange()
+    {
+        _supervisor.Client.SetParam("minFreq", _minHz);
+        _supervisor.Client.SetParam("maxFreq", _maxHz);
+    }
     public event Action? DevicesChanged;
     public event Action? ChannelsChanged;                     // channel list or enabled set changed
 
@@ -229,7 +259,7 @@ public sealed class FeedbackController : IAsyncDisposable
             returns = _returns.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
         }
         _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
-            Names: names, Returns: returns));
+            Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz));
     }
 
     // ---- lifecycle + notch ops ---------------------------------------------
@@ -279,6 +309,7 @@ public sealed class FeedbackController : IAsyncDisposable
                 _supervisor.Client.SetAudio(device, 48000, 64);
             }
             PushRouting();
+            PushSearchRange();
             if (IsBypassed) _supervisor.Client.SetBypass(true);   // a fresh engine starts un-bypassed
 
             // Replay locked notches, mapping their physical channel to its slot.

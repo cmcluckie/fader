@@ -70,9 +70,14 @@ internal static class Program
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
             .SetupWithoutStarting();
 
-        var spectrum = new GuardSpectrum { Height = 200 };
+        // twenty notches, as reported from the rig - the label crowding case
+        var spectrum = new GuardSpectrum { Height = 200, Editable = true };
         spectrum.SetSlot(0, SynthSpectrum());
-        spectrum.SetNotches(new[] { (2140f, -12f), (4700f, -6f) });
+        spectrum.SetRange(1000f, 16000f);
+        var many = new List<(float, float)>();
+        for (var i = 0; i < 20; i++) many.Add((180f + i * 42f, -3f - i * 1.2f));
+        many.Add((2140f, -24f)); many.Add((9840f, -30f));
+        spectrum.SetNotches(many);
         spectrum.AddCatch(2140f);
 
         var tiles = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12 };

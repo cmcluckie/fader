@@ -21,6 +21,8 @@ public sealed class SetupView : UserControl
     private readonly StackPanel _strips = new() { Spacing = 0 };
     private readonly TextBlock _hint = Ui.Text("", 14, Tokens.InkDim);
     private readonly StackPanel _discBody = new() { Spacing = 10 };
+    private readonly GuardSpectrum _band = new() { Height = 150, Editable = true };
+    private readonly TextBlock _bandLabel = Ui.Mono("", 12.5, Tokens.InkDim);
     private readonly TextBlock _discCaret = Ui.Mono("▾", 13, Tokens.InkFaint);
 
     private readonly Dictionary<int, ChannelStrip> _strip = new();
@@ -58,10 +60,27 @@ public sealed class SetupView : UserControl
         notchCap.HorizontalAlignment = HorizontalAlignment.Right;
         AddCol(header, notchCap, 5);
 
+        // Where the detector looks. Dragging the edges on the live spectrum is the
+        // fix for a voice being notched - you can see your own energy sitting below
+        // the low edge while you set it.
+        _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
+        _band.RangeDragged += (lo, hi) =>
+        {
+            _bandLabel.Text = $"listening {Hz(lo)} – {Hz(hi)}";
+            _feedback.SetSearchRange(lo, hi);
+        };
+        _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
+        var bandBox = Ui.Stack(Orientation.Vertical, 8,
+            Ui.Stack(Orientation.Horizontal, 12, Ui.Caption("Listen band"), _bandLabel),
+            _band,
+            Ui.Text("Drag the teal handles. Anything greyed out is ignored — keep the low edge above your voice.",
+                    12.5, Tokens.InkFaint));
+        bandBox.Margin = new Thickness(0, 0, 0, 16);
+
         var disclosure = BuildDisclosure();
 
         var root = new DockPanel { Margin = new Thickness(20), LastChildFill = true };
-        var top = Ui.Stack(Orientation.Vertical, 0, toolbar, _hint, header);
+        var top = Ui.Stack(Orientation.Vertical, 0, toolbar, bandBox, _hint, header);
         DockPanel.SetDock(top, Dock.Top);
         DockPanel.SetDock(disclosure, Dock.Bottom);
         root.Children.Add(top);
@@ -94,7 +113,10 @@ public sealed class SetupView : UserControl
     public void Tick()
     {
         foreach (var s in _strip.Values) s.Tick();
+        _band.InvalidateVisual();
     }
+
+    private static string Hz(float hz) => hz >= 1000f ? $"{hz / 1000f:0.##} kHz" : $"{hz:0} Hz";
 
     private static void AddCol(Grid g, Control c, int col)
     {
@@ -202,10 +224,25 @@ public sealed class SetupView : UserControl
         var peak = float.NegativeInfinity;
         foreach (var m in spec.Magnitudes) if (m > peak) peak = m;
         var level = Math.Clamp((peak + 80f) / 80f, 0f, 1f);
+        var bands = ToLogAxis(spec);
         Dispatcher.UIThread.Post(() =>
         {
             if (_strip.TryGetValue(physical, out var s)) s.SetLevel(level);
+            _band.SetSlot(spec.Channel, bands);
         });
+    }
+
+    /// <summary>Resample the engine's linear spectrum onto the display's log bands.</summary>
+    private static float[] ToLogAxis(FkSpectrum spec)
+    {
+        var outp = new float[GuardSpectrum.Bands];
+        for (var i = 0; i < GuardSpectrum.Bands; i++)
+        {
+            var hz = 20.0 * Math.Pow(1000.0, i / (double) (GuardSpectrum.Bands - 1));
+            var bin = (int) Math.Round(hz / Math.Max(1f, spec.HzPerBin));
+            outp[i] = bin >= 0 && bin < spec.Magnitudes.Length ? spec.Magnitudes[bin] : -120f;
+        }
+        return outp;
     }
 
     private void OnNotches(int slot, FkNotch[] notches)

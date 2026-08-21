@@ -12,7 +12,9 @@ public sealed record AudioSelection(
     int[] Inputs,
     bool Enabled = false,
     Dictionary<string, string>? Names = null,
-    Dictionary<string, int>? Returns = null)
+    Dictionary<string, int>? Returns = null,
+    float MinHz = 200f,
+    float MaxHz = 16000f)
 {
     public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null, null);
 }

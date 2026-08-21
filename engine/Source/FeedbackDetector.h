@@ -42,6 +42,15 @@ public:
         float  minFreq        = 200.0f; // low edge of the watched band
         float  maxFreq        = 16000.0f; // high edge; still clamped to Nyquist by bin count
         float  pitchTolerance = 0.006f; // (retained for compatibility; superseded by stabilityHz)
+
+        // A sung harmonic is prominent, steady and growing - it passes every test
+        // feedback does. These three separate them.
+        float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
+        float  voiceBandHz    = 2000.0f;// below here, look longer and test for vibrato
+        int    voiceFrames    = 56;     // ~300 ms: long enough to SEE a wobble
+        float  vibratoDepth   = 0.004f; // peak-to-peak pitch swing, relative (0.4%)
+        float  vibratoMinHz   = 3.5f;   // a singer's wobble lives in this band
+        float  vibratoMaxHz   = 9.0f;
     };
 
     struct Event
@@ -108,7 +117,7 @@ public:
     float getBinHz() const noexcept        { return binHz; }
 
 private:
-    static constexpr int windowSize = 48;   // >= any usable persistFrames
+    static constexpr int windowSize = 64;   // >= voiceFrames, so vibrato is visible
 
     struct Suspect
     {
@@ -185,13 +194,68 @@ private:
                 const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
                 const float freq  = (i + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
 
-                // §4.4 harmonic guard: soft - flag it, track() then demands extra time
-                track (freq, here, hasHarmonicSupport (freq, here));
+                // §4.4 harmonic guard. Now a real gate, not just a delay: a peak
+                // sitting in a harmonic series has to be substantially MORE prominent
+                // than a lone tone to be believed, because a sung vowel harmonic
+                // otherwise passes prominence, stability and growth exactly like
+                // feedback does - which is how a voice ends up notched.
+                const bool harmonic = hasHarmonicSupport (freq, here);
+                if (harmonic && (here - localFloor) < params.prominenceDb + params.harmonicPromDb)
+                    continue;
+
+                track (freq, here, harmonic);
             }
         }
 
         for (auto& s : suspects)
             if (s.active && s.missed > 2) s = Suspect{};
+    }
+
+    /**
+        True if the candidate's pitch is wobbling like vibrato rather than sitting still.
+
+        This is the one discriminator that works on character rather than frequency:
+        a sung note oscillates a few times a second, an acoustic feedback loop does
+        not move at all. The stability gate cannot see it because a wobble takes
+        150-250 ms to complete and that gate looks at ~32 ms - through a slit, where
+        every note looks steady.
+    */
+    bool looksLikeVibrato (const Suspect& s, int n) const noexcept
+    {
+        if (n < 12) return false;
+
+        float sum = 0.0f;
+        for (int i = 1; i <= n; ++i)
+            sum += s.wFreq[(size_t) ((s.windowPos - i + windowSize) % windowSize)];
+        const float mean = sum / (float) n;
+        if (mean <= 0.0f) return false;
+
+        const float dead = mean * 0.0005f;   // ignore dither about the mean
+        float lo = 1.0e9f, hi = -1.0e9f;
+        int crossings = 0, prevSign = 0;
+
+        for (int i = n; i >= 1; --i)          // oldest -> newest
+        {
+            const float f = s.wFreq[(size_t) ((s.windowPos - i + windowSize) % windowSize)];
+            lo = juce::jmin (lo, f);
+            hi = juce::jmax (hi, f);
+
+            const float d = f - mean;
+            const int sign = d > dead ? 1 : (d < -dead ? -1 : 0);
+            if (sign != 0)
+            {
+                if (prevSign != 0 && sign != prevSign) ++crossings;
+                prevSign = sign;
+            }
+        }
+
+        const float depth   = (hi - lo) / mean;                                   // relative swing
+        const float seconds = (float) (n * hopSize) / (float) sampleRate;
+        const float rateHz  = (float) crossings / (2.0f * seconds);               // full cycles/sec
+
+        return depth  >= params.vibratoDepth
+            && rateHz >= params.vibratoMinHz
+            && rateHz <= params.vibratoMaxHz;
     }
 
     /** True if this looks like part of a harmonic series rather than a lone tone. */
@@ -253,11 +317,21 @@ private:
             // already loud. Scale the requirement to the window's real duration.
             const float windowSec  = (float) (n * hopSize) / (float) sampleRate;
             const float needGrowth = params.growthDb * (windowSec / 0.1f);
-            const int   need   = params.persistFrames + (s.harmonic ? params.harmonicExtra : 0);
+            // In the voice band, stability alone cannot tell a held note from a ring,
+            // so look for ~300 ms and veto anything that wobbles. Above it, keep the
+            // fast path: a voice's upper harmonics swing too many Hz to pass the
+            // stability gate anyway, and that is where the real feedback lives.
+            const bool  voiceBand = s.freq < params.voiceBandHz;
+            const int   baseNeed  = voiceBand ? params.voiceFrames : params.persistFrames;
+            const int   need   = baseNeed + (s.harmonic ? params.harmonicExtra : 0);
 
             if (! s.reported)
             {
-                if (s.frames >= need && spread <= params.stabilityHz && growth >= needGrowth)
+                const bool wobbling = voiceBand
+                    && looksLikeVibrato (s, juce::jmin (s.frames, params.voiceFrames));
+
+                if (s.frames >= need && spread <= params.stabilityHz
+                    && growth >= needGrowth && ! wobbling)
                 {
                     s.reported    = true;
                     s.reportLevel = s.lastLevel;

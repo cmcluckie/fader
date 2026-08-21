@@ -63,6 +63,7 @@ public sealed class ShowView : UserControl
         top.Children.Add(rig);
 
         _spectrum.Height = 230;
+        _spectrum.SetRange(feedback.MinHz, feedback.MaxHz);
 
         _bypass.Clicked += () => _feedback.SetBypass(!_feedback.IsBypassed);
         _panic.Fired += () => _feedback.ClearAll(includeLocked: true);
@@ -108,6 +109,7 @@ public sealed class ShowView : UserControl
         _feedback.DetectionReceived += OnDetection;
         _feedback.ChannelsChanged += OnChannels;
         _feedback.EngineOkChanged += OnEngineOk;
+        _feedback.SearchRangeChanged += OnRange;
         _feedback.BypassChanged += _ => Dispatcher.UIThread.Post(RenderState);
 
         RebuildTiles();
@@ -129,6 +131,7 @@ public sealed class ShowView : UserControl
         _feedback.DetectionReceived -= OnDetection;
         _feedback.ChannelsChanged -= OnChannels;
         _feedback.EngineOkChanged -= OnEngineOk;
+        _feedback.SearchRangeChanged -= OnRange;
     }
 
     /// <summary>Driven by the window's single animation timer.</summary>
@@ -139,6 +142,9 @@ public sealed class ShowView : UserControl
         foreach (var tile in _byPhysical.Values) tile.Tick();
         _spectrum.InvalidateVisual();
     }
+
+    private void OnRange() => Dispatcher.UIThread.Post(
+        () => _spectrum.SetRange(_feedback.MinHz, _feedback.MaxHz));
 
     private void OnChannels() => Dispatcher.UIThread.Post(RebuildTiles);
     private void OnEngineOk(bool _) => Dispatcher.UIThread.Post(RenderState);
