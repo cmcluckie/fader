@@ -27,7 +27,7 @@ public sealed class ConfigWindow : Window
     private const double MeterHeight = 120;
 
     private readonly FeedbackController _feedback;
-    private readonly ComboBox _deviceBox = new() { MinWidth = 260 };
+    private readonly ComboBox _deviceBox = new() { MinWidth = 260, PlaceholderText = "Select audio device…" };
     private readonly StackPanel _strips = new() { Orientation = Orientation.Horizontal, Spacing = 6 };
     private readonly TextBlock _hint = new() { Foreground = TextOff, FontSize = 12.5, Margin = new Thickness(0, 6, 0, 8) };
     private readonly DispatcherTimer _meterTimer;
@@ -107,7 +107,12 @@ public sealed class ConfigWindow : Window
             .ToArray();
         var indices = channels.Select(c => c.Index).ToArray();
 
-        // Only rebuild when the channel set changes; otherwise refresh checkbox state.
+        // Hint always reflects the current state, even on the empty->empty path.
+        _hint.Text = channels.Length == 0
+            ? "Pick an audio device above to see its input channels."
+            : "Check the inputs to run feedback control on. Meters show level on the checked ones.";
+
+        // Only rebuild the strips when the channel set actually changes.
         if (indices.SequenceEqual(_builtChannels))
         {
             RefreshChecks();
@@ -117,13 +122,7 @@ public sealed class ConfigWindow : Window
 
         _strips.Children.Clear();
         _meters.Clear();
-
-        if (channels.Length == 0)
-        {
-            _hint.Text = "Pick an audio device to see its input channels.";
-            return;
-        }
-        _hint.Text = "Check the inputs to run feedback control on. Meters show level on the checked ones.";
+        if (channels.Length == 0) return;
 
         foreach (var (index, name) in channels)
         {

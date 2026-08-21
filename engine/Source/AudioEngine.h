@@ -108,7 +108,8 @@ public:
         p.stabilityHz    = stabilityHz.load();
         p.growthDb       = growthDb.load();
         p.inputGateDb    = inputGate.load();
-        const float q    = notchQ.load();
+        const float q       = notchQ.load();
+        const float softCap = maxCutDb.load();
 
         const int active = juce::jmin (activeChans.load(), maxChans, juce::jmin (numInputs, numOutputs));
 
@@ -123,15 +124,18 @@ public:
             auto& det  = detectors[(size_t) ch];
             auto& bank = banks[(size_t) ch];
             det.setParams (p);
-            bank.defaultQ = q;
+            bank.defaultQ    = q;
+            bank.softCapDb   = softCap;              // user "max cut" == the soft cap
+            bank.hardCapDb   = softCap - 6.0f;       // one more step for a stubborn tone
+            bank.holdSeconds = (double) releaseSeconds.load();
 
             det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
 
             FeedbackDetector::Event ev;
             while (det.popEvent (ev))
             {
-                bank.trigger (ev.freq, stepDb, maxCutDb.load(), elapsed);   // checked = cut
-                pushEvent ({ ch, ev.freq, ev.levelDb });                    // C# logs + displays it
+                bank.trigger (ev.freq, elapsed);           // checked = cut; bank owns depth
+                pushEvent ({ ch, ev.freq, ev.levelDb });   // C# logs + displays it
             }
 
             bank.process (out, numSamples, false);
@@ -146,7 +150,7 @@ public:
         {
             lastReleaseCheck = elapsed;
             for (int ch = 0; ch < active; ++ch)
-                banks[(size_t) ch].release (elapsed, (double) releaseSeconds.load(), 1.0);
+                banks[(size_t) ch].release (elapsed);   // bank owns hold/bleed/retire
         }
     }
 
@@ -200,7 +204,7 @@ private:
     std::array<FeedbackDetector, maxChans>       detectors;
 
     std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
-    std::atomic<float> maxCutDb { -12.0f }, notchQ { 20.0f }, releaseSeconds { 120.0f };
+    std::atomic<float> maxCutDb { -18.0f }, notchQ { 40.0f }, releaseSeconds { 2.0f };  // spec §5-6 defaults
     std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
@@ -208,7 +212,6 @@ private:
     std::atomic<float> cpu { 0.0f };
     std::atomic<bool>  isRunning { false };
 
-    static constexpr float stepDb = 3.0f;
     static constexpr int   cmdQueueSize = 128;
     static constexpr int   evtQueueSize = 128;
 

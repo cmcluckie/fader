@@ -52,13 +52,29 @@ struct NotchSlot
     bool   locked   = false;   // never auto-released or auto-deepened
     bool   manual   = false;   // placed by hand rather than detected
     double freq     = 1000.0;
-    double q        = 20.0;
+    double q        = 40.0;
     double targetDb = 0.0;     // negative
     double currentDb= 0.0;     // smoothed toward targetDb
     double lastHitS = 0.0;     // transport seconds of last (re)trigger
+    double lastRelS = 0.0;     // transport seconds of last release step
 };
 
-/** Fixed-size bank. Everything is preallocated; safe to drive from the audio thread. */
+/**
+    Fixed-size notch pool with the adaptive-suppression policy (spec §5-8).
+
+    Depth   : peaking EQ at Q ~40; new notches open at -6 dB (or -12 for a known
+              repeat offender) and deepen -6 dB per re-trigger to a -18 dB soft
+              cap, then to a -24 dB hard cap while the tone keeps coming back.
+    Release : a notch that has not re-triggered for `holdSeconds` bleeds back
+              toward 0 at `bleedDbPerSec`, no faster than one step per
+              `minReleaseGap`, and retires once it is shallower than `retireDb`.
+    Pool    : triggers within 1/12 octave coalesce onto one slot; when every slot
+              is busy the least-recently-hit unlocked one is stolen.
+    Memory  : a decaying 1/24-octave histogram counts how often each frequency has
+              offended; three strikes and new notches there open deep (fast-track).
+
+    Everything is preallocated; safe to drive from the audio thread.
+*/
 template <int MaxNotches>
 class NotchBank
 {
@@ -72,43 +88,63 @@ public:
         const double blockSeconds = (double) blockSize / sampleRate;
         smoothCoeff = 1.0 - std::exp (-blockSeconds / 0.030);
         for (auto& b : filters) b.reset();
+        // the histogram's decay clock rides the transport, which restarts here
+        for (auto& h : histogram) h = Bucket{};
     }
 
     void reset() noexcept { for (auto& b : filters) b.reset(); }
 
-    /** Deepen an existing notch near f, or claim a free slot. Returns slot index or -1. */
-    int trigger (double f, double stepDb, double maxCutDb, double nowSeconds) noexcept
+    /**
+        A detector hit at f. Deepen the coalesced notch if one already covers f,
+        otherwise open a fresh one (deeper if f is a known repeat offender).
+        Returns the slot index, or -1 only if every slot is locked. `nowSeconds`
+        is the transport clock.
+    */
+    int trigger (double f, double nowSeconds) noexcept
     {
-        const int existing = findNear (f);
+        const int existing = findNear (f, coalesceOctaves);
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
             s.lastHitS = nowSeconds;
             if (! s.locked)
-                s.targetDb = std::max (maxCutDb, s.targetDb - stepDb);
+            {
+                // deepen a step; allow the hard cap only once we are already at the
+                // soft cap and the tone is still knocking (spec §5).
+                const double floorDb = (s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb;
+                s.targetDb = std::max (floorDb, s.targetDb + stepDb);
+            }
             return existing;
         }
 
-        const int free = findFree();
-        if (free < 0) return -1;
+        int slot = findFree();
+        if (slot < 0) slot = stealLru();          // pool full: evict the coldest notch
+        if (slot < 0) return -1;                   // everything locked
 
-        auto& s = slots[(size_t) free];
+        const double openDb = (offenderCount (f, nowSeconds) >= fastTrackStrikes)
+                                  ? fastTrackCutDb : initialCutDb;
+
+        auto& s = slots[(size_t) slot];
         s = NotchSlot{};
         s.active   = true;
         s.freq     = f;
         s.q        = defaultQ;
-        s.targetDb = -stepDb;
+        s.targetDb = openDb;
         s.currentDb= 0.0;
         s.lastHitS = nowSeconds;
-        filters[(size_t) free].reset();
-        return free;
+        s.lastRelS = nowSeconds;
+        filters[(size_t) slot].reset();
+
+        noteOffender (f, nowSeconds);              // one strike per fresh occurrence
+        return slot;
     }
 
     int placeManual (double f, double depthDb, double nowSeconds) noexcept
     {
-        const int free = findFree();
-        if (free < 0) return -1;
-        auto& s = slots[(size_t) free];
+        int slot = findFree();
+        if (slot < 0) slot = stealLru();
+        if (slot < 0) return -1;
+        auto& s = slots[(size_t) slot];
         s = NotchSlot{};
         s.active   = true;
         s.locked   = true;
@@ -118,21 +154,28 @@ public:
         s.targetDb = depthDb;
         s.currentDb= 0.0;
         s.lastHitS = nowSeconds;
-        filters[(size_t) free].reset();
-        return free;
+        s.lastRelS = nowSeconds;
+        filters[(size_t) slot].reset();
+        return slot;
     }
 
-    /** Walk back unlocked notches that have not retriggered recently. */
-    void release (double nowSeconds, double holdSeconds, double stepDb) noexcept
+    /**
+        Bleed unlocked notches back out. Call periodically with the transport
+        clock; the per-slot timers enforce the 2 s hold and the 0.5 s minimum gap
+        between steps regardless of how often this is called (spec §6).
+    */
+    void release (double nowSeconds) noexcept
     {
         for (auto& s : slots)
         {
             if (! s.active || s.locked) continue;
-            if (nowSeconds - s.lastHitS < holdSeconds) continue;
+            if (nowSeconds - s.lastHitS < holdSeconds) continue;     // still holding
+            const double dt = nowSeconds - s.lastRelS;
+            if (dt < minReleaseGap) continue;                        // not yet
 
-            s.targetDb += stepDb;
-            s.lastHitS  = nowSeconds;
-            if (s.targetDb >= -0.25) { s.active = false; s.targetDb = 0.0; }
+            s.targetDb += bleedDbPerSec * dt;                        // toward 0
+            s.lastRelS  = nowSeconds;
+            if (s.targetDb >= retireDb) { s.active = false; s.targetDb = 0.0; }
         }
     }
 
@@ -193,21 +236,36 @@ public:
         int c = 0; for (auto& s : slots) if (s.active) ++c; return c;
     }
 
-    /** Index of the active notch closest to f in cents, or -1 if none within tolerance. */
-    int findNear (double f, double tolFraction = 0.02) const noexcept
+    /** Index of the active notch within `tolOctaves` of f, closest first, or -1. */
+    int findNear (double f, double tolOctaves = coalesceOctaves) const noexcept
     {
+        if (f <= 0.0) return -1;
         int    best = -1;
-        double bestErr = tolFraction;
+        double bestErr = tolOctaves;
         for (int i = 0; i < MaxNotches; ++i)
         {
             if (! slots[(size_t) i].active) continue;
-            const double err = std::abs (slots[(size_t) i].freq - f) / f;
+            const double err = std::abs (std::log2 (slots[(size_t) i].freq / f));
             if (err < bestErr) { bestErr = err; best = i; }
         }
         return best;
     }
 
-    double defaultQ = 20.0;   // ~1/14 octave
+    // ---- depth policy (spec §5, §10) ----------------------------------------
+    double defaultQ       = 40.0;    // 30-60; narrow enough to spare the programme
+    double initialCutDb   = -6.0;    // first strike
+    double fastTrackCutDb = -12.0;   // first strike on a known repeat offender
+    double stepDb         = -6.0;    // deepen per re-trigger (negative)
+    double softCapDb      = -18.0;   // normal ceiling
+    double hardCapDb      = -24.0;   // absolute ceiling for a stubborn tone
+
+    // ---- release policy (spec §6) -------------------------------------------
+    double holdSeconds    = 2.0;     // quiet time before a notch starts leaving
+    double bleedDbPerSec  = 1.5;     // walk-out rate
+    double retireDb       = -1.0;    // shallower than this -> drop the notch
+    double minReleaseGap  = 0.5;     // min seconds between release steps
+
+    static constexpr double coalesceOctaves = 1.0 / 12.0;   // merge window (spec §7)
 
 private:
     int findFree() const noexcept
@@ -216,8 +274,65 @@ private:
         return -1;
     }
 
+    /** Evict the least-recently-hit unlocked notch. -1 if all are locked. */
+    int stealLru() noexcept
+    {
+        int    victim = -1;
+        double oldest = 1.0e18;
+        for (int i = 0; i < MaxNotches; ++i)
+        {
+            const auto& s = slots[(size_t) i];
+            if (! s.active || s.locked) continue;
+            if (s.lastHitS < oldest) { oldest = s.lastHitS; victim = i; }
+        }
+        if (victim >= 0) { slots[(size_t) victim] = NotchSlot{}; filters[(size_t) victim].reset(); }
+        return victim;
+    }
+
+    // ---- offender histogram (spec §8) ---------------------------------------
+    // 1/24-octave buckets across the watched band; each bucket's count decays by
+    // half every `histHalfLife` seconds (lazily, on touch).
+    struct Bucket { double count = 0.0; double stamp = 0.0; };
+
+    static constexpr double histBaseHz    = 200.0;    // band low edge
+    static constexpr double histTopHz     = 16000.0;  // band high edge
+    static constexpr int    histBuckets   = 160;      // 24/oct * log2(80) ~= 152
+    static constexpr double histHalfLife  = 300.0;    // halve every 5 min
+    static constexpr int    fastTrackStrikes = 3;
+
+    int bucketOf (double f) const noexcept
+    {
+        if (f <= 0.0) return -1;
+        const int b = (int) std::lround (24.0 * std::log2 (f / histBaseHz));
+        if (b < 0 || b >= histBuckets) return -1;
+        return b;
+    }
+
+    double decayed (Bucket& h, double nowSeconds) const noexcept
+    {
+        const double dt = nowSeconds - h.stamp;
+        if (dt > 0.0) { h.count *= std::exp2 (-dt / histHalfLife); h.stamp = nowSeconds; }
+        return h.count;
+    }
+
+    double offenderCount (double f, double nowSeconds) noexcept
+    {
+        const int b = bucketOf (f);
+        return b < 0 ? 0.0 : decayed (histogram[(size_t) b], nowSeconds);
+    }
+
+    void noteOffender (double f, double nowSeconds) noexcept
+    {
+        const int b = bucketOf (f);
+        if (b < 0) return;
+        auto& h = histogram[(size_t) b];
+        decayed (h, nowSeconds);
+        h.count += 1.0;
+    }
+
     std::array<NotchSlot, MaxNotches> slots {};
     std::array<Biquad,    MaxNotches> filters {};
+    std::array<Bucket, (size_t) histBuckets> histogram {};
     double fs = 48000.0;
     double smoothCoeff = 0.2;
 };
