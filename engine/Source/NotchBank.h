@@ -102,13 +102,19 @@ public:
     */
     int trigger (double f, double nowSeconds) noexcept
     {
-        const int existing = findNear (f, coalesceOctaves);
+        const int existing = findNear (f);
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
             s.lastHitS = nowSeconds;
             if (! s.locked)
             {
+                // Follow the tone. Feedback wanders as the loop builds - a single
+                // mode was measured drifting 460 Hz - and a filter this narrow
+                // slides off a peak that moves even a little. Without this, a notch
+                // can sit at its deepest cut while the ring grows beside it.
+                s.freq += (f - s.freq) * freqTrack;
+
                 // deepen a step; allow the hard cap only once we are already at the
                 // soft cap and the tone is still knocking (spec §5).
                 const double floorDb = (s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb;
@@ -241,15 +247,20 @@ public:
     }
 
     /** Index of the active notch within `tolOctaves` of f, closest first, or -1. */
-    int findNear (double f, double tolOctaves = coalesceOctaves) const noexcept
+    int findNear (double f) const noexcept
     {
         if (f <= 0.0) return -1;
+        // The merge window is the filter's own half-bandwidth (f / 2Q), not a fixed
+        // musical interval. A tone further away than that is barely attenuated by
+        // this notch, so merging onto it would deepen a filter that misses the tone
+        // while the ring grows beside it. Anything outside gets its own slot.
+        const double window = std::max (10.0, f / (2.0 * defaultQ));
         int    best = -1;
-        double bestErr = tolOctaves;
+        double bestErr = window;
         for (int i = 0; i < MaxNotches; ++i)
         {
             if (! slots[(size_t) i].active) continue;
-            const double err = std::abs (std::log2 (slots[(size_t) i].freq / f));
+            const double err = std::abs (slots[(size_t) i].freq - f);
             if (err < bestErr) { bestErr = err; best = i; }
         }
         return best;
@@ -269,7 +280,7 @@ public:
     double retireDb       = -1.0;    // shallower than this -> drop the notch
     double minReleaseGap  = 0.5;     // min seconds between release steps
 
-    static constexpr double coalesceOctaves = 1.0 / 12.0;   // merge window (spec §7)
+    double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 
 private:
     int findFree() const noexcept
