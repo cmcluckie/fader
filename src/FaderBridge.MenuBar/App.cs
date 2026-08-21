@@ -30,6 +30,7 @@ public sealed class App : Application
     private string? _enginePath;
     private string _configPath = "";
     private string _fkDataDir = "";
+    private string? _fkStartupError;
     private FkAudioStore? _fkAudioStore;
     private NativeMenuItem? _fkStatusItem;
     private NativeMenuItem? _fkEngineItem;
@@ -213,7 +214,23 @@ public sealed class App : Application
     {
         if (_enginePath is null || _fkEngineItem is null || _feedback is not null) return;
 
-        var controller = new FeedbackController(_enginePath, _fkDataDir);
+        // Feedback is one feature of the app, not the app. If it can't start - a
+        // held telemetry port, a missing engine - the bridge must keep running and
+        // the tray must say why, rather than the process dying on launch.
+        FeedbackController controller;
+        try
+        {
+            controller = new FeedbackController(_enginePath, _fkDataDir);
+        }
+        catch (Exception ex)
+        {
+            _fkStartupError = ex.Message;
+            _fkEngineItem.IsChecked = false;
+            RenderFk();
+            return;
+        }
+
+        _fkStartupError = null;
         controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(RenderFk);
         _feedback = controller;
         controller.Start();   // device, inputs, and notches are replayed by the controller
@@ -248,7 +265,8 @@ public sealed class App : Application
 
         var on = _feedback is not null;
         _fkStatusItem.Header = _feedback is null
-            ? (_enginePath is null ? "Feedback: engine not built" : "Feedback: off")
+            ? (_fkStartupError is not null ? $"Feedback: unavailable - {_fkStartupError}"
+               : _enginePath is null ? "Feedback: engine not built" : "Feedback: off")
             : _feedback.EngineOk ? "Feedback: ● engine up" : "Feedback: ◍ engine down — audio bypassed";
 
         if (_fkConfigItem is not null) _fkConfigItem.IsEnabled = on;

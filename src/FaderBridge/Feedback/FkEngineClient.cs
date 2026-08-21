@@ -26,7 +26,38 @@ public sealed class FkEngineClient : IAsyncDisposable
 
     public FkEngineClient()
     {
-        _udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, TelemetryPort));
+        _udp = BindTelemetry();
+    }
+
+    /// <summary>
+    /// Bind the telemetry port, retrying briefly.
+    ///
+    /// A just-quit instance can hold the port for a moment after its process is
+    /// gone, so an immediate quit-and-relaunch would otherwise fail. We retry
+    /// rather than setting ReuseAddress: if a second copy really is running, two
+    /// clients bound to one port would split the telemetry between them at random,
+    /// which is far worse than refusing to start. Failing here is recoverable -
+    /// the caller keeps the app up and reports that feedback is unavailable.
+    /// </summary>
+    private static UdpClient BindTelemetry()
+    {
+        SocketException? last = null;
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            try
+            {
+                return new UdpClient(new IPEndPoint(IPAddress.Loopback, TelemetryPort));
+            }
+            catch (SocketException ex) when (ex.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                last = ex;
+                Thread.Sleep(250);
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"feedback telemetry port {TelemetryPort} is still in use - another copy of the app " +
+            "is probably running. Quit it and try again.", last);
     }
 
     public event Action<FkStatus>? StatusReceived;
