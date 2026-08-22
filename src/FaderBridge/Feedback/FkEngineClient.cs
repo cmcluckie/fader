@@ -99,6 +99,12 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
     /// <summary>Pass audio through untouched; notch state is kept, just not applied.</summary>
     public void SetBypass(bool on)                   => Send(new OscMessage("/fk/bypass", on ? 1 : 0));
+    /// <summary>
+    /// Replace what every armed slot writes to its return: 0 = normal audio,
+    /// negative = hard silence, positive = a sine at that frequency. The only
+    /// way to answer "is the console actually listening to my output?".
+    /// </summary>
+    public void SetTestTone(float hz)                => Send(new OscMessage("/fk/testtone", hz));
 
     private void Send(OscMessage message)
     {

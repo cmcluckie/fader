@@ -1,3 +1,4 @@
+using System.Net;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
@@ -52,6 +53,8 @@ public sealed class SetupView : UserControl
     private readonly TextBlock _discCaret = Ui.Mono("▾", 13, Tokens.InkFaint);
 
     private readonly StackPanel _notchList = new() { Spacing = 6 };
+    private readonly TextBlock _pathState = Ui.Text("", 13, Tokens.InkDim);
+    private readonly Button _pathCheck;
     private readonly TextBlock _ringOutState = Ui.Text("", 12.5, Tokens.InkFaint);
     private readonly Button _lockFound;
     private string _notchSignature = "";
@@ -60,6 +63,7 @@ public sealed class SetupView : UserControl
     private int[] _built = Array.Empty<int>();
     private bool _syncing;
     private bool _discOpen;
+    private IPAddress _consoleAddress = IPAddress.None;
 
     public SetupView(FeedbackController feedback)
     {
@@ -151,7 +155,9 @@ public sealed class SetupView : UserControl
                     12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
+        _pathCheck = Ui.Small("Check signal path", Tokens.Accent);
         _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
+        var pathCard = BuildPathCheck();
         var ringOut = BuildRingOut();
         var filters = BuildFilterList();
 
@@ -167,7 +173,7 @@ public sealed class SetupView : UserControl
         {
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = Ui.Stack(Orientation.Vertical, 18, _strips, ringOut, filters),
+            Content = Ui.Stack(Orientation.Vertical, 18, _strips, pathCard, ringOut, filters),
         });
         Content = root;
 
@@ -180,6 +186,9 @@ public sealed class SetupView : UserControl
         RebuildStrips();
         RebuildNotchList();   // show the empty state before any telemetry arrives
     }
+
+    /// <summary>Where the X32 lives, so the path check knows who to ask.</summary>
+    public void SetConsoleAddress(IPAddress address) => _consoleAddress = address;
 
     public void Teardown()
     {
@@ -304,6 +313,42 @@ public sealed class SetupView : UserControl
             Ui.Caption(label),
             Ui.Mono(value, 14, Tokens.Ink, FontWeight.SemiBold)),
     };
+
+    /// <summary>
+    /// The check that would have saved a day of debugging: put a tone on the
+    /// return and let the console's own meters say whether it arrived. When a
+    /// Console mute takes the app out of the path, everything here still looks
+    /// healthy - detections log, filters deploy - and nothing is cut.
+    /// </summary>
+    private Control BuildPathCheck()
+    {
+        _pathState.Text = "Put a tone on the return and see if the desk hears it.";
+        _pathCheck.Click += async (_, _) =>
+        {
+            _pathCheck.IsEnabled = false;
+            _pathState.Text = "Listening at the desk…";
+            _pathState.Foreground = Tokens.InkDim;
+            try
+            {
+                var result = await _feedback.CheckSignalPathAsync(_consoleAddress);
+                _pathState.Text = result.Message;
+                _pathState.Foreground = result.Reached ? Tokens.Safe : Tokens.Clip;
+            }
+            catch (Exception ex)
+            {
+                _pathState.Text = ex.Message;
+                _pathState.Foreground = Tokens.Clip;
+            }
+            finally { _pathCheck.IsEnabled = true; }
+        };
+
+        return Ui.Card(Ui.Stack(Orientation.Vertical, 10,
+            Ui.Caption("Signal path"),
+            Ui.Stack(Orientation.Horizontal, 12, _pathCheck,
+                Ui.Text("Soundcheck only — this puts a brief tone through the PA.",
+                        12.5, Tokens.InkFaint)),
+            _pathState), background: Tokens.Ground2);
+    }
 
     /// <summary>
     /// Ring-out: the standard live practice, which the engine could already do but

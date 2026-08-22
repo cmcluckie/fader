@@ -17,6 +17,7 @@
 #include <random>
 #include <vector>
 #include "../Source/FeedbackDetector.h"
+#include "../Source/NotchBank.h"
 
 namespace
 {
@@ -232,6 +233,59 @@ int main()
         // it must have fired while ringing, and gone quiet afterwards
         std::snprintf (msg, sizeof msg, "fired=%d detections=%d", (int) r.fired, r.count);
         report ("T8  ring is caught, then the detector goes quiet", r.fired, msg);
+    }
+
+    // ---- T9: the filter actually attenuates, by the amount it claims -------
+    // The detector can be perfect and still change nothing if the notch path is
+    // broken. This measures the cut instead of assuming it.
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.placeManual (1000.0, -24.0, 0.0);
+
+        auto measure = [&bank] (double hz)
+        {
+            constexpr int block = 64;
+            std::vector<float> buf ((size_t) block);
+            double phase = 0.0, peak = 0.0;
+            const int blocks = (int) (1.0 * kSR / block);
+            for (int b = 0; b < blocks; ++b)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    phase += 2.0 * M_PI * hz / kSR;
+                    buf[(size_t) i] = (float) std::sin (phase);
+                }
+                bank.process (buf.data(), block, false);
+                if (b > blocks / 2)                       // ignore the gain ramp
+                    for (int i = 0; i < block; ++i) peak = std::max (peak, (double) std::fabs (buf[(size_t) i]));
+            }
+            return 20.0 * std::log10 (std::max (peak, 1.0e-9));
+        };
+
+        const double atCentre = measure (1000.0);
+        const double offCentre = measure (4000.0);
+        std::snprintf (msg, sizeof msg, "at 1 kHz %.1f dB, at 4 kHz %.2f dB", atCentre, offCentre);
+        report ("T9  a -24 dB notch really cuts 24 dB at its centre",
+                std::fabs (atCentre - (-24.0)) < 1.5 && std::fabs (offCentre) < 1.0, msg);
+    }
+
+    // ---- T10: repeated hits escalate to the cap, then release to flat ------
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -24.0; bank.hardCapDb = -30.0; bank.holdSeconds = 1.0;
+
+        double t = 0.0;
+        for (int i = 0; i < 12; ++i, t += 0.05) bank.trigger (5000.0, t);
+        const double deepest = bank.getSlot (0).targetDb;
+
+        for (int i = 0; i < 200; ++i) { t += 0.25; bank.release (t); }
+        const bool retired = ! bank.getSlot (0).active;
+
+        std::snprintf (msg, sizeof msg, "reached %.0f dB, retired after silence=%d", deepest, (int) retired);
+        report ("T10 repeated hits escalate to the cap, then retire",
+                deepest <= -24.0 && deepest >= -30.5 && retired, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);

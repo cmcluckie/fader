@@ -1,5 +1,7 @@
 using System.Diagnostics;
+using System.Net;
 using System.Text;
+using Fader.Bridge.Osc;
 
 namespace Fader.Bridge.Feedback;
 
@@ -338,6 +340,58 @@ public sealed class FeedbackController : IAsyncDisposable
     }
 
     public event Action<bool>? BypassChanged;
+
+    /// <summary>
+    /// Does this app's output actually reach the console?
+    ///
+    /// Three times now a Console mute has silently taken the app out of the
+    /// signal path: detection keeps running, filters keep deploying, the UI looks
+    /// healthy, and nothing is cut, because the raw mic is reaching the PA by
+    /// another route. Nothing in the app can see that - but the desk can. Put a
+    /// tone on the return, read the X32's own channel meters, and let the console
+    /// answer the question.
+    /// </summary>
+    public async Task<PathCheckResult> CheckSignalPathAsync(IPAddress console, CancellationToken token = default)
+    {
+        if (!EngineOk) return new PathCheckResult(false, -1, 0f, "The engine isn't running.");
+        if (EnabledInputs.Count == 0) return new PathCheckResult(false, -1, 0f, "No channels are armed.");
+
+        using var meters = new X32ChannelMeters(console);
+
+        var quiet = await meters.ReadAveragedAsync(4, token);
+        if (quiet is null)
+            return new PathCheckResult(false, -1, 0f, $"No reply from the X32 at {console}.");
+
+        try
+        {
+            _supervisor.Client.SetTestTone(1000f);
+            await Task.Delay(700, token);
+            var loud = await meters.ReadAveragedAsync(4, token);
+            if (loud is null)
+                return new PathCheckResult(false, -1, 0f, $"No reply from the X32 at {console}.");
+
+            var best = -1;
+            var rise = 0f;
+            for (var c = 0; c < X32ChannelMeters.ChannelCount; c++)
+            {
+                var d = loud[c] - quiet[c];
+                if (d > rise) { rise = d; best = c; }
+            }
+
+            // 0.02 on the X32's 0..1 linear scale is comfortably above frame noise
+            // and far below anything you would call a signal.
+            return rise > 0.02f
+                ? new PathCheckResult(true, best + 1, rise,
+                    $"Reached the desk on channel {best + 1}. The app is in the signal path.")
+                : new PathCheckResult(false, -1, rise,
+                    "The tone never arrived. Your audio is not reaching the desk - " +
+                    "check that the return channel is unmuted and up in Console.");
+        }
+        finally
+        {
+            _supervisor.Client.SetTestTone(0f);   // never leave a tone in the PA
+        }
+    }
 
     /// <summary>Lock or unlock one filter, by its slot index within the channel.</summary>
     public void LockNotch(int slot, int index, bool on)

@@ -22,3 +22,6 @@ public sealed record FkSpectrum(int Channel, float HzPerBin, float[] Magnitudes)
 
 /// <summary><c>/fk/audio/state</c> — the engine's current device selection.</summary>
 public sealed record FkAudioState(string Device, int SampleRate, int BufferSize, bool Running);
+
+/// <summary>Outcome of a signal-path check: did our tone reach the console?</summary>
+public sealed record PathCheckResult(bool Reached, int Channel, float Rise, string Message);

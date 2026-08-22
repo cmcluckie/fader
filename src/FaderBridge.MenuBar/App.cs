@@ -280,7 +280,11 @@ public sealed class App : Application
         if (_feedback is null) return;
         if (_faderWindow is not null) { _faderWindow.Activate(); return; }
 
-        var window = new FaderWindow(_feedback);
+        IPAddress console;
+        try { console = BridgeConfig.Load(_configPath).ResolvedAddress; }
+        catch { console = IPAddress.None; }
+
+        var window = new FaderWindow(_feedback, console);
         window.Closed += (_, _) => _faderWindow = null;
         _faderWindow = window;
         window.Show();

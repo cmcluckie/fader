@@ -30,7 +30,7 @@ public sealed class FaderWindow : Window
 
     private bool _showing = true;
 
-    public FaderWindow(FeedbackController feedback)
+    public FaderWindow(FeedbackController feedback, System.Net.IPAddress console)
     {
         _feedback = feedback;
 
@@ -43,6 +43,7 @@ public sealed class FaderWindow : Window
 
         _show = new ShowView(feedback);
         _setup = new SetupView(feedback);
+        _setup.SetConsoleAddress(console);
 
         (_showTab, _showLabel) = Tab("Show");
         (_setupTab, _setupLabel) = Tab("Setup");
