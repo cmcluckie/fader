@@ -45,6 +45,8 @@ public:
 
         // A sung harmonic is prominent, steady and growing - it passes every test
         // feedback does. These three separate them.
+        float  sustainSeconds = 0.5f;   // a dead-stable, harmonically isolated peak this
+                                        // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
         float  voiceBandHz    = 2000.0f;// below here, look longer and test for vibrato
         int    voiceFrames    = 56;     // ~300 ms: long enough to SEE a wobble
@@ -117,7 +119,7 @@ public:
     float getBinHz() const noexcept        { return binHz; }
 
 private:
-    static constexpr int windowSize = 64;   // >= voiceFrames, so vibrato is visible
+    static constexpr int windowSize = 128;  // >= sustainSeconds and voiceFrames
 
     struct Suspect
     {
@@ -279,6 +281,34 @@ private:
         return false;
     }
 
+    /**
+        Both tolerances scale with frequency, because sub-bin interpolation jitter
+        does. A flat +-5 Hz is 0.05% at 10 kHz - far tighter than the estimator's
+        own noise - so high rings never held a track long enough to qualify. That
+        is the band this room actually rings in.
+    */
+    float matchTolHz (float f) const noexcept
+    {
+        return juce::jmax (3.0f * params.stabilityHz, 0.005f * f);
+    }
+    float stabilityTolHz (float f) const noexcept
+    {
+        return juce::jmax (params.stabilityHz, 0.0008f * f);
+    }
+
+    /// <summary>Frequency spread across the last n frames of a suspect's window.</summary>
+    float spreadOver (const Suspect& s, int n) const noexcept
+    {
+        float lo = 1.0e9f, hi = -1.0e9f;
+        for (int i = 1; i <= n; ++i)
+        {
+            const float f = s.wFreq[(size_t) ((s.windowPos - i + windowSize) % windowSize)];
+            lo = juce::jmin (lo, f);
+            hi = juce::jmax (hi, f);
+        }
+        return hi - lo;
+    }
+
     void track (float freq, float levelDb, bool harmonic) noexcept
     {
         // Associate with an existing candidate (a wider window than the stability
@@ -286,7 +316,7 @@ private:
         for (auto& s : suspects)
         {
             if (! s.active) continue;
-            if (std::abs (s.freq - freq) > 20.0f) continue;
+            if (std::abs (s.freq - freq) > matchTolHz (freq)) continue;
 
             s.missed    = 0;
             s.frames   += 1;
@@ -309,6 +339,17 @@ private:
             const int   oldest = (s.windowPos - n + windowSize) % windowSize;
             const float spread = hi - lo;
             const float growth = levelDb - s.wLevel[(size_t) oldest];
+            const float stabTol = 2.0f * stabilityTolHz (s.freq);
+
+            // Feedback climbs; it does not lurch. One frame collapsing more than
+            // 2 dB inside the window is a transient, not a loop building.
+            bool monotonic = true;
+            for (int i = 1; i < n; ++i)
+            {
+                const int newer = (s.windowPos - i + windowSize) % windowSize;
+                const int older = (s.windowPos - i - 1 + windowSize) % windowSize;
+                if (s.wLevel[(size_t) newer] < s.wLevel[(size_t) older] - 2.0f) { monotonic = false; break; }
+            }
 
             // Growth is a RATE. Comparing a fixed dB figure against whatever the
             // window happens to be couples the threshold to the hop size: halving
@@ -330,8 +371,24 @@ private:
                 const bool wobbling = voiceBand
                     && looksLikeVibrato (s, juce::jmin (s.frames, params.voiceFrames));
 
-                if (s.frames >= need && spread <= params.stabilityHz
-                    && growth >= needGrowth && ! wobbling)
+                // Path A - the classic attack: stable, and climbing.
+                bool fire = s.frames >= need && spread <= stabTol
+                            && growth >= needGrowth && monotonic;
+
+                // Path B - the slow creep. A ring hovering near unity loop gain
+                // grows too slowly to trip the growth gate, but it sits dead
+                // still for hundreds of ms, which nothing musical does. Held
+                // notes arrive with harmonics, so the guard covers those.
+                if (! fire && ! s.harmonic)
+                {
+                    const int sustainN = juce::jlimit (
+                        1, windowSize - 1,
+                        (int) (params.sustainSeconds * (float) sampleRate / (float) hopSize + 0.5f));
+                    fire = s.frames >= sustainN + 1
+                           && spreadOver (s, sustainN) <= stabTol;
+                }
+
+                if (fire && ! wobbling)
                 {
                     s.reported    = true;
                     s.reportLevel = s.lastLevel;
