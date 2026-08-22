@@ -46,6 +46,27 @@ target_link_libraries(fk-engine
         juce::juce_recommended_warning_flags
 )
 
+# ---------------------------------------------------------------------------
+# Detector tests. Synthetic signals through the real FeedbackDetector - no audio
+# device, no rig. Every gap in this detector so far was found in a loud room by
+# ear; these make the same questions cheap and repeatable.
+#
+#   cmake --build build --target fk-tests && ./build/fk-tests_artefacts/fk-tests
+# ---------------------------------------------------------------------------
+juce_add_console_app(fk-tests PRODUCT_NAME "fk-tests")
+
+target_sources(fk-tests PRIVATE tests/test_detector.cpp)
+
+target_compile_definitions(fk-tests PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+target_link_libraries(fk-tests
+    PRIVATE juce::juce_dsp
+    PUBLIC  juce::juce_recommended_config_flags)
+
 # Build:
 #   brew install cmake            # not present in the dev sandbox
 #   cmake -B build -G "Unix Makefiles"   # or -G Xcode if full Xcode is installed
