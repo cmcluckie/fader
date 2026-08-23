@@ -288,6 +288,28 @@ int main()
                 deepest <= -24.0 && deepest >= -30.5 && retired, msg);
     }
 
+    // ---- T11: a QUIET lone ring must not be mistaken for a harmonic -------
+    // The bug this catches: the harmonic guard asked whether any energy sat at
+    // f/2 or 2f within 20 dB. For a quiet ring the noise floor itself qualifies,
+    // so the room counted as the ring's own harmonic partner, the ring was born
+    // "musical", and it stayed undetected until loud enough to push the noise
+    // 20 dB down. Measured at the rig: prominent and ignored for six seconds.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f;             // what the auto-floor actually runs at
+        p.minFreq = 1000.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        auto r = runTone (det, 3.0, [] (double) {
+            return std::make_pair (9616.0, 0.00025);   // ~ -72 dBFS: quiet, lone, steady
+        }, 0.00004, 0.05);
+
+        std::snprintf (msg, sizeof msg, "fired=%d at %.0f Hz after %.0f ms",
+                       (int) r.fired, r.firstHz, r.firstSeconds * 1000.0);
+        report ("T11 a quiet lone ring is caught within a second",
+                r.fired && std::abs (r.firstHz - 9616.0f) < 200.0f && r.firstSeconds < 1.0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

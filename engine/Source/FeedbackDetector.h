@@ -71,6 +71,7 @@ public:
     static constexpr int numBins   = fftSize / 2;
     static constexpr int hopSize   = fftSize / 4;     // 256 -> ~5.3 ms between frames, unchanged
     static constexpr int maxSuspects = 24;
+    static constexpr int maxPeaks    = 48;   // prominent peaks kept per frame
     static constexpr int eventQueueSize = 16;
 
     FeedbackDetector() : fft (fftOrder),
@@ -178,6 +179,7 @@ private:
         }
 
         for (auto& s : suspects) if (s.active) ++s.missed;
+        peakCount = 0;
 
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
@@ -201,17 +203,48 @@ private:
                 const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
                 const float freq  = (i + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
 
-                // §4.4 harmonic guard. Now a real gate, not just a delay: a peak
-                // sitting in a harmonic series has to be substantially MORE prominent
-                // than a lone tone to be believed, because a sung vowel harmonic
-                // otherwise passes prominence, stability and growth exactly like
-                // feedback does - which is how a voice ends up notched.
-                const bool harmonic = hasHarmonicSupport (freq, here);
-                if (harmonic && (here - localFloor) < params.prominenceDb + params.harmonicPromDb)
-                    continue;
-
-                track (freq, here, harmonic);
+                if (peakCount < maxPeaks)
+                {
+                    peakFreq[(size_t) peakCount]  = freq;
+                    peakLevel[(size_t) peakCount] = here;
+                    peakProm[(size_t) peakCount]  = here - localFloor;
+                    ++peakCount;
+                }
             }
+        }
+
+        // §4.4 harmonic guard, judged between PEAKS.
+        //
+        // The old test asked whether any energy sat at f/2 or 2f within 20 dB.
+        // When a ring is quiet the noise floor itself is within 20 dB, so the room
+        // counted as its own harmonic partner: every ring was born "musical",
+        // denied the fast path, and only broke free once it was loud enough to put
+        // the noise more than 20 dB down. Measured at the rig, one ring sat
+        // prominent and undetected for six seconds for exactly this reason - which
+        // is why a pronounced ring was always found instantly and a quiet one
+        // never was.
+        //
+        // Noise is not a peak. Requiring two harmonically-related PEAKS means a
+        // voice (which really does arrive with a harmonic series) still trips the
+        // guard, and a lone ring in a quiet room no longer does.
+        for (int i = 0; i < peakCount; ++i)
+        {
+            int related = 0;
+            for (int j = 0; j < peakCount && related < 2; ++j)
+            {
+                if (i == j) continue;
+                const float a = peakFreq[(size_t) i], b = peakFreq[(size_t) j];
+                const float ratio = a > b ? a / b : b / a;
+                for (float h : { 2.0f, 3.0f, 4.0f })
+                    if (std::abs (ratio - h) < h * 0.02f) { ++related; break; }
+            }
+            const bool harmonic = related >= 2;
+
+            // A harmonic-series member must be markedly more prominent to be believed.
+            if (harmonic && peakProm[(size_t) i] < params.prominenceDb + params.harmonicPromDb)
+                continue;
+
+            track (peakFreq[(size_t) i], peakLevel[(size_t) i], harmonic);
         }
 
         for (auto& s : suspects)
@@ -326,6 +359,7 @@ private:
             s.missed    = 0;
             s.frames   += 1;
             s.lastLevel = levelDb;
+            s.harmonic  = harmonic;   // re-judged every frame, never sticky
             s.freq      = 0.8f * s.freq + 0.2f * freq;
 
             s.wFreq[(size_t) s.windowPos]  = freq;
@@ -474,6 +508,9 @@ private:
     std::array<float, (size_t) numBins>    mag {};
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
     std::array<std::atomic<float>, (size_t) numBins> publishedMag;
+
+    std::array<float, maxPeaks> peakFreq {}, peakLevel {}, peakProm {};
+    int peakCount = 0;
 
     std::array<Suspect, maxSuspects> suspects {};
     std::array<Event, eventQueueSize> events {};
