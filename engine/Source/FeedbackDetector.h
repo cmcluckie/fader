@@ -45,7 +45,7 @@ public:
 
         // A sung harmonic is prominent, steady and growing - it passes every test
         // feedback does. These three separate them.
-        float  sustainSeconds = 0.5f;   // a dead-stable, harmonically isolated peak this
+        float  sustainSeconds = 0.3f;   // a dead-stable, harmonically isolated peak this
                                         // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
         float  voiceBandHz    = 2000.0f;// below here, look longer and test for vibrato
@@ -61,10 +61,15 @@ public:
         float levelDb= 0.0f;
     };
 
-    static constexpr int fftOrder  = 11;              // 2048 -> 23.4 Hz bins at 48k
+    // 1024 -> 46.9 Hz bins, and a 21 ms window rather than 43. The window length
+    // is a hard floor on reaction time - a tone must exist that long before it can
+    // be measured at all - and the resolution given up costs nothing here: a notch
+    // is ~390 Hz wide at 9.7 kHz, and parabolic interpolation still places the
+    // centre to a few Hz.
+    static constexpr int fftOrder  = 10;
     static constexpr int fftSize   = 1 << fftOrder;
     static constexpr int numBins   = fftSize / 2;
-    static constexpr int hopSize   = fftSize / 8;     // 256 -> ~5.3 ms between frames
+    static constexpr int hopSize   = fftSize / 4;     // 256 -> ~5.3 ms between frames, unchanged
     static constexpr int maxSuspects = 24;
     static constexpr int eventQueueSize = 16;
 
@@ -177,7 +182,7 @@ private:
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
         {
-            constexpr int floorHalfWidth = 20;   // ±20 bins for the local median (§4.1)
+            constexpr int floorHalfWidth = 10;   // ~+-470 Hz, same span as before at half the bin count
             const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
             const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
