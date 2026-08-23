@@ -36,6 +36,9 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private float _minHz = 200f, _maxHz = 16000f, _floorDb = -70f, _maxCutDb = -24f;
     private int _attack = 1;
+    private bool _floorAuto = true;
+    private double _floorEstimate = -70;
+    private DateTime _lastFloorPush = DateTime.MinValue;
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
@@ -61,6 +64,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -70f;
         _maxCutDb = audio.MaxCutDb < 0 ? audio.MaxCutDb : -24f;
         _attack = Math.Clamp(audio.Attack, 0, 2);
+        _floorAuto = audio.FloorAuto;
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -74,7 +78,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
-        _supervisor.Client.SpectrumReceived += s => SpectrumChanged?.Invoke(s);
+        _supervisor.Client.SpectrumReceived += OnSpectrum;
         _supervisor.Client.DeviceListed += OnDeviceListed;
         _supervisor.Client.ChannelListed += OnChannelListed;
         _supervisor.Client.OutChannelListed += OnOutChannelListed;
@@ -121,9 +125,58 @@ public sealed class FeedbackController : IAsyncDisposable
     /// <summary>Ignore anything quieter than this - the lid on the "cut inside this box" rule.</summary>
     public float FloorDb => _floorDb;
 
+    /// <summary>
+    /// Whether the floor tracks the room instead of being set by hand.
+    ///
+    /// This control broke suppression twice in one session, in opposite
+    /// directions: dragged to the bottom it chased the noise floor and thrashed
+    /// the filter pool, and raised too far it could not see a ring until the ring
+    /// was already loud. It is not something anyone should have to judge by eye -
+    /// the right answer is "just above whatever this room's floor happens to be",
+    /// and the spectrum already says what that is.
+    /// </summary>
+    public bool FloorAuto => _floorAuto;
+
+    public void SetFloorAuto(bool on)
+    {
+        _floorAuto = on;
+        SaveAudio();
+        SearchRangeChanged?.Invoke();
+    }
+
+    /// <summary>Track the room: sit the floor a fixed margin above the measured noise.</summary>
+    private void OnSpectrum(FkSpectrum s)
+    {
+        SpectrumChanged?.Invoke(s);
+        if (!_floorAuto || s.Magnitudes.Length == 0) return;
+
+        var lo = (int) (_minHz / Math.Max(1f, s.HzPerBin));
+        var hi = Math.Min(s.Magnitudes.Length - 1, (int) (_maxHz / Math.Max(1f, s.HzPerBin)));
+        if (hi - lo < 8) return;
+
+        // The median of the watched band IS the noise floor: a ring is one narrow
+        // spike among hundreds of bins and cannot move the middle of the set.
+        var band = new float[hi - lo + 1];
+        Array.Copy(s.Magnitudes, lo, band, 0, band.Length);
+        Array.Sort(band);
+        var median = band[band.Length / 2];
+
+        _floorEstimate += (median + 12.0 - _floorEstimate) * 0.05;   // slow, so a song can't drag it
+
+        if ((DateTime.UtcNow - _lastFloorPush).TotalSeconds < 2) return;
+        _lastFloorPush = DateTime.UtcNow;
+
+        var db = (float) Math.Clamp(_floorEstimate, -85.0, -50.0);
+        if (Math.Abs(db - _floorDb) < 1.5f) return;
+        _floorDb = db;
+        _supervisor.Client.SetParam("floorDb", _floorDb);
+        SearchRangeChanged?.Invoke();
+    }
+
     public void SetFloor(float db)
     {
-        db = Math.Clamp(db, -90f, -20f);
+        _floorAuto = false;                 // touching it by hand takes it off auto
+        db = Math.Clamp(db, -90f, -50f);    // above -50 the detector is effectively blind
         if (Math.Abs(db - _floorDb) < 0.5f) return;
         _floorDb = db;
         _supervisor.Client.SetParam("floorDb", _floorDb);
@@ -315,7 +368,7 @@ public sealed class FeedbackController : IAsyncDisposable
             returns = _returns.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
         }
         _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
-            Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz,
+            Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz, FloorAuto: _floorAuto,
             FloorDb: _floorDb, Attack: _attack, MaxCutDb: _maxCutDb));
     }
 

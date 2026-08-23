@@ -25,6 +25,7 @@ public sealed class SetupView : UserControl
     private readonly GuardSpectrum _band = new() { Height = 150, Editable = true };
     private readonly TextBlock _bandLabel = Ui.Mono("", 12.5, Tokens.InkDim);
     private readonly ComboBox _lowEdge = new() { MinWidth = 150 };
+    private readonly Button _floorAuto;
     private readonly ComboBox _attack = new() { MinWidth = 130 };
     private readonly ComboBox _maxCut = new() { MinWidth = 130 };
     private bool _syncingEdge;
@@ -99,6 +100,9 @@ public sealed class SetupView : UserControl
         // fix for a voice being notched - you can see your own energy sitting below
         // the low edge while you set it.
         _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
+        _floorAuto.Click += (_, _) => { _feedback.SetFloorAuto(!_feedback.FloorAuto); SyncFloorAuto(); };
+        SyncFloorAuto();
+
         _band.RangeDragged += (lo, hi) =>
         {
             _bandLabel.Text = $"listening {Hz(lo)} – {Hz(hi)}";
@@ -155,6 +159,7 @@ public sealed class SetupView : UserControl
                     12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
+        _floorAuto = Ui.Small("", Tokens.Accent);
         _pathCheck = Ui.Small("Check signal path", Tokens.Accent);
         _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
         var pathCard = BuildPathCheck();
@@ -177,6 +182,13 @@ public sealed class SetupView : UserControl
         });
         Content = root;
 
+        _feedback.SearchRangeChanged += () => Dispatcher.UIThread.Post(() =>
+        {
+            _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
+            _band.SetFloor(_feedback.FloorDb);
+            _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
+            SyncFloorAuto();
+        });
         _feedback.DevicesChanged += OnDevices;
         _feedback.ChannelsChanged += OnChannels;
         _feedback.SpectrumChanged += OnSpectrum;
@@ -205,6 +217,23 @@ public sealed class SetupView : UserControl
     }
 
     private static string Hz(float hz) => hz >= 1000f ? $"{hz / 1000f:0.##} kHz" : $"{hz:0} Hz";
+
+    /// <summary>
+    /// The floor is the one control here nobody can judge by eye, so it tracks the
+    /// room by default and says so. Dragging it takes it off auto; this puts it back.
+    /// </summary>
+    private void SyncFloorAuto()
+    {
+        var auto = _feedback.FloorAuto;
+        _floorAuto.Content = new TextBlock
+        {
+            Text = auto ? $"Auto — {Hz2(_feedback.FloorDb)}" : "Manual — tap for auto",
+            FontSize = 12.5,
+            Foreground = auto ? Tokens.Accent : Tokens.InkDim,
+        };
+    }
+
+    private static string Hz2(float db) => $"{db:0} dB";
 
     /// <summary>Point the dropdown at whichever preset is closest to the real value.</summary>
     private void SyncLowEdge()
