@@ -175,7 +175,7 @@ public sealed class SetupView : UserControl
         {
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = Ui.Stack(Orientation.Vertical, 18, _strips, pathCard, ringOut, filters),
+            Content = Ui.Stack(Orientation.Vertical, 18, pathCard, ringOut, _strips, filters),
         });
         Content = root;
 
