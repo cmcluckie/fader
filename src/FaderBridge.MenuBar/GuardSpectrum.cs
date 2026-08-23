@@ -23,8 +23,12 @@ public sealed class GuardSpectrum : Control
 
     // Usable travel for the band edges. The 1.5x gap keeps them from crossing or
     // pinching into a slot too narrow to detect anything in.
-    public const float MinFloorDb = -90f;
-    public const float MaxFloorDb = -20f;
+    // The drag range matches what is actually useful. Raising this line does not
+    // filter junk - prominence, stability and growth already do that - it only
+    // blinds the detector until a ring is loud, so the top of the range is well
+    // below where it used to be.
+    public const float MinFloorDb = -95f;
+    public const float MaxFloorDb = -55f;
     public const float MinEdgeHz = 40f;
     public const float MaxLowHz = 8000f;
     public const float MinHighHz = 1000f;

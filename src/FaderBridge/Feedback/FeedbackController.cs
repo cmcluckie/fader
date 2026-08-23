@@ -34,10 +34,10 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly Dictionary<int, int> _returns = new();    // physical input -> return output
     private readonly SortedDictionary<int, string> _outChannels = new();
 
-    private float _minHz = 200f, _maxHz = 16000f, _floorDb = -70f, _maxCutDb = -24f;
+    private float _minHz = 200f, _maxHz = 16000f, _floorDb = -88f, _maxCutDb = -24f;
     private int _attack = 1;
     private bool _floorAuto = true;
-    private double _floorEstimate = -70;
+    private double _floorEstimate = -88;
     private DateTime _lastFloorPush = DateTime.MinValue;
     private string _savedSignature = "";
     private string? _currentDevice;
@@ -61,7 +61,7 @@ public sealed class FeedbackController : IAsyncDisposable
         }
         _minHz = audio.MinHz > 0 ? audio.MinHz : 200f;
         _maxHz = audio.MaxHz > 0 ? audio.MaxHz : 16000f;
-        _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -70f;
+        _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -88f;
         _maxCutDb = audio.MaxCutDb < 0 ? audio.MaxCutDb : -24f;
         _attack = Math.Clamp(audio.Attack, 0, 2);
         _floorAuto = audio.FloorAuto;
@@ -161,11 +161,16 @@ public sealed class FeedbackController : IAsyncDisposable
         Array.Sort(band);
         var median = band[band.Length / 2];
 
-        _floorEstimate += (median + 12.0 - _floorEstimate) * 0.05;   // slow, so a song can't drag it
+        // Sit just clear of the noise, not comfortably above it. The floor's only
+        // job is to skip bins that are pure noise; prominence, stability and
+        // growth do the actual selecting. Every dB of extra margin here is a dB
+        // of ring you cannot see until it is louder - measured at the rig, a
+        // raised floor took detections from 263 to 5 and suppression stopped.
+        _floorEstimate += (median + 4.0 - _floorEstimate) * 0.05;
 
         if ((DateTime.UtcNow - _lastFloorPush).TotalSeconds < 2) return;
 
-        var db = (float) Math.Clamp(_floorEstimate, -85.0, -50.0);
+        var db = (float) Math.Clamp(_floorEstimate, -95.0, -60.0);
         if (Math.Abs(db - _floorDb) < 1.5f) return;
 
         _lastFloorPush = DateTime.UtcNow;   // only once we actually push
@@ -177,7 +182,7 @@ public sealed class FeedbackController : IAsyncDisposable
     public void SetFloor(float db)
     {
         _floorAuto = false;                 // touching it by hand takes it off auto
-        db = Math.Clamp(db, -90f, -50f);    // above -50 the detector is effectively blind
+        db = Math.Clamp(db, -95f, -55f);    // higher than this and the detector is blind
         if (Math.Abs(db - _floorDb) < 0.5f) return;
         _floorDb = db;
         _supervisor.Client.SetParam("floorDb", _floorDb);
