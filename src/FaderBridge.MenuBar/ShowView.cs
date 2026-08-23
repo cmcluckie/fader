@@ -30,6 +30,10 @@ public sealed class ShowView : UserControl
     private readonly TextBlock _lastCatch = Ui.Mono("nothing caught yet", 15, Tokens.InkDim, FontWeight.SemiBold);
     private readonly TapButton _bypass = new("Guard On", "tap to bypass");
     private readonly HoldButton _panic = new("Panic", "hold 1s · clears every notch", Tokens.Clip);
+    // Third action, and the only one that is not about the audio: it is how the
+    // ear gets recorded. Pressed during rehearsal when a ring fires - especially
+    // the ones heard before the detector reacts.
+    private readonly TapButton _mark = new("That Was Feedback", "tap · saves the last 6 s");
 
     private readonly Dictionary<int, ChannelTile> _byPhysical = new();
     private readonly Dictionary<int, float[]> _slotBands = new();
@@ -68,6 +72,13 @@ public sealed class ShowView : UserControl
 
         _bypass.Clicked += () => _feedback.SetBypass(!_feedback.IsBypassed);
         _panic.Fired += () => _feedback.ClearAll(includeLocked: true);
+        _mark.Clicked += () =>
+        {
+            var saved = _feedback.MarkFeedback();
+            _lastCatch.Text = saved is null ? "nothing to label yet"
+                                            : $"labelled — {System.IO.Path.GetFileName(saved)}";
+            _lastCatch.Foreground = Tokens.Accent;
+        };
 
         var ribbon = Ui.Card(Ui.Stack(Orientation.Vertical, 4,
                 Ui.Caption("Last catch"),
@@ -75,13 +86,16 @@ public sealed class ShowView : UserControl
             pad: 14);
         ribbon.CornerRadius = Tokens.RadiusLg;
 
-        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
+        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
         Grid.SetColumn(ribbon, 0);
-        Grid.SetColumn(_bypass, 1);
+        Grid.SetColumn(_mark, 1);
+        _mark.Margin = new Thickness(14, 0, 0, 0);
+        Grid.SetColumn(_bypass, 2);
         _bypass.Margin = new Thickness(14, 0, 0, 0);
-        Grid.SetColumn(_panic, 2);
+        Grid.SetColumn(_panic, 3);
         _panic.Margin = new Thickness(14, 0, 0, 0);
         actions.Children.Add(ribbon);
+        actions.Children.Add(_mark);
         actions.Children.Add(_bypass);
         actions.Children.Add(_panic);
 

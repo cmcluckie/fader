@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Fader.Bridge.Osc;
 
 namespace Fader.Bridge.Feedback;
@@ -23,6 +24,7 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly FkNotchStore _store;
     private readonly FkAudioStore _audioStore;
     private readonly FkEventLog _log;
+    private readonly string _dataDir;
     private readonly Stopwatch _clock = Stopwatch.StartNew();
     private readonly object _lock = new();
     private readonly FkNotch[][] _latest = Enumerable.Range(0, MaxChans).Select(_ => Array.Empty<FkNotch>()).ToArray();
@@ -39,6 +41,11 @@ public sealed class FeedbackController : IAsyncDisposable
     private bool _floorAuto = true;
     private double _floorEstimate = -88;
     private DateTime _lastFloorPush = DateTime.MinValue;
+
+    // A rolling few seconds of spectra, so "that was feedback" can be answered
+    // with the frames that led up to it rather than from memory.
+    private readonly Queue<(double T, int Slot, float HzPerBin, float[] Mags)> _recent = new();
+    private const int RecentFrames = 240;   // ~6 s at the telemetry rate
     private string _savedSignature = "";
     private string? _currentDevice;
     private string? _selectedDevice;
@@ -47,6 +54,7 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public FeedbackController(string enginePath, string dataDir, string? device = null)
     {
+        _dataDir = dataDir;
         _audioStore = new FkAudioStore(Path.Combine(dataDir, "audio.json"));
         var audio = _audioStore.Load();
         _selectedDevice = audio.Device;
@@ -148,6 +156,12 @@ public sealed class FeedbackController : IAsyncDisposable
     private void OnSpectrum(FkSpectrum s)
     {
         SpectrumChanged?.Invoke(s);
+
+        lock (_recent)
+        {
+            _recent.Enqueue((_clock.Elapsed.TotalSeconds, s.Channel, s.HzPerBin, s.Magnitudes));
+            while (_recent.Count > RecentFrames) _recent.Dequeue();
+        }
         if (!_floorAuto || s.Magnitudes.Length == 0) return;
 
         var lo = (int) (_minHz / Math.Max(1f, s.HzPerBin));
@@ -452,6 +466,54 @@ public sealed class FeedbackController : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Mark "that was feedback" and dump the seconds leading up to it.
+    ///
+    /// The point is the ones your ear catches BEFORE the detector does: you are
+    /// not annotating a dataset afterwards, you are rehearsing and hitting a
+    /// button when it fires. Each file holds the spectral frames, the detections
+    /// that did or did not happen, and the settings in force - which is enough to
+    /// answer "why was that one slow" with data instead of recollection, and
+    /// enough to train something later if it is ever worth it.
+    /// </summary>
+    public string? MarkFeedback(string note = "")
+    {
+        (double T, int Slot, float HzPerBin, float[] Mags)[] frames;
+        lock (_recent) { frames = _recent.ToArray(); }
+        if (frames.Length == 0) return null;
+
+        var now = _clock.Elapsed.TotalSeconds;
+        var dir = Path.Combine(_dataDir, "labels");
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, $"label-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+
+        var payload = new
+        {
+            marked_at_seconds = Math.Round(now, 3),
+            note,
+            settings = new
+            {
+                minHz = _minHz, maxHz = _maxHz, floorDb = _floorDb, floorAuto = _floorAuto,
+                attack = _attack, maxCutDb = _maxCutDb,
+            },
+            // what the detector had already decided, for comparison with the ear
+            recent_detections = _recentDetections.ToArray(),
+            frames = frames.Select(f => new
+            {
+                t = Math.Round(f.T - now, 3),          // negative: seconds before the press
+                slot = f.Slot,
+                hzPerBin = f.HzPerBin,
+                db = f.Mags.Select(m => (float) Math.Round(m, 1)).ToArray(),
+            }).ToArray(),
+        };
+
+        File.WriteAllText(path, JsonSerializer.Serialize(payload));
+        Log?.Invoke($"labelled: {Path.GetFileName(path)} ({frames.Length} frames)");
+        return path;
+    }
+
+    private readonly Queue<object> _recentDetections = new();
+
     /// <summary>Lock or unlock one filter, by its slot index within the channel.</summary>
     public void LockNotch(int slot, int index, bool on)
     {
@@ -573,6 +635,18 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private void OnDetection(FkDetection d)
     {
+        lock (_recentDetections)
+        {
+            _recentDetections.Enqueue(new
+            {
+                t = Math.Round(_clock.Elapsed.TotalSeconds, 3),
+                hz = Math.Round(d.Hz, 1),
+                db = Math.Round(d.LevelDb, 1),
+                slot = d.Channel,
+            });
+            while (_recentDetections.Count > 200) _recentDetections.Dequeue();
+        }
+
         // enabled channels always cut, so a detection on an active slot was applied
         _log.Write(d, applied: true, _clock.Elapsed.TotalSeconds);
         DetectionReceived?.Invoke(d);
