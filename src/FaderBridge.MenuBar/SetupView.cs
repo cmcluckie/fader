@@ -25,7 +25,7 @@ public sealed class SetupView : UserControl
     private readonly GuardSpectrum _band = new() { Height = 150, Editable = true };
     private readonly TextBlock _bandLabel = Ui.Mono("", 12.5, Tokens.InkDim);
     private readonly ComboBox _lowEdge = new() { MinWidth = 150 };
-    private readonly Button _floorAuto;
+    private readonly Button _floorAuto = Ui.Small("", Tokens.Accent);
     private readonly ComboBox _attack = new() { MinWidth = 130 };
     private readonly ComboBox _maxCut = new() { MinWidth = 130 };
     private bool _syncingEdge;
@@ -55,9 +55,9 @@ public sealed class SetupView : UserControl
 
     private readonly StackPanel _notchList = new() { Spacing = 6 };
     private readonly TextBlock _pathState = Ui.Text("", 13, Tokens.InkDim);
-    private readonly Button _pathCheck;
+    private readonly Button _pathCheck = Ui.Small("Check signal path", Tokens.Accent);
     private readonly TextBlock _ringOutState = Ui.Text("", 12.5, Tokens.InkFaint);
-    private readonly Button _lockFound;
+    private readonly Button _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
     private string _notchSignature = "";
 
     private readonly Dictionary<int, ChannelStrip> _strip = new();
@@ -159,9 +159,6 @@ public sealed class SetupView : UserControl
                     12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
 
-        _floorAuto = Ui.Small("", Tokens.Accent);
-        _pathCheck = Ui.Small("Check signal path", Tokens.Accent);
-        _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
         var pathCard = BuildPathCheck();
         var ringOut = BuildRingOut();
         var filters = BuildFilterList();
@@ -182,13 +179,7 @@ public sealed class SetupView : UserControl
         });
         Content = root;
 
-        _feedback.SearchRangeChanged += () => Dispatcher.UIThread.Post(() =>
-        {
-            _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
-            _band.SetFloor(_feedback.FloorDb);
-            _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
-            SyncFloorAuto();
-        });
+        _feedback.SearchRangeChanged += OnSearchRange;
         _feedback.DevicesChanged += OnDevices;
         _feedback.ChannelsChanged += OnChannels;
         _feedback.SpectrumChanged += OnSpectrum;
@@ -204,6 +195,7 @@ public sealed class SetupView : UserControl
 
     public void Teardown()
     {
+        _feedback.SearchRangeChanged -= OnSearchRange;
         _feedback.DevicesChanged -= OnDevices;
         _feedback.ChannelsChanged -= OnChannels;
         _feedback.SpectrumChanged -= OnSpectrum;
@@ -493,6 +485,14 @@ public sealed class SetupView : UserControl
             Child = grid,
         };
     }
+
+    private void OnSearchRange() => Dispatcher.UIThread.Post(() =>
+    {
+        _band.SetRange(_feedback.MinHz, _feedback.MaxHz);
+        _band.SetFloor(_feedback.FloorDb);
+        _bandLabel.Text = $"listening {Hz(_feedback.MinHz)} – {Hz(_feedback.MaxHz)}";
+        SyncFloorAuto();
+    });
 
     private void OnDevices() => Dispatcher.UIThread.Post(RefreshDevices);
     private void OnChannels() => Dispatcher.UIThread.Post(RebuildStrips);

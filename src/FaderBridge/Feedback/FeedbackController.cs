@@ -164,10 +164,11 @@ public sealed class FeedbackController : IAsyncDisposable
         _floorEstimate += (median + 12.0 - _floorEstimate) * 0.05;   // slow, so a song can't drag it
 
         if ((DateTime.UtcNow - _lastFloorPush).TotalSeconds < 2) return;
-        _lastFloorPush = DateTime.UtcNow;
 
         var db = (float) Math.Clamp(_floorEstimate, -85.0, -50.0);
         if (Math.Abs(db - _floorDb) < 1.5f) return;
+
+        _lastFloorPush = DateTime.UtcNow;   // only once we actually push
         _floorDb = db;
         _supervisor.Client.SetParam("floorDb", _floorDb);
         SearchRangeChanged?.Invoke();

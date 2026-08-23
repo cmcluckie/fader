@@ -41,6 +41,14 @@ internal static class Program
             return;
         }
 
+        // Hidden: open and close the window repeatedly while the controller raises
+        // the events the auto-floor raises, hunting the crash reported from the rig.
+        if (args is ["--test-window-churn"])
+        {
+            TestWindowChurn();
+            return;
+        }
+
         if (args is ["--test-drag"])
         {
             TestDrag();
@@ -172,6 +180,55 @@ internal static class Program
         frame!.Save(path);
         Console.WriteLine($"wrote {path}");
         try { Directory.Delete(dir, true); } catch { }
+    }
+
+    private static void TestWindowChurn()
+    {
+        App.RenderOnly = true;
+        AppBuilder.Configure<App>()
+            .UseSkia()
+            .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
+            .SetupWithoutStarting();
+
+        var dir = Path.Combine(Path.GetTempPath(), "fk-churn-" + Guid.NewGuid().ToString("N"));
+        var feedback = new Fader.Bridge.Feedback.FeedbackController("/nonexistent/fk-engine", dir);
+
+        try
+        {
+            for (var round = 1; round <= 3; round++)
+            {
+                var window = new FaderWindow(feedback, System.Net.IPAddress.Loopback);
+                window.Show();
+                Dispatcher.UIThread.RunJobs();
+
+                // what the auto-floor does every two seconds
+                for (var i = 0; i < 3; i++)
+                {
+                    feedback.SetFloorAuto(i % 2 == 0);
+                    Dispatcher.UIThread.RunJobs();
+                }
+
+                window.Close();
+                Dispatcher.UIThread.RunJobs();
+                Console.WriteLine($"  round {round}: opened and closed");
+
+                // and again AFTER the window is gone - the case a closed view
+                // still being subscribed would blow up on
+                for (var i = 0; i < 3; i++)
+                {
+                    feedback.SetFloorAuto(i % 2 == 0);
+                    Dispatcher.UIThread.RunJobs();
+                }
+                Console.WriteLine($"  round {round}: survived events after close");
+            }
+            Console.WriteLine("PASS: no exception");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"REPRODUCED: {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { } }
     }
 
     private static void TestDrag()
