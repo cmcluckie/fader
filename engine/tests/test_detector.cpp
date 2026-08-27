@@ -590,6 +590,52 @@ int main()
         report ("T17 a ring is caught when the suspect table is full", fired, msg);
     }
 
+    // ---- T18: the "max cut" setting is the real ceiling --------------------
+    // The engine used to hand the user's number to the bank as the SOFT cap and
+    // allow a further 6 dB past it for a stubborn tone. Measured at the rig with
+    // the dial on -24: 14% of notch samples were cutting deeper than -24, down to
+    // -30. T10 sets the bank's caps by hand, so it could never see this - the
+    // defect was in how the engine wired them up. This mirrors that wiring.
+    {
+        constexpr double userMaxCut = -24.0;
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb  = userMaxCut + 6.0;   // exactly as AudioEngine sets them
+        bank.hardCapDb  = userMaxCut;
+        bank.holdSeconds = 1.0;
+
+        // Hammer one frequency far past the point where it should stop deepening.
+        double t = 0.0, deepest = 0.0;
+        for (int i = 0; i < 60; ++i, t += 0.05)
+        {
+            bank.trigger (5000.0, t);
+            deepest = juce::jmin (deepest, bank.getSlot (0).targetDb);
+        }
+        std::snprintf (msg, sizeof msg, "dial %.0f dB, deepest reached %.1f dB", userMaxCut, deepest);
+        report ("T18 escalation never cuts past the max-cut setting",
+                deepest >= userMaxCut - 0.01, msg);
+    }
+
+    // ---- T19: the notch pool holds a rig's worth of resonances --------------
+    // At 24 the bank was pinned at its ceiling 37% of the time at the rig, with 22
+    // of the 24 cutting more than 3 dB - all doing real work. A full pool means a
+    // new ring evicts one still holding something down, and the evicted tone comes
+    // straight back: the bank thrashes and neither ring is ever finished.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        // 30 distinct resonances, as a real room presents.
+        double t = 0.0;
+        for (int i = 0; i < 30; ++i, t += 0.01) bank.trigger (1000.0 + 450.0 * i, t);
+
+        int active = 0;
+        for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++active;
+        std::snprintf (msg, sizeof msg, "30 distinct tones -> %d filters held", active);
+        report ("T19 30 simultaneous resonances all get a filter", active == 30, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

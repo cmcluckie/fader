@@ -7,7 +7,12 @@
 
 namespace fk
 {
-constexpr int kMaxNotches = 24;
+// Measured at the rig on 2026-08-27: with 24 the bank sat pinned at its ceiling
+// 37% of the time, and 22 of the 24 were cutting more than 3 dB - genuinely
+// working, not idling. A full pool means every new ring evicts one that is still
+// holding something down, so the evicted tone returns and the bank thrashes. The
+// room simply has more resonances than 24. Each slot is one biquad per channel.
+constexpr int kMaxNotches = 48;
 constexpr int kMaxInputs  = 8;   // simultaneous feedback channels
 
 /**
@@ -171,8 +176,14 @@ public:
             bank.defaultQ    = q;
             bank.initialCutDb = initialCut.load();
             bank.fastTrackCutDb = initialCut.load() - 6.0f;
-            bank.softCapDb   = softCap;              // user "max cut" == the soft cap
-            bank.hardCapDb   = softCap - 6.0f;       // one more step for a stubborn tone
+            // The user's "max cut" is the REAL ceiling. It used to be the soft cap
+            // with a further 6 dB allowed beyond it for a stubborn tone, so a rig
+            // set to -24 was measured cutting -30 on 14% of samples. A control
+            // labelled max should be one. The two-step escalation is unchanged,
+            // just anchored honestly: normal stops 6 dB short, stubborn reaches
+            // the number on the dial.
+            bank.softCapDb   = softCap + 6.0f;
+            bank.hardCapDb   = softCap;
             bank.holdSeconds = (double) releaseSeconds.load();
 
             det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
