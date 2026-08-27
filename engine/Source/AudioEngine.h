@@ -80,6 +80,15 @@ public:
 
     // ---- telemetry (called from the OSC thread) -----------------------------
     struct EventOut { int ch; float hz; float levelDb; };
+    struct RejectOut { int ch; float hz; float levelDb; int reason; int frames; };
+
+    bool popReject (RejectOut& out) noexcept
+    {
+        if (rejRead == rejWrite) return false;
+        out = rejQueue[(size_t) rejRead];
+        rejRead = (rejRead + 1) % rejQueueSize;
+        return true;
+    }
     bool popEvent (EventOut& out) noexcept
     {
         if (evtRead == evtWrite) return false;
@@ -168,6 +177,10 @@ public:
 
             det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
 
+            FeedbackDetector::Reject rj;
+            while (det.popReject (rj))
+                pushReject ({ ch, rj.freq, rj.levelDb, rj.reason, rj.frames });
+
             FeedbackDetector::Event ev;
             while (det.popEvent (ev))
             {
@@ -249,6 +262,14 @@ private:
         }
     }
 
+    void pushReject (const RejectOut& r) noexcept
+    {
+        const int next = (rejWrite + 1) % rejQueueSize;
+        if (next == rejRead) return;
+        rejQueue[(size_t) rejWrite] = r;
+        rejWrite = next;
+    }
+
     void pushEvent (const EventOut& e) noexcept
     {
         const int next = (evtWrite + 1) % evtQueueSize;
@@ -283,6 +304,9 @@ private:
     std::atomic<int> cmdRead { 0 }, cmdWrite { 0 };
     std::array<EventOut, evtQueueSize> evtQueue {};
     int evtRead = 0, evtWrite = 0;
+    static constexpr int rejQueueSize = 64;
+    std::array<RejectOut, rejQueueSize> rejQueue {};
+    int rejRead = 0, rejWrite = 0;
 
     double sr = 48000.0, elapsed = 0.0, lastReleaseCheck = 0.0;
 };

@@ -61,6 +61,27 @@ public:
         float levelDb= 0.0f;
     };
 
+    /// Why a candidate that looked like a peak did NOT become a detection.
+    /// Logging only what fired means every "it missed one" has to be
+    /// reverse-engineered by simulation; this says which gate stopped it.
+    enum class Reason { None = 0, Harmonic = 1, Unstable = 2, NoGrowth = 3, Vibrato = 4 };
+
+    struct Reject
+    {
+        float freq    = 0.0f;
+        float levelDb = 0.0f;
+        int   reason  = 0;
+        int   frames  = 0;
+    };
+
+    bool popReject (Reject& out) noexcept
+    {
+        if (rejRead == rejWrite) return false;
+        out = rejects[(size_t) rejRead];
+        rejRead = (rejRead + 1) % rejQueueSize;
+        return true;
+    }
+
     // 2048 -> 23.4 Hz bins, 43 ms window.
     //
     // 1024 was quicker (21 ms) and fine for the 9-15 kHz rings this room is full
@@ -90,6 +111,7 @@ public:
         for (auto& s : suspects) s = Suspect{};
         for (auto& m : publishedMag) m.store (-120.0f, std::memory_order_relaxed);
         eventRead = eventWrite = 0;
+        rejRead = rejWrite = 0;
         hasPrevFrame = false;
     }
 
@@ -142,6 +164,7 @@ private:
         bool   reported    = false;
         float  reportLevel = 0.0f;    // level at the last event, for escalation
         int    sinceReport = 0;
+        int    sinceReject = 0;
 
         // Stability and growth are judged over a ROLLING window, not the suspect's
         // whole life. Judging them cumulatively was a real bug: a tone that wandered
@@ -531,6 +554,22 @@ private:
                            && spreadOver (s, sustainN) <= stabTol;
                 }
 
+                // Say why, when it has waited long enough that "not yet" is an
+                // answer rather than impatience. Throttled per suspect so a
+                // sustained near-miss reports once every ~250 ms, not every frame.
+                if (! (fire && ! wobbling) && s.frames >= need)
+                {
+                    if (++s.sinceReject >= 48)
+                    {
+                        s.sinceReject = 0;
+                        const Reason why = wobbling            ? Reason::Vibrato
+                                         : spread > stabTol    ? Reason::Unstable
+                                         : s.harmonic          ? Reason::Harmonic
+                                                               : Reason::NoGrowth;
+                        pushReject ({ s.freq, levelDb, (int) why, s.frames });
+                    }
+                }
+
                 if (fire && ! wobbling)
                 {
                     s.reported    = true;
@@ -594,6 +633,14 @@ private:
         return medianScratch[(size_t) mid];
     }
 
+    void pushReject (Reject r) noexcept
+    {
+        const int next = (rejWrite + 1) % rejQueueSize;
+        if (next == rejRead) return;
+        rejects[(size_t) rejWrite] = r;
+        rejWrite = next;
+    }
+
     void pushEvent (Event e) noexcept
     {
         const int next = (eventWrite + 1) % eventQueueSize;
@@ -625,6 +672,10 @@ private:
     std::array<Suspect, maxSuspects> suspects {};
     std::array<Event, eventQueueSize> events {};
     int eventRead = 0, eventWrite = 0;
+
+    static constexpr int rejQueueSize = 32;
+    std::array<Reject, rejQueueSize> rejects {};
+    int rejRead = 0, rejWrite = 0;
 
     Params params;
     double sampleRate = 48000.0;

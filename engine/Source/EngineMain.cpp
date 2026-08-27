@@ -161,6 +161,12 @@ private:
 
             const int mask = subscribeMask.load();
 
+            AudioEngine::RejectOut rj;
+            while (engine.popReject (rj))
+                if (mask & 1)
+                    sender.send (juce::OSCMessage ("/fk/reject", rj.ch, rj.hz, rj.levelDb,
+                                                   rj.reason, rj.frames));
+
             AudioEngine::EventOut e;
             while (engine.popEvent (e))
                 sender.send (juce::OSCMessage ("/fk/event", e.ch, e.hz, e.levelDb));

@@ -62,6 +62,7 @@ public sealed class FkEngineClient : IAsyncDisposable
 
     public event Action<FkStatus>? StatusReceived;
     public event Action<FkDetection>? DetectionReceived;
+    public event Action<FkRejection>? RejectionReceived;
     public event Action<int, FkNotch[]>? NotchesReceived;
     public event Action<FkSpectrum>? SpectrumReceived;
     public event Action<FkAudioState>? AudioStateReceived;
@@ -153,6 +154,10 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/event" when m.Arguments is [int ch, float hz, float lvl]:
                 DetectionReceived?.Invoke(new FkDetection(ch, hz, lvl));
+                break;
+
+            case "/fk/reject" when m.Arguments is [int rch, float rhz, float rlvl, int reason, int frames]:
+                RejectionReceived?.Invoke(new FkRejection(rch, rhz, rlvl, reason, frames));
                 break;
 
             case "/fk/notches" when m.Arguments is [int ch, byte[] blob]:

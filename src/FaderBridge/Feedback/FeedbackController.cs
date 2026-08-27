@@ -86,6 +86,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
+        _supervisor.Client.RejectionReceived += OnRejection;
         _supervisor.Client.SpectrumReceived += OnSpectrum;
         _supervisor.Client.DeviceListed += OnDeviceListed;
         _supervisor.Client.ChannelListed += OnChannelListed;
@@ -498,6 +499,7 @@ public sealed class FeedbackController : IAsyncDisposable
             },
             // what the detector had already decided, for comparison with the ear
             recent_detections = _recentDetections.ToArray(),
+            recent_rejections = _recentRejections.ToArray(),
             frames = frames.Select(f => new
             {
                 t = Math.Round(f.T - now, 3),          // negative: seconds before the press
@@ -513,6 +515,29 @@ public sealed class FeedbackController : IAsyncDisposable
     }
 
     private readonly Queue<object> _recentDetections = new();
+    private readonly Queue<object> _recentRejections = new();
+
+    /// <summary>
+    /// Near-misses, with the gate that stopped each one. This is the log that was
+    /// missing: "it did not catch that" used to be answerable only by simulating
+    /// the detector against a downsampled copy of the spectrum.
+    /// </summary>
+    private void OnRejection(FkRejection r)
+    {
+        lock (_recentRejections)
+        {
+            _recentRejections.Enqueue(new
+            {
+                t = Math.Round(_clock.Elapsed.TotalSeconds, 3),
+                hz = Math.Round(r.Hz, 1),
+                db = Math.Round(r.LevelDb, 1),
+                why = r.Why,
+                frames = r.Frames,
+                slot = r.Channel,
+            });
+            while (_recentRejections.Count > 400) _recentRejections.Dequeue();
+        }
+    }
 
     /// <summary>Lock or unlock one filter, by its slot index within the channel.</summary>
     public void LockNotch(int slot, int index, bool on)

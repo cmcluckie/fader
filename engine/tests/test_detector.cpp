@@ -412,6 +412,40 @@ int main()
         report ("T14 a ring among unrelated tones is caught fast", fired && firedAt < 0.5, msg);
     }
 
+    // ---- T15: rejections are reported, with a reason ----------------------
+    // Until now the detector only logged what fired, so every "it missed one" had
+    // to be reverse-engineered by simulating it against a downsampled copy of the
+    // spectrum. A near-miss must say which gate stopped it.
+    {
+        fk::FeedbackDetector det; init (det);
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double phase = 0.0;
+        int counts[5] = {};
+        fk::FeedbackDetector::Reject rj;
+
+        for (int b = 0; b < (int) (4.0 * kSR / block); ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                const double vib = 1.0 + 0.015 * std::sin (2.0 * M_PI * 5.5 * t);
+                phase += 2.0 * M_PI * (400.0 * vib) / kSR;
+                double v = 0.0;
+                for (int h = 1; h <= 5; ++h) v += (0.06 / h) * std::sin (phase * h);
+                buf[(size_t) i] = (float) (std::min (1.0, t / 0.3) * v
+                                           + 0.002 * ((double) rand() / RAND_MAX * 2.0 - 1.0));
+            }
+            det.push (buf.data(), block);
+            while (det.popReject (rj))
+                if (rj.reason >= 0 && rj.reason < 5) ++counts[rj.reason];
+        }
+        const int total = counts[1] + counts[2] + counts[3] + counts[4];
+        std::snprintf (msg, sizeof msg, "harmonic=%d unstable=%d no-growth=%d vibrato=%d",
+                       counts[1], counts[2], counts[3], counts[4]);
+        report ("T15 a rejected candidate reports which gate stopped it", total > 0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

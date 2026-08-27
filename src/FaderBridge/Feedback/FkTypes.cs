@@ -23,5 +23,22 @@ public sealed record FkSpectrum(int Channel, float HzPerBin, float[] Magnitudes)
 /// <summary><c>/fk/audio/state</c> — the engine's current device selection.</summary>
 public sealed record FkAudioState(string Device, int SampleRate, int BufferSize, bool Running);
 
+/// <summary>
+/// <c>/fk/reject</c> - a candidate that looked like a peak but did not become a
+/// detection, and which gate stopped it. Logging only what fired meant every
+/// "it missed one" had to be reverse-engineered; this says why.
+/// </summary>
+public sealed record FkRejection(int Channel, float Hz, float LevelDb, int Reason, int Frames)
+{
+    public string Why => Reason switch
+    {
+        1 => "harmonic",     // looked like part of a series
+        2 => "unstable",     // pitch wandered too far
+        3 => "no-growth",    // not rising, and not old enough to be a sustained ring
+        4 => "vibrato",      // wobbling like a sung note
+        _ => "unknown",
+    };
+}
+
 /// <summary>Outcome of a signal-path check: did our tone reach the console?</summary>
 public sealed record PathCheckResult(bool Reached, int Channel, float Rise, string Message);
