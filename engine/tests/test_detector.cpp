@@ -361,6 +361,57 @@ int main()
         report ("T13 a tone is located within 20 cents", std::abs (worstCents) < 20.0, detail);
     }
 
+    // ---- T14: a ring in a CLUTTERED spectrum is still caught fast ---------
+    // The harmonic guard must discriminate, not just fire. A version of it flagged
+    // 97% of unrelated peaks as harmonic, which denied nearly everything the fast
+    // path and added 190 ms of persistence - real feedback crawled, and the rig
+    // reported it as "detected way too slow". A lone ring surrounded by unrelated
+    // tones must still be caught promptly.
+    {
+        fk::FeedbackDetector::Params p;
+        p.minFreq = 150.0f; p.floorDb = -95.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        // A real stage spectrum carries dozens of peaks, and that is what makes a
+        // loose harmonic test misfire: with enough tones about, SOMETHING always
+        // lands near a multiple of something. Five tones was not a fair test of
+        // that - this is twenty, spaced to avoid simple integer relationships.
+        static const double clutter[] = {
+            237.0,  409.0,  611.0,  853.0, 1103.0, 1439.0, 1787.0, 2141.0,
+           2887.0, 3313.0, 3701.0, 4703.0, 5279.0, 5867.0, 6421.0, 7321.0,
+           8093.0, 8677.0,11279.0,13417.0 };
+        constexpr int nClutter = (int) (sizeof (clutter) / sizeof (clutter[0]));
+        double cphase[nClutter] = {};
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double phase = 0.0;
+        fk::FeedbackDetector::Event ev;
+        bool fired = false; double firedAt = 0.0; float firedHz = 0.0f;
+
+        for (int b = 0; b < (int) (2.5 * kSR / block) && ! fired; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                phase += 2.0 * M_PI * 9616.0 / kSR;
+                double v = std::min (0.02, 0.002 * std::pow (10.0, 40.0 * t / 20.0)) * std::sin (phase);
+                for (int c = 0; c < nClutter; ++c)
+                {
+                    cphase[c] += 2.0 * M_PI * clutter[c] / kSR;
+                    v += 0.01 * std::sin (cphase[c]);
+                }
+                buf[(size_t) i] = (float) (v + 0.0002 * ((double) rand() / RAND_MAX * 2.0 - 1.0));
+            }
+            det.push (buf.data(), block);
+            while (det.popEvent (ev))
+                if (! fired && std::abs (ev.freq - 9616.0f) < 200.0f)
+                { fired = true; firedAt = (double) (b * block) / kSR; firedHz = ev.freq; }
+        }
+        std::snprintf (msg, sizeof msg, "fired=%d at %.0f Hz after %.0f ms",
+                       (int) fired, firedHz, firedAt * 1000.0);
+        report ("T14 a ring among unrelated tones is caught fast", fired && firedAt < 0.5, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

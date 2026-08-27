@@ -248,22 +248,38 @@ private:
             // like a lone tone and got notched - measured, at 2037 Hz on a 400 Hz
             // note. Instead, propose that this peak is the n-th harmonic of some
             // fundamental and count how many other peaks land on that series.
+            // Measured against random peaks, the first version of this test flagged
+            // 97% of unrelated tones as harmonic - which denied nearly everything the
+            // fast path, added 190 ms of required persistence and 6 dB of prominence,
+            // and made real feedback crawl. Loose here is not cautious; it is blind.
+            //
+            // Four things make it discriminate, at 4% false positives while still
+            // catching every partial of a simulated voice:
+            //   - members must land within 1% of an exact multiple, not 4%
+            //   - the series must be shallow (n <= 5, k <= 6), not stretch to 12
+            //   - THREE other members, not two
+            //   - one of them must be a low partial (k <= 3): a real series has
+            //     energy near its fundamental, coincidences do not.
             bool harmonic = false;
-            for (int n = 1; n <= 8 && ! harmonic; ++n)
+            for (int n = 1; n <= 5 && ! harmonic; ++n)
             {
                 const float f0 = peakFreq[(size_t) i] / (float) n;
                 if (f0 < 40.0f) break;
 
                 int members = 0;
+                bool lowPartial = false;
                 for (int j = 0; j < peakCount; ++j)
                 {
                     if (j == i) continue;
                     const float k = peakFreq[(size_t) j] / f0;
                     const float nearest = std::round (k);
-                    if (nearest >= 1.0f && nearest <= 12.0f
-                        && std::abs (k - nearest) < 0.04f) ++members;
+                    if (nearest >= 1.0f && nearest <= 6.0f && std::abs (k - nearest) < 0.008f)
+                    {
+                        ++members;
+                        if (nearest <= 3.0f) lowPartial = true;
+                    }
                 }
-                harmonic = members >= 2;      // itself plus two more of the series
+                harmonic = members >= 3 && lowPartial;
             }
 
             // A harmonic-series member must be markedly more prominent to be believed.
