@@ -310,6 +310,26 @@ int main()
                 r.fired && std::abs (r.firstHz - 9616.0f) < 200.0f && r.firstSeconds < 1.0, msg);
     }
 
+    // ---- T12: a LOW ring must be catchable at all -------------------------
+    // From a rehearsal: low-end feedback went unsuppressed. Part of it was the
+    // listen band excluding it, but the rest was a stability gate demanding
+    // +-5 Hz where one bin is 47 Hz wide - precision the estimator cannot supply,
+    // so no low ring could ever hold a track long enough to qualify.
+    {
+        fk::FeedbackDetector::Params p;
+        p.minFreq = 150.0f;
+        p.floorDb = -95.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        auto r = runTone (det, 4.0, [] (double t) {
+            return std::make_pair (332.0, 0.0004 * std::pow (10.0, 6.0 * t / 20.0));
+        }, 0.00008, 0.0);
+
+        std::snprintf (msg, sizeof msg, "fired=%d at %.0f Hz after %.0f ms",
+                       (int) r.fired, r.firstHz, r.firstSeconds * 1000.0);
+        report ("T12 a 332 Hz ring is detected", r.fired && std::abs (r.firstHz - 332.0f) < 60.0f, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

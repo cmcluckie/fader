@@ -61,12 +61,15 @@ public:
         float levelDb= 0.0f;
     };
 
-    // 1024 -> 46.9 Hz bins, and a 21 ms window rather than 43. The window length
-    // is a hard floor on reaction time - a tone must exist that long before it can
-    // be measured at all - and the resolution given up costs nothing here: a notch
-    // is ~390 Hz wide at 9.7 kHz, and parabolic interpolation still places the
-    // centre to a few Hz.
-    static constexpr int fftOrder  = 10;
+    // 2048 -> 23.4 Hz bins, 43 ms window.
+    //
+    // 1024 was quicker (21 ms) and fine for the 9-15 kHz rings this room is full
+    // of, but a rehearsal turned up low-end feedback and 47 Hz bins cannot serve
+    // it: the stability gate has to be loosened to about +-12 Hz just to let a
+    // 330 Hz ring qualify, and at that width a singer's vibrato qualifies too.
+    // Measured, not argued - T4 fails outright at 1024 with a tolerance wide
+    // enough for T12 to pass. 2048 is the width where both hold.
+    static constexpr int fftOrder  = 11;
     static constexpr int fftSize   = 1 << fftOrder;
     static constexpr int numBins   = fftSize / 2;
     static constexpr int hopSize   = fftSize / 4;     // 256 -> ~5.3 ms between frames, unchanged
@@ -184,7 +187,7 @@ private:
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
         {
-            constexpr int floorHalfWidth = 10;   // ~+-470 Hz, same span as before at half the bin count
+            constexpr int floorHalfWidth = 20;   // ~+-470 Hz of local median
             const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
             const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
@@ -327,11 +330,22 @@ private:
     */
     float matchTolHz (float f) const noexcept
     {
-        return juce::jmax (3.0f * params.stabilityHz, 0.005f * f);
+        return juce::jmax (juce::jmax (3.0f * params.stabilityHz, 0.005f * f), binHz);
     }
+
+    /// <summary>
+    /// How far a peak may wander and still count as steady.
+    ///
+    /// Three floors, and the third is the one that was missing: the estimator
+    /// cannot place a peak more precisely than roughly a quarter of a bin, so
+    /// demanding +-5 Hz at 188 Hz - where a bin is 47 Hz wide - asks for precision
+    /// the measurement does not have, and no low ring can ever qualify. High
+    /// frequencies were fixed by the proportional term; low frequencies need the
+    /// resolution term.
+    /// </summary>
     float stabilityTolHz (float f) const noexcept
     {
-        return juce::jmax (params.stabilityHz, 0.0008f * f);
+        return juce::jmax (juce::jmax (params.stabilityHz, 0.0008f * f), binHz * 0.25f);
     }
 
     /// <summary>Frequency spread across the last n frames of a suspect's window.</summary>
