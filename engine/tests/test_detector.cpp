@@ -16,6 +16,8 @@
 #include <cmath>
 #include <random>
 #include <vector>
+#include <array>
+#include <string>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
 
@@ -23,7 +25,7 @@ namespace
 {
 constexpr double kSR = 48000.0;
 
-struct Result { bool fired = false; float firstHz = 0.0f; double firstSeconds = 0.0; int count = 0; };
+struct Result { bool fired = false; float firstHz = 0.0f; float firstLevelDb = 0.0f; double firstSeconds = 0.0; int count = 0; };
 
 /// Feed a generated signal block by block and report the first detection.
 /// gen(t) returns one sample at time t seconds.
@@ -97,7 +99,11 @@ Result runTone (fk::FeedbackDetector& det, double seconds, FA&& fa,
         fk::FeedbackDetector::Event ev;
         while (det.popEvent (ev))
         {
-            if (! r.fired) { r.fired = true; r.firstHz = ev.freq; r.firstSeconds = (double) (b * block) / kSR; }
+            if (! r.fired)
+            {
+                r.fired = true; r.firstHz = ev.freq; r.firstLevelDb = ev.levelDb;
+                r.firstSeconds = (double) (b * block) / kSR;
+            }
             ++r.count;
         }
     }
@@ -444,6 +450,119 @@ int main()
         std::snprintf (msg, sizeof msg, "harmonic=%d unstable=%d no-growth=%d vibrato=%d",
                        counts[1], counts[2], counts[3], counts[4]);
         report ("T15 a rejected candidate reports which gate stopped it", total > 0, msg);
+    }
+
+    // ---- T16: real rings captured at the rig, replayed among rig clutter ---
+    // Rates, frequencies and start levels below are MEASURED, not invented: they
+    // come from 22 marked misses at the rig (labels of 2026-08-27), taken from the
+    // armed slot's own spectrum. The distribution matters more than any single
+    // number - 130 sustained rises, median 29.8 dB/s, tenth percentile 15.6, and a
+    // slow tail reaching 3.6 dB/s. The shipping growth gate asks for 30 dB/s, which
+    // is the median of real feedback, so path A can only ever catch half of it and
+    // the sustain path has to carry the rest.
+    //
+    // T2 already shows a 6 dB/s creep caught on a clean tone. What that test cannot
+    // show is the rig: a dozen other partials alive at once, which is where the
+    // tracker actually has to hold its suspect. Hence the clutter here.
+    {
+        struct Profile { double hz; double rateDbPerSec; double startDb; };
+        static const Profile captured[] = {
+            { 4593.8,  3.6, -94.1 },   // the slowest thing measured: 16 dB over 4.5 s
+            { 4500.0,  5.4, -102.1 },  // 35 dB over 6.4 s - the one marked most often
+            { 9562.5,  8.0, -70.0 },
+            { 6093.8, 11.0, -106.8 },
+            { 6375.0, 13.4, -110.5 },
+            { 10031.3, 17.1, -104.4 },
+        };
+
+        int caught = 0;
+        double worstMs = 0.0, worstHz = 0.0;
+        std::string slow;
+        for (const auto& pr : captured)
+        {
+            fk::FeedbackDetector det; init (det);
+            const double hz = pr.hz, rate = pr.rateDbPerSec;
+            auto r = runTone (det, 8.0, [hz, rate] (double t) {
+                // Start well under the floor and climb at the measured rate, with
+                // the few-Hz wander a real room gives a ring.
+                const double amp = 0.00008 * std::pow (10.0, rate * t / 20.0);
+                return std::make_pair (hz + 2.0 * std::sin (2.0 * M_PI * 0.7 * t),
+                                       juce::jmin (amp, 0.08));
+            }, 0.00008, 0.05);
+            if (r.fired && std::abs (r.firstHz - (float) hz) < juce::jmax (60.0f, 0.02f * (float) hz))
+            {
+                ++caught;
+                // Wall-clock to fire is dominated by how long the tone spends under
+                // the floor, which is the room's business, not the detector's. What
+                // matters is how far it got ABOVE the floor before being caught -
+                // the "it let it run away" number.
+                const double escape = r.firstLevelDb - fk::FeedbackDetector::Params{}.floorDb;
+                if (escape > worstMs) { worstMs = escape; worstHz = hz; }
+            }
+            else
+            {
+                if (! slow.empty()) slow += " ";
+                slow += std::to_string ((int) hz);
+            }
+        }
+        const int total = (int) (sizeof captured / sizeof captured[0]);
+        if (caught == total)
+            std::snprintf (msg, sizeof msg, "%d/%d caught, worst escape %.1f dB at %.0f Hz",
+                           caught, total, worstMs, worstHz);
+        else
+            std::snprintf (msg, sizeof msg, "%d/%d caught, MISSED %s Hz", caught, total, slow.c_str());
+        report ("T16 rings measured at the rig are all caught", caught == total && worstMs <= 12.0, msg);
+    }
+
+    // ---- T17: a ring must be caught with the suspect table already full ----
+    // The rig runs a live spectrum: room tone, bleed and partials keep dozens of
+    // low peaks alive at once. track() associates with an existing suspect or
+    // claims a free slot - and if all 24 are taken it used to return silently, so
+    // a brand-new ring simply never entered the tracker. Peaks are offered in
+    // ascending frequency order, so the low clutter claimed every slot first and
+    // the ring above it was invisible for as long as the clutter held.
+    //
+    // T14 hid this by using 20 clutter tones, just under the 24 slots.
+    {
+        constexpr double ringHz = 4500.0;
+        fk::FeedbackDetector det; init (det);
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double ringPhase = 0.0;
+        std::array<double, 30> clutterPhase {};
+
+        bool fired = false; double firstS = 0.0; float firstHz = 0.0f;
+        const int totalBlocks = (int) (6.0 * kSR / block);
+        for (int b = 0; b < totalBlocks && ! fired; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                double v = 0.05 * std::sin (2.0 * M_PI * 100.0 * t);       // gate keeper
+                // 30 steady low partials, all below the ring, all prominent enough
+                // to be picked - more than the tracker has slots for.
+                for (size_t c = 0; c < clutterPhase.size(); ++c)
+                {
+                    const double f = 300.0 + 90.0 * (double) c;
+                    clutterPhase[c] += 2.0 * M_PI * f / kSR;
+                    v += 0.004 * std::sin (clutterPhase[c]);
+                }
+                // The ring: emerges from under the floor at the rate measured at
+                // the rig for the 4500 Hz creep that was never caught.
+                ringPhase += 2.0 * M_PI * ringHz / kSR;
+                v += juce::jmin (0.00008 * std::pow (10.0, 5.4 * t / 20.0), 0.08)
+                     * std::sin (ringPhase);
+                buf[(size_t) i] = (float) (v + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+                if (! fired && std::abs (ev.freq - (float) ringHz) < 90.0f)
+                { fired = true; firstHz = ev.freq; firstS = (double) (b * block) / kSR; }
+        }
+        std::snprintf (msg, sizeof msg, "fired=%d at %.0f Hz after %.0f ms",
+                       (int) fired, firstHz, firstS * 1000.0);
+        report ("T17 a ring is caught when the suspect table is full", fired, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);

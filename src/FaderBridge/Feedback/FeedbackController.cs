@@ -500,6 +500,7 @@ public sealed class FeedbackController : IAsyncDisposable
             // what the detector had already decided, for comparison with the ear
             recent_detections = _recentDetections.ToArray(),
             recent_rejections = _recentRejections.ToArray(),
+            recent_notches = NotchHistory(),
             frames = frames.Select(f => new
             {
                 t = Math.Round(f.T - now, 3),          // negative: seconds before the press
@@ -514,8 +515,49 @@ public sealed class FeedbackController : IAsyncDisposable
         return path;
     }
 
+    private object[] NotchHistory()
+    {
+        lock (_recentNotches) return _recentNotches.ToArray();
+    }
+
     private readonly Queue<object> _recentDetections = new();
     private readonly Queue<object> _recentRejections = new();
+    private readonly Queue<object> _recentNotches = new();
+    private readonly double[] _lastNotchSample = new double[MaxChans];
+
+    /// <summary>
+    /// What the filters were actually doing, sampled ~10x/s.
+    ///
+    /// Without this a label can show a ring sitting at -48 dB for six seconds and
+    /// still not say whether a notch was on it. That is the difference between
+    /// "never detected it" and "detected it and the cut was not enough" - opposite
+    /// fixes, and the spectrum alone cannot tell them apart. Only active filters
+    /// are kept; an idle bank is not worth the bytes.
+    /// </summary>
+    private void RecordNotches(int slot, FkNotch[] notches)
+    {
+        var now = _clock.Elapsed.TotalSeconds;
+        lock (_recentNotches)
+        {
+            if (now - _lastNotchSample[slot] < 0.1) return;
+            _lastNotchSample[slot] = now;
+
+            foreach (var n in notches)
+            {
+                if (!n.Active) continue;
+                _recentNotches.Enqueue(new
+                {
+                    t = Math.Round(now, 3),
+                    slot,
+                    hz = Math.Round(n.FreqHz, 1),
+                    cut = Math.Round(n.CurrentDb, 1),
+                    target = Math.Round(n.TargetDb, 1),
+                    locked = n.Locked,
+                });
+            }
+            while (_recentNotches.Count > 1500) _recentNotches.Dequeue();
+        }
+    }
 
     /// <summary>
     /// Near-misses, with the gate that stopped each one. This is the log that was
@@ -637,6 +679,7 @@ public sealed class FeedbackController : IAsyncDisposable
         }
 
         NotchesChanged?.Invoke(slot, notches);
+        RecordNotches(slot, notches);
 
         IReadOnlyList<StoredNotch> locked;
         lock (_lock)

@@ -64,7 +64,7 @@ public:
     /// Why a candidate that looked like a peak did NOT become a detection.
     /// Logging only what fired means every "it missed one" has to be
     /// reverse-engineered by simulation; this says which gate stopped it.
-    enum class Reason { None = 0, Harmonic = 1, Unstable = 2, NoGrowth = 3, Vibrato = 4 };
+    enum class Reason { None = 0, Harmonic = 1, Unstable = 2, NoGrowth = 3, Vibrato = 4, Drifting = 5 };
 
     struct Reject
     {
@@ -545,13 +545,18 @@ private:
                 // grows too slowly to trip the growth gate, but it sits dead
                 // still for hundreds of ms, which nothing musical does. Held
                 // notes arrive with harmonics, so the guard covers those.
+                bool sustainWander = false;
                 if (! fire && ! s.harmonic)
                 {
                     const int sustainN = juce::jlimit (
                         1, windowSize - 1,
                         (int) (params.sustainSeconds * (float) sampleRate / (float) hopSize + 0.5f));
-                    fire = s.frames >= sustainN + 1
-                           && spreadOver (s, sustainN) <= stabTol;
+                    const bool longEnough = s.frames >= sustainN + 1;
+                    const bool steady     = spreadOver (s, sustainN) <= stabTol;
+                    fire = longEnough && steady;
+                    // Steady over 30 ms but wandering over 300 ms is a different
+                    // failure from growing too slowly, and wants a different fix.
+                    sustainWander = longEnough && ! steady;
                 }
 
                 // Say why, when it has waited long enough that "not yet" is an
@@ -565,6 +570,7 @@ private:
                         const Reason why = wobbling            ? Reason::Vibrato
                                          : spread > stabTol    ? Reason::Unstable
                                          : s.harmonic          ? Reason::Harmonic
+                                         : sustainWander       ? Reason::Drifting
                                                                : Reason::NoGrowth;
                         pushReject ({ s.freq, levelDb, (int) why, s.frames });
                     }
@@ -602,20 +608,35 @@ private:
             return;
         }
 
+        Suspect* slot = nullptr;
         for (auto& s : suspects)
+            if (! s.active) { slot = &s; break; }
+
+        // With every slot taken this used to return silently, so a peak arriving
+        // into a full table was never tracked at all - and peaks are offered in
+        // ascending frequency order, so persistent low clutter would hold the
+        // table and a new ring above it could stay invisible for as long as the
+        // clutter lasted. Take the quietest un-fired suspect instead: something
+        // already reported is doing real work, and the loudest of the rest is the
+        // likelier ring. Not the proven cause of any miss seen at the rig, but a
+        // way to go blind that should not exist.
+        if (slot == nullptr)
         {
-            if (s.active) continue;
-            s = Suspect{};
-            s.active     = true;
-            s.harmonic   = harmonic;
-            s.freq       = freq;
-            s.lastLevel  = levelDb;
-            s.frames     = 1;
-            s.wFreq[0]   = freq;
-            s.wLevel[0]  = levelDb;
-            s.windowPos  = 1;
-            return;
+            float weakest = levelDb;
+            for (auto& s : suspects)
+                if (! s.reported && s.lastLevel < weakest) { weakest = s.lastLevel; slot = &s; }
+            if (slot == nullptr) return;    // everything here outranks the newcomer
         }
+
+        *slot = Suspect{};
+        slot->active     = true;
+        slot->harmonic   = harmonic;
+        slot->freq       = freq;
+        slot->lastLevel  = levelDb;
+        slot->frames     = 1;
+        slot->wFreq[0]   = freq;
+        slot->wLevel[0]  = levelDb;
+        slot->windowPos  = 1;
     }
 
     float medianAround (int centre, int halfWidth) noexcept

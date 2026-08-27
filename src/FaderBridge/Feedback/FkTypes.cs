@@ -35,7 +35,7 @@ public sealed record FkRejection(int Channel, float Hz, float LevelDb, int Reaso
         1 => "harmonic",     // looked like part of a series
         2 => "unstable",     // pitch wandered too far
         3 => "no-growth",    // not rising, and not old enough to be a sustained ring
-        4 => "vibrato",      // wobbling like a sung note
+        4 => "vibrato", 5 => "drifting",      // wobbling like a sung note
         _ => "unknown",
     };
 }
