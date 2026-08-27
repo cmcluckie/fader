@@ -453,6 +453,31 @@ int main()
     }
 
     // ---- T16: real rings captured at the rig, replayed among rig clutter ---
+    //
+    // What 437 measured rises say about real feedback, by octave band:
+    //
+    //     1-2 kHz    18.2 dB/s median   1.40 s median duration
+    //     2-4 kHz    23.2                1.02
+    //     4-8 kHz    27.8                1.02
+    //     8-16 kHz   33.6                0.81
+    //
+    // Lower is slower and lasts longer (r = +0.375 against log frequency), and the
+    // -10 dB width is roughly constant in Hz while collapsing as a PROPORTION of
+    // centre frequency, 14.3% at 1-2 kHz to 1.7% at 11-16 kHz (r = -0.891). Both
+    // tolerances here scale proportionally, so the low end gets the tightest
+    // absolute window while its peaks are just as wide in Hz.
+    //
+    // That reads like it should matter, and it was tested twice. Scaling the growth
+    // requirement to the fitted per-band curve changed one synthetic case by 91 ms
+    // and nothing else. Letting harmonic suspects use the sustain path, which they
+    // are barred from, changed nothing at all. Both were reverted. The reason is
+    // that neither gate is what sets the timing: on anything reaching the floor the
+    // sustain path fires first regardless, and for a ring hiding under a sung note's
+    // harmonic the wait is masking - it has to get louder than the partial it sits
+    // on before it is a distinct peak at all - which no threshold can shorten.
+    //
+    // So: the frequency dependence is real, and it is NOT in these two gates. Anyone
+    // reaching for them next should measure before believing it.
     // Rates, frequencies and start levels below are MEASURED, not invented: they
     // come from 22 marked misses at the rig (labels of 2026-08-27), taken from the
     // armed slot's own spectrum. The distribution matters more than any single
