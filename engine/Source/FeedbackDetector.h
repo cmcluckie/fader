@@ -72,7 +72,7 @@ public:
     static constexpr int fftOrder  = 11;
     static constexpr int fftSize   = 1 << fftOrder;
     static constexpr int numBins   = fftSize / 2;
-    static constexpr int hopSize   = fftSize / 4;     // 256 -> ~5.3 ms between frames, unchanged
+    static constexpr int hopSize   = fftSize / 8;     // 256 -> ~5.3 ms between frames
     static constexpr int maxSuspects = 24;
     static constexpr int maxPeaks    = 48;   // prominent peaks kept per frame
     static constexpr int eventQueueSize = 16;
@@ -90,6 +90,7 @@ public:
         for (auto& s : suspects) s = Suspect{};
         for (auto& m : publishedMag) m.store (-120.0f, std::memory_order_relaxed);
         eventRead = eventWrite = 0;
+        hasPrevFrame = false;
     }
 
     void setParams (const Params& p) noexcept { params = p; }
@@ -170,12 +171,24 @@ private:
         const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / fftSize), -120.0f);
 
         window.multiplyWithWindowingTable (scratch.data(), (size_t) fftSize);
-        fft.performFrequencyOnlyForwardTransform (scratch.data());
+
+        // Complex, not magnitude-only. The phase advance of a bin between frames
+        // locates a tone far more precisely than fitting three magnitudes ever
+        // can - the difference between +-57 cents and a couple of cents at 174 Hz -
+        // and the stability gate is only as good as the frequency estimate feeding
+        // it. Discarding phase was why low rings could not be tracked.
+        std::swap (curRe, prevRe);
+        std::swap (curIm, prevIm);
+        fft.performRealOnlyForwardTransform (scratch.data(), true);
 
         constexpr float norm = 2.0f / fftSize;
         for (int i = 0; i < numBins; ++i)
         {
-            const float m  = scratch[(size_t) i] * norm;
+            const float re = scratch[(size_t) (2 * i)];
+            const float im = scratch[(size_t) (2 * i + 1)];
+            (*curRe)[(size_t) i] = re;
+            (*curIm)[(size_t) i] = im;
+            const float m  = std::sqrt (re * re + im * im) * norm;
             const float db = juce::Decibels::gainToDecibels (m, -120.0f);
             mag[(size_t) i] = db;
             publishedMag[(size_t) i].store (db, std::memory_order_relaxed);
@@ -200,11 +213,7 @@ private:
                 const float localFloor = medianAround (i, floorHalfWidth);
                 if (here - localFloor < params.prominenceDb) continue;
 
-                // parabolic interpolation for sub-bin frequency accuracy (§3)
-                const float ym1 = mag[(size_t) (i - 1)], y0 = here, yp1 = mag[(size_t) (i + 1)];
-                const float denom = (ym1 - 2.0f * y0 + yp1);
-                const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
-                const float freq  = (i + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
+                const float freq = refineFrequency (i, here);
 
                 if (peakCount < maxPeaks)
                 {
@@ -232,16 +241,30 @@ private:
         // guard, and a lone ring in a quiet room no longer does.
         for (int i = 0; i < peakCount; ++i)
         {
-            int related = 0;
-            for (int j = 0; j < peakCount && related < 2; ++j)
+            // Does this peak belong to a harmonic SERIES?
+            //
+            // Pairwise ratios of 2, 3 or 4 miss the obvious case: the 5th harmonic
+            // of a sung note has no peer at 2x, 3x or 4x of ITSELF, so it looked
+            // like a lone tone and got notched - measured, at 2037 Hz on a 400 Hz
+            // note. Instead, propose that this peak is the n-th harmonic of some
+            // fundamental and count how many other peaks land on that series.
+            bool harmonic = false;
+            for (int n = 1; n <= 8 && ! harmonic; ++n)
             {
-                if (i == j) continue;
-                const float a = peakFreq[(size_t) i], b = peakFreq[(size_t) j];
-                const float ratio = a > b ? a / b : b / a;
-                for (float h : { 2.0f, 3.0f, 4.0f })
-                    if (std::abs (ratio - h) < h * 0.02f) { ++related; break; }
+                const float f0 = peakFreq[(size_t) i] / (float) n;
+                if (f0 < 40.0f) break;
+
+                int members = 0;
+                for (int j = 0; j < peakCount; ++j)
+                {
+                    if (j == i) continue;
+                    const float k = peakFreq[(size_t) j] / f0;
+                    const float nearest = std::round (k);
+                    if (nearest >= 1.0f && nearest <= 12.0f
+                        && std::abs (k - nearest) < 0.04f) ++members;
+                }
+                harmonic = members >= 2;      // itself plus two more of the series
             }
-            const bool harmonic = related >= 2;
 
             // A harmonic-series member must be markedly more prominent to be believed.
             if (harmonic && peakProm[(size_t) i] < params.prominenceDb + params.harmonicPromDb)
@@ -252,6 +275,46 @@ private:
 
         for (auto& s : suspects)
             if (s.active && s.missed > 2) s = Suspect{};
+
+        hasPrevFrame = true;
+    }
+
+    /**
+        Locate a peak from the phase advance between frames, falling back to
+        magnitude interpolation on the first frame or if the phase estimate is
+        implausible. Standard phase-vocoder reassignment: the phase a bin actually
+        advanced, minus the advance its centre frequency predicts, is the offset
+        from that centre.
+    */
+    float refineFrequency (int k, float levelDb) noexcept
+    {
+        // parabolic on magnitudes - the fallback, and the sanity check
+        const float ym1 = mag[(size_t) (k - 1)], y0 = levelDb, yp1 = mag[(size_t) (k + 1)];
+        const float denom = (ym1 - 2.0f * y0 + yp1);
+        const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
+        const float parabolic = (k + juce::jlimit (-0.5f, 0.5f, delta)) * binHz;
+
+        if (! hasPrevFrame) return parabolic;
+
+        const float rn = (*curRe)[(size_t) k],  in = (*curIm)[(size_t) k];
+        const float rp = (*prevRe)[(size_t) k], ip = (*prevIm)[(size_t) k];
+
+        // arg(z_now * conj(z_prev)) - one atan2, no unwrapping of absolute phase
+        const float cr = rn * rp + in * ip;
+        const float ci = in * rp - rn * ip;
+        if (cr == 0.0f && ci == 0.0f) return parabolic;
+
+        constexpr float twoPi = 6.283185307179586f;
+        const float expected = twoPi * (float) hopSize * (float) k / (float) fftSize;
+        float d = std::atan2 (ci, cr) - expected;
+        d -= twoPi * std::round (d / twoPi);                 // wrap to +-pi
+
+        const float trueBin = (float) k + d * (float) fftSize / (twoPi * (float) hopSize);
+
+        // A tone at this peak cannot really be a bin away; if the phase says it is,
+        // the bin is not a clean sinusoid and the magnitude fit is the safer answer.
+        if (std::abs (trueBin - (float) k) > 1.0f) return parabolic;
+        return trueBin * binHz;
     }
 
     /**
@@ -345,7 +408,12 @@ private:
     /// </summary>
     float stabilityTolHz (float f) const noexcept
     {
-        return juce::jmax (juce::jmax (params.stabilityHz, 0.0008f * f), binHz * 0.25f);
+        // The quarter-bin resolution floor is gone: phase reassignment locates a
+        // tone to a couple of cents at any frequency, so the gate can go back to
+        // asking what it actually wants - a few Hz of drift - instead of being
+        // widened to accommodate a measurement that could not see straight. That
+        // widening was what let a singer's vibrato through.
+        return juce::jmax (params.stabilityHz, 0.0008f * f);
     }
 
     /// <summary>Frequency spread across the last n frames of a suspect's window.</summary>
@@ -415,7 +483,13 @@ private:
             // so look for ~300 ms and veto anything that wobbles. Above it, keep the
             // fast path: a voice's upper harmonics swing too many Hz to pass the
             // stability gate anyway, and that is where the real feedback lives.
-            const bool  voiceBand = s.freq < params.voiceBandHz;
+            // Vibrato is worth testing for wherever a harmonic series suggests a
+            // voice, not only below 2 kHz - a singer's upper partials sit well
+            // above that and wobble proportionally harder. And a short stability
+            // window can never reject vibrato on its own: at the turning points of
+            // the wobble the pitch is momentarily still, which is exactly when a
+            // 32 ms look sees a rock-steady tone.
+            const bool  voiceBand = s.freq < params.voiceBandHz || s.harmonic;
             const int   baseNeed  = voiceBand ? params.voiceFrames : params.persistFrames;
             const int   need   = baseNeed + (s.harmonic ? params.harmonicExtra : 0);
 
@@ -520,6 +594,12 @@ private:
     std::array<float, (size_t) ringSize>   ring {};
     std::array<float, (size_t) fftSize * 2> scratch {};
     std::array<float, (size_t) numBins>    mag {};
+    std::array<float, (size_t) numBins>    reA {}, imA {}, reB {}, imB {};
+    std::array<float, (size_t) numBins>*   curRe  = &reA;
+    std::array<float, (size_t) numBins>*   curIm  = &imA;
+    std::array<float, (size_t) numBins>*   prevRe = &reB;
+    std::array<float, (size_t) numBins>*   prevIm = &imB;
+    bool hasPrevFrame = false;
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
     std::array<std::atomic<float>, (size_t) numBins> publishedMag;
 

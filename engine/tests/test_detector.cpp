@@ -330,6 +330,37 @@ int main()
         report ("T12 a 332 Hz ring is detected", r.fired && std::abs (r.firstHz - 332.0f) < 60.0f, msg);
     }
 
+    // ---- T13: how accurately do we actually locate a tone? ----------------
+    // This is the number the stability gate depends on, and until now nobody had
+    // measured it. Magnitude-only interpolation is worth roughly a quarter of a
+    // bin: 5.9 Hz at 2048/48k, which is +-57 cents at 174 Hz - far coarser than
+    // the +-5 Hz the gate was asking for.
+    {
+        struct Probe { double hz; const char* label; };
+        const Probe probes[] = { {174.3, "174.3 Hz"}, {332.7, "332.7 Hz"},
+                                 {1237.4, "1237.4 Hz"}, {9616.5, "9616.5 Hz"} };
+        double worstCents = 0.0;
+        char detail[160] = "";
+        for (const auto& pr : probes)
+        {
+            fk::FeedbackDetector::Params p;
+            p.minFreq = 150.0f; p.floorDb = -95.0f;
+            fk::FeedbackDetector det; init (det, p);
+            auto r = runTone (det, 3.0, [&pr] (double t) {
+                return std::make_pair (pr.hz, 0.0005 * std::pow (10.0, 6.0 * t / 20.0));
+            }, 0.00008, 0.0);
+            if (! r.fired) { std::snprintf (detail, sizeof detail, "%s never fired", pr.label); worstCents = 9999; break; }
+            const double cents = 1200.0 * std::log2 (r.firstHz / pr.hz);
+            if (std::abs (cents) > std::abs (worstCents))
+            {
+                worstCents = cents;
+                std::snprintf (detail, sizeof detail, "worst: %s -> %.1f Hz (%+.1f cents)",
+                               pr.label, r.firstHz, cents);
+            }
+        }
+        report ("T13 a tone is located within 20 cents", std::abs (worstCents) < 20.0, detail);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
