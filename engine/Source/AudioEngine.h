@@ -191,7 +191,7 @@ public:
             FeedbackDetector::Event ev;
             while (det.popEvent (ev))
             {
-                bank.trigger (ev.freq, elapsed);           // checked = cut; bank owns depth
+                bank.trigger (ev.freq, elapsed, ev.growing);  // bank owns depth; growth earns the hard cap
                 pushEvent ({ ch, ev.freq, ev.levelDb });   // C# logs + displays it
             }
 

@@ -231,10 +231,14 @@ int main()
     }
 
     // ---- T8: a ring that dies stops producing events -----------------------
+    // The ring ARRIVES rather than being present from the first sample. A tone
+    // that predates the analysis is indistinguishable from a room mode, and is now
+    // deliberately left alone - see T22.
     {
         fk::FeedbackDetector det; init (det);
         auto r = runTone (det, 3.0, [] (double t) {
-            return std::make_pair (6000.0, t > 1.2 ? 0.0 : 0.05);
+            const double amp = juce::jmin (0.0002 * std::pow (10.0, 30.0 * t / 20.0), 0.05);
+            return std::make_pair (6000.0, t > 1.6 ? 0.0 : amp);
         });
         // it must have fired while ringing, and gone quiet afterwards
         std::snprintf (msg, sizeof msg, "fired=%d detections=%d", (int) r.fired, r.count);
@@ -306,8 +310,13 @@ int main()
         p.minFreq = 1000.0f;
         fk::FeedbackDetector det; init (det, p);
 
-        auto r = runTone (det, 3.0, [] (double) {
-            return std::make_pair (9616.0, 0.00025);   // ~ -72 dBFS: quiet, lone, steady
+        // Quiet and lone, which is what this test is about, but it arrives:
+        // it climbs to ~ -72 dBFS and then simply sits there. A tone that was
+        // already present before the analysis began is room furniture, and is now
+        // left alone deliberately - see T22 - so a ring has to come from somewhere.
+        auto r = runTone (det, 3.0, [] (double t) {
+            return std::make_pair (9616.0, juce::jmin (0.00002 * std::pow (10.0, 25.0 * t / 20.0),
+                                                       0.00025));
         }, 0.00004, 0.05);
 
         std::snprintf (msg, sizeof msg, "fired=%d at %.0f Hz after %.0f ms",
@@ -712,6 +721,44 @@ int main()
         std::snprintf (msg, sizeof msg, "-6 dB spans %.0f Hz, -24 dB spans %.0f Hz (%.1fx)",
                        w6, w24, w24 / w6);
         report ("T21 a 4x deeper notch is not 4x wider", w24 < 3.0 * w6, msg);
+    }
+
+    // ---- T22: a steady room tone must never be notched ---------------------
+    // Turning the guard on must not change the sound when there is no feedback.
+    // It did. The sustain path asked only for "dead stable for 300 ms and not
+    // harmonically related", which describes a room mode, a monitor hiss, an HVAC
+    // hum - anything that is simply always present. Those got notched and then
+    // held, because analysis runs pre-notch so the tone never appears to go away.
+    // Measured at the rig: 97.3% of notch samples pinned at their target, 0.1%
+    // ever releasing, two dozen deep filters standing permanently. That is a high
+    // shelf on the vocal, present whether or not anything is ringing.
+    //
+    // These tones are prominent, isolated and rock-steady - everything the sustain
+    // path used to want. The only thing they do not do is arrive from nothing.
+    {
+        int notched = 0;
+        float where = 0.0f;
+        for (auto hz : { 1150.0, 3300.0, 6700.0, 11900.0 })
+        {
+            fk::FeedbackDetector::Params p;
+            p.floorDb = -95.0f;                  // what the rig actually runs
+            fk::FeedbackDetector det; init (det, p);
+
+            // Present at full level from the first sample and never varying: the
+            // pre-roll in runTone means there is no onset artefact to fire on.
+            auto r = runTone (det, 6.0, [hz] (double) {
+                return std::make_pair (hz, 0.0025);      // ~ -52 dBFS, plainly audible
+            }, 0.00008, 0.05);
+            if (r.fired)
+            {
+                ++notched; where = r.firstHz;
+                std::printf ("      %.0f Hz fired at %.0f ms, level %.1f dB\n",
+                             hz, r.firstSeconds * 1000.0, r.firstLevelDb);
+            }
+        }
+        std::snprintf (msg, sizeof msg, notched ? "notched %d of 4 (first at %.0f Hz)"
+                                                : "all 4 left alone", notched, where);
+        report ("T22 a steady room tone is never notched", notched == 0, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);

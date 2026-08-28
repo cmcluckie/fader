@@ -105,7 +105,7 @@ public:
         Returns the slot index, or -1 only if every slot is locked. `nowSeconds`
         is the transport clock.
     */
-    int trigger (double f, double nowSeconds) noexcept
+    int trigger (double f, double nowSeconds, bool growing = true) noexcept
     {
         const int existing = findNear (f);
         if (existing >= 0)
@@ -140,7 +140,10 @@ public:
 
                 // deepen a step; allow the hard cap only once we are already at the
                 // soft cap and the tone is still knocking (spec §5).
-                const double floorDb = (s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb;
+                // The hard cap is for tones that are still building. One that is
+                // merely still present gets held at the soft cap, not driven deeper
+                // every quarter second for as long as the room hums.
+                const double floorDb = (growing && s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb;
                 s.targetDb = std::max (floorDb, s.targetDb + stepDb);
             }
             return existing;

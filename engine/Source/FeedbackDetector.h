@@ -43,6 +43,8 @@ public:
 
         // A sung harmonic is prominent, steady and growing - it passes every test
         // feedback does. These three separate them.
+        float  sustainRiseDb  = 1.5f;   // the sustain path also needs to have GROWN this
+                                        // much: steady-forever is furniture, not feedback
         float  sustainSeconds = 0.3f;   // a dead-stable, harmonically isolated peak this
                                         // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
@@ -57,6 +59,7 @@ public:
     {
         float freq   = 0.0f;
         float levelDb= 0.0f;
+        bool  growing= false;   // still climbing, as opposed to merely still present
     };
 
     /// Why a candidate that looked like a peak did NOT become a detection.
@@ -111,6 +114,7 @@ public:
         eventRead = eventWrite = 0;
         rejRead = rejWrite = 0;
         hasPrevFrame = false;
+        samplesSeen  = 0;
     }
 
     void setParams (const Params& p) noexcept { params = p; }
@@ -121,6 +125,7 @@ public:
         for (int n = 0; n < numSamples; ++n)
         {
             ring[(size_t) writePos] = data[n];
+            if (samplesSeen < fftSize) ++samplesSeen;
             writePos = (writePos + 1) & (ringSize - 1);
 
             if (++sinceHop >= hopSize)
@@ -176,6 +181,21 @@ private:
 
     void analyse() noexcept
     {
+        // Wait until the analysis window holds nothing but real audio.
+        //
+        // The ring starts at zero, so for the first fftSize samples every tone
+        // already present in the room appears to climb out of silence as the
+        // window fills - a textbook ring, and detected as one. Arming the guard
+        // was therefore an event that notched every steady tone in the room at
+        // once: the room mode, the monitor hiss, the hum. They were then held,
+        // because analysis runs pre-notch and a suppressed tone never looks gone.
+        //
+        // That is why switching the guard on made the vocal sound muffled with no
+        // feedback anywhere near it. The test harness has always compensated for
+        // this artefact with a pre-roll, which is exactly why the suite never
+        // caught it: the workaround lived in the tests instead of the engine.
+        if (samplesSeen < fftSize) return;
+
         // newest fftSize samples, oldest first
         int r = (writePos - fftSize) & (ringSize - 1);
         for (int i = 0; i < fftSize; ++i)
@@ -444,6 +464,16 @@ private:
         return hi - lo;
     }
 
+    /// How much the level has risen across the last n frames of the window.
+    /// Feedback arrives from nothing and builds; a room mode, a monitor hiss or an
+    /// HVAC tone is simply always there, and reads ~0 here.
+    float riseOver (const Suspect& s, int n) const noexcept
+    {
+        const int newest = (s.windowPos - 1 + windowSize) % windowSize;
+        const int oldest = (s.windowPos - n + windowSize) % windowSize;
+        return s.wLevel[(size_t) newest] - s.wLevel[(size_t) oldest];
+    }
+
     void track (float freq, float levelDb, bool harmonic) noexcept
     {
         // Associate with an existing candidate (a wider window than the stability
@@ -529,7 +559,21 @@ private:
                         (int) (params.sustainSeconds * (float) sampleRate / (float) hopSize + 0.5f));
                     const bool longEnough = s.frames >= sustainN + 1;
                     const bool steady     = spreadOver (s, sustainN) <= stabTol;
-                    fire = longEnough && steady;
+                    // ...and it must have got here from somewhere. Stability alone
+                    // describes every steady tone in the room, so this path was
+                    // notching room modes and monitor hiss and then holding them
+                    // down for as long as they existed - which is always. Measured
+                    // at the rig: 97.3% of notches pinned at target, 0.1% ever
+                    // releasing, and a guard that muffled the vocal with no
+                    // feedback anywhere near it. A ring arrives from nothing and
+                    // builds; furniture reads ~0 dB here.
+                    // Measured over the whole window, not just the sustain span:
+                    // the slowest ring recorded at the rig climbs 3.6 dB/s, which is
+                    // only 1.1 dB across 300 ms - inside the noise. Over the full
+                    // ~680 ms it is 2.5 dB, and furniture is still 0.
+                    const int  riseN = juce::jlimit (sustainN, windowSize - 1, s.frames - 1);
+                    const bool grew  = riseOver (s, riseN) >= params.sustainRiseDb;
+                    fire = longEnough && steady && grew;
                     // Steady over 30 ms but wandering over 300 ms is a different
                     // failure from growing too slowly, and wants a different fix.
                     sustainWander = longEnough && ! steady;
@@ -557,7 +601,7 @@ private:
                     s.reported    = true;
                     s.reportLevel = s.lastLevel;
                     s.sinceReport = 0;
-                    pushEvent ({ s.freq, s.lastLevel });
+                    pushEvent ({ s.freq, s.lastLevel, true });
                 }
             }
             else
@@ -578,7 +622,15 @@ private:
                 {
                     s.reportLevel = s.lastLevel;
                     s.sinceReport = 0;
-                    pushEvent ({ s.freq, s.lastLevel });
+                    // Only a tone that is still CLIMBING has earned a deeper cut.
+                    // Analysis runs pre-notch, so a notch can never be seen to
+                    // succeed: a room tone stays fully visible however well it is
+                    // being suppressed, "surviving" is therefore true forever, and
+                    // it used to escalate on that alone. Measured at the rig: 97.3%
+                    // of notch samples pinned at their target, 0.1% ever releasing,
+                    // a fifth of them at the cap - two dozen deep filters held
+                    // permanently, which is a high shelf, and it sounded like one.
+                    pushEvent ({ s.freq, s.lastLevel, climbing });
                 }
             }
             return;
@@ -660,6 +712,7 @@ private:
     std::array<float, (size_t) numBins>*   prevRe = &reB;
     std::array<float, (size_t) numBins>*   prevIm = &imB;
     bool hasPrevFrame = false;
+    int  samplesSeen  = 0;
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
     std::array<std::atomic<float>, (size_t) numBins> publishedMag;
 
