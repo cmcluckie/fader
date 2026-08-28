@@ -37,6 +37,16 @@ public:
                                         // not silently change when the hop size does
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
+        // Watching and ACTING are different questions, and conflating them is what
+        // made the guard audible with no feedback in the room. The floor is dragged
+        // low on purpose, so a ring is tracked while it is still tiny - that is the
+        // whole point of it. But placing a filter on a -85 dB tone buys nothing:
+        // it is 40 dB below anything that has ever got away here, and it costs a
+        // notch that then stands there. Measured at the rig, 82% of detections were
+        // below -70 dB and the loudest thing in a minute was -48 dB - so almost
+        // every filter was spent on something inaudible, and the pile of them was
+        // not. Track from the floor; only act once it is worth acting on.
+        float  actionDb       = -75.0f;
         float  inputGateDb    = -55.0f; // skip detection when broadband input is below this
         float  minFreq        = 200.0f; // low edge of the watched band
         float  maxFreq        = 16000.0f; // high edge; still clamped to Nyquist by bin count
@@ -601,7 +611,8 @@ private:
                     s.reported    = true;
                     s.reportLevel = s.lastLevel;
                     s.sinceReport = 0;
-                    pushEvent ({ s.freq, s.lastLevel, true });
+                    if (s.lastLevel >= params.actionDb)
+                        pushEvent ({ s.freq, s.lastLevel, true });
                 }
             }
             else
@@ -630,7 +641,8 @@ private:
                     // of notch samples pinned at their target, 0.1% ever releasing,
                     // a fifth of them at the cap - two dozen deep filters held
                     // permanently, which is a high shelf, and it sounded like one.
-                    pushEvent ({ s.freq, s.lastLevel, climbing });
+                    if (s.lastLevel >= params.actionDb)
+                        pushEvent ({ s.freq, s.lastLevel, climbing });
                 }
             }
             return;

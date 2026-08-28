@@ -761,6 +761,40 @@ int main()
         report ("T22 a steady room tone is never notched", notched == 0, msg);
     }
 
+    // ---- T23: nothing inaudible is worth a filter --------------------------
+    // The floor is dragged low deliberately, so a ring is tracked while it is
+    // still tiny. That is the point of it. But acting on everything it can SEE is
+    // how the guard became audible with no feedback present: measured live, 82% of
+    // detections sat below -70 dB and the loudest thing in a full minute was -48,
+    // so almost every filter was spent on something inaudible - and the pile of
+    // them was not. Watching and acting are now separate thresholds.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb  = -95.0f;          // watch right down into the noise, as the rig does
+        p.minFreq  = 1000.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        // A ring that arrives and settles well below audibility: real, steady,
+        // isolated, and not worth a filter.
+        auto quiet = runTone (det, 4.0, [] (double t) {
+            return std::make_pair (7350.0, juce::jmin (0.000004 * std::pow (10.0, 25.0 * t / 20.0),
+                                                       0.000045));   // ~ -87 dBFS
+        }, 0.000004, 0.05);
+
+        // The same ring, allowed to reach a level that matters.
+        fk::FeedbackDetector det2; init (det2, p);
+        auto loud = runTone (det2, 4.0, [] (double t) {
+            return std::make_pair (7350.0, juce::jmin (0.000004 * std::pow (10.0, 25.0 * t / 20.0),
+                                                       0.004));      // ~ -48 dBFS
+        }, 0.000004, 0.05);
+
+        std::snprintf (msg, sizeof msg, "-87 dB ring: %s   -48 dB ring: %s (%.1f dB)",
+                       quiet.fired ? "NOTCHED" : "left alone",
+                       loud.fired ? "caught" : "MISSED", loud.firstLevelDb);
+        report ("T23 an inaudible ring is watched, not notched",
+                ! quiet.fired && loud.fired, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
