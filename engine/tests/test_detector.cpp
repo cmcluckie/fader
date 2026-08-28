@@ -795,6 +795,58 @@ int main()
                 ! quiet.fired && loud.fired, msg);
     }
 
+    // ---- T25: a quiet ring must not have to outshout the room to be seen ----
+    // The marked miss this comes from: a 10.6 kHz ring climbed 50 dB in 1.5 s and
+    // was first detected at -43 dB, at the very top, after being audible and
+    // plainly visible on the meter for about two seconds. No gate rejected it. It
+    // was never tracked at all - the suspect table was full of louder tones, and a
+    // newcomer used to need to be LOUDER than something already in it to get a
+    // slot. Feedback arrives quiet and becomes loud, so that rule locked out
+    // precisely the case it most needed to catch, and the rejection log could not
+    // show it either: nothing that is not a suspect can be reported as one.
+    //
+    // Forty steady tones, every one far louder than the ring when it appears.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 1000.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        std::array<double, 40> clutter {};
+        double ring = 0.0;
+        bool fired = false; float firedAt = 0.0f; double firedMs = 0.0;
+
+        for (int b = 0; b < (int) (4.0 * kSR / block) && ! fired; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                double v = 0.05 * std::sin (2.0 * M_PI * 100.0 * t);
+                for (size_t c = 0; c < clutter.size(); ++c)
+                {
+                    const double f = 1200.0 + 190.0 * (double) c;   // all below the ring
+                    clutter[c] += 2.0 * M_PI * f / kSR;
+                    v += 0.0016 * std::sin (clutter[c]);            // ~ -56 dB each
+                }
+                ring += 2.0 * M_PI * 10594.0 / kSR;
+                v += juce::jmin (0.0000025 * std::pow (10.0, 33.0 * t / 20.0), 0.007)
+                     * std::sin (ring);
+                buf[(size_t) i] = (float) (v + noise (0.00002));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+                if (! fired && std::abs (ev.freq - 10594.0f) < 120.0f)
+                { fired = true; firedAt = ev.levelDb; firedMs = (double)(b*block)/kSR*1000.0; }
+        }
+        std::snprintf (msg, sizeof msg, fired ? "caught at %.1f dB after %.0f ms" : "NEVER caught",
+                       firedAt, firedMs);
+        // It must be caught as it crosses the action threshold, not 30 dB later.
+        report ("T25 a quiet ring is seen through a table full of louder tones",
+                fired && firedAt <= -65.0f, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

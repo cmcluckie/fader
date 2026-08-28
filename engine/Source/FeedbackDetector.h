@@ -105,7 +105,11 @@ public:
     static constexpr int fftSize   = 1 << fftOrder;
     static constexpr int numBins   = fftSize / 2;
     static constexpr int hopSize   = fftSize / 8;     // 256 -> ~5.3 ms between frames
-    static constexpr int maxSuspects = 24;
+    // One slot per peak the frame can offer. It was 24 against maxPeaks of 48, so
+    // a busy rig kept the table permanently full - and a full table is not a
+    // graceful degradation, it is blindness: see track() for what a newcomer had to
+    // do to get in. Each slot is a frequency/level history, ~1 KB.
+    static constexpr int maxSuspects = 64;
     static constexpr int maxPeaks    = 48;   // prominent peaks kept per frame
     static constexpr int eventQueueSize = 16;
 
@@ -674,20 +678,35 @@ private:
         for (auto& s : suspects)
             if (! s.active) { slot = &s; break; }
 
-        // With every slot taken this used to return silently, so a peak arriving
-        // into a full table was never tracked at all - and peaks are offered in
-        // ascending frequency order, so persistent low clutter would hold the
-        // table and a new ring above it could stay invisible for as long as the
-        // clutter lasted. Take the quietest un-fired suspect instead: something
-        // already reported is doing real work, and the loudest of the rest is the
-        // likelier ring. Not the proven cause of any miss seen at the rig, but a
-        // way to go blind that should not exist.
+        // A full table used to mean the newcomer had to be LOUDER than something
+        // already tracked to get a slot at all. That is exactly backwards for
+        // feedback, which arrives quiet and becomes loud: a ring emerging at -93 dB
+        // into a table of -70 dB tones evicted nothing and was dropped, every
+        // frame, until it had grown loud enough to displace someone.
+        //
+        // Measured at the rig on a marked miss: a 10.6 kHz ring climbed 50 dB in
+        // 1.5 s and was first seen at -43 dB, right at the top, having been audible
+        // and visible on the meter for two seconds. It was not rejected by a gate -
+        // it was never tracked. The rejection log could not show this either, since
+        // nothing that is not a suspect can be reported as one.
+        //
+        // Evict on staleness, not on level. A suspect nobody has seen for a few
+        // frames is finished; a quiet newcomer might be the next ring.
         if (slot == nullptr)
         {
-            float weakest = levelDb;
+            int stalest = 0;
             for (auto& s : suspects)
-                if (! s.reported && s.lastLevel < weakest) { weakest = s.lastLevel; slot = &s; }
-            if (slot == nullptr) return;    // everything here outranks the newcomer
+                if (! s.reported && s.missed >= stalest) { stalest = s.missed; slot = &s; }
+
+            // Still nothing? Take the quietest un-fired suspect regardless of how
+            // it compares to the newcomer - being new is not a reason to lose.
+            if (slot == nullptr)
+            {
+                float weakest = 1.0e9f;
+                for (auto& s : suspects)
+                    if (! s.reported && s.lastLevel < weakest) { weakest = s.lastLevel; slot = &s; }
+            }
+            if (slot == nullptr) return;    // every slot is already reporting
         }
 
         *slot = Suspect{};
