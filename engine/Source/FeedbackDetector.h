@@ -638,7 +638,19 @@ private:
                 // bleed away underneath a tone that is still present).
                 ++s.sinceReport;
                 const bool climbing  = s.sinceReport >= 3  && s.lastLevel - s.reportLevel >= 1.0f;
-                const bool surviving = s.sinceReport >= 24;                 // ~250 ms
+                // "Still there" is not news. Analysis runs PRE-notch, so a tone the
+                // filter is holding down perfectly still reads at full strength
+                // here - "surviving" is therefore true for as long as the room has
+                // the resonance, which is forever. Re-firing on it refreshed the
+                // notch's hold every 250 ms, so the release timer never elapsed and
+                // the filter stood at full depth permanently: 97.3% of notch
+                // samples pinned at target, 0.1% ever releasing, and a guard that
+                // muffled the vocal with nothing ringing.
+                //
+                // If the notch is genuinely not enough, the tone climbs again and
+                // `climbing` says so. That is the informative signal; mere presence
+                // is not.
+                const bool surviving = false;
                 if (climbing || surviving)
                 {
                     s.reportLevel = s.lastLevel;
