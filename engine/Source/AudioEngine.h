@@ -182,21 +182,46 @@ public:
             bank.hardCapDb   = softCap;
             bank.holdSeconds = (double) releaseSeconds.load();
 
-            det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
-
-            FeedbackDetector::Reject rj;
-            while (det.popReject (rj))
-                pushReject ({ ch, rj.freq, rj.levelDb, rj.reason, rj.frames });
-
-            FeedbackDetector::Event ev;
-            while (det.popEvent (ev))
+            // Bypass means STOP, not "carry on but do not apply it".
+            //
+            // Detection used to run here regardless, so while the guard was off the
+            // bank kept placing filters and - because nothing was being suppressed,
+            // so nothing ever stopped growing - kept escalating every one of them to
+            // maximum. Switching back on then dropped that entire accumulated bank
+            // onto the vocal at once, and the longer it had been off the worse it
+            // was. Reported exactly that way from the rig: fine, better with it off,
+            // then "REALLY bad" on the way back in.
+            //
+            // Stop analysing and stop triggering. Release still runs, so with
+            // nothing refreshing them the filters bleed off and retire while the
+            // guard is off - which is what you want on the way back in: the longer
+            // it has been off, the CLEANER the return, rather than the worse.
+            if (bypass)
             {
-                bank.trigger (ev.freq, elapsed, ev.growing);  // bank owns depth; growth earns the hard cap
-                pushEvent ({ ch, ev.freq, ev.levelDb });   // C# logs + displays it
+                if (! wasBypassed) wasBypassed = true;
+                bank.process (out, numSamples, true);
             }
+            else
+            {
+                // The window is stale after a bypass; refilling it from a join would
+                // read as every tone in the room arriving at once.
+                if (wasBypassed) { det.resetAnalysis(); wasBypassed = false; }
 
-            // Bypassed: notch state still tracks, the audio just isn't filtered.
-            bank.process (out, numSamples, bypass);
+                det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
+
+                FeedbackDetector::Reject rj;
+                while (det.popReject (rj))
+                    pushReject ({ ch, rj.freq, rj.levelDb, rj.reason, rj.frames });
+
+                FeedbackDetector::Event ev;
+                while (det.popEvent (ev))
+                {
+                    bank.trigger (ev.freq, elapsed, ev.growing);  // bank owns depth
+                    pushEvent ({ ch, ev.freq, ev.levelDb });      // C# logs + displays it
+                }
+
+                bank.process (out, numSamples, false);
+            }
         }
 
         // Diagnostic override, applied last so it replaces whatever the slot wrote.
@@ -292,6 +317,7 @@ private:
     // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs
 // deeper cuts that stay put, not shallow ones that bleed out in 2 s.
     std::atomic<float> maxCutDb { -24.0f }, notchQ { 25.0f }, releaseSeconds { 10.0f };
+    bool wasBypassed = false;
     std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };

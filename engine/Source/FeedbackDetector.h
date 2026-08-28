@@ -130,6 +130,16 @@ public:
     void setParams (const Params& p) noexcept { params = p; }
 
     /** Feed one block. Analysis fires internally every hopSize samples. */
+    /// Discard the analysis window and wait for it to refill with real audio.
+    /// Used when the signal has been away - after a bypass, say - so the join is
+    /// not read as every tone in the room exploding out of silence at once.
+    void resetAnalysis() noexcept
+    {
+        samplesSeen  = 0;
+        hasPrevFrame = false;
+        for (auto& s : suspects) s = Suspect{};
+    }
+
     void push (const float* data, int numSamples) noexcept
     {
         for (int n = 0; n < numSamples; ++n)
