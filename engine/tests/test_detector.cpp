@@ -212,12 +212,17 @@ int main()
         report ("T5  loud broadband noise is NOT detected", ! r.fired, msg);
     }
 
-    // ---- T6: below the input gate, stay asleep ----------------------------
+    // ---- T6: a dead input produces nothing --------------------------------
+    // The input gate used to sit at -55 dB and was described as "below the input
+    // gate, stay asleep". That was too high by 35 dB and made the detector deaf
+    // through quiet passages - see T27, which is a ring it missed for a full second
+    // for exactly that reason. The gate now only catches a dead input, so this
+    // tests what it is actually for.
     {
         fk::FeedbackDetector det; init (det);
-        auto r = runTone (det, 2.0, [] (double) { return std::make_pair (5000.0, 0.0004); }, 0.0);
+        auto r = runTone (det, 2.0, [] (double) { return std::make_pair (5000.0, 0.0000004); }, 0.0);
         std::snprintf (msg, sizeof msg, "detections=%d", r.count);
-        report ("T6  ring below the input gate is ignored", ! r.fired, msg);
+        report ("T6  a dead input produces nothing", ! r.fired, msg);
     }
 
     // ---- T7: outside the listen band, stay out ----------------------------
@@ -845,6 +850,49 @@ int main()
         // It must be caught as it crosses the action threshold, not 30 dB later.
         report ("T25 a quiet ring is seen through a table full of louder tones",
                 fired && firedAt <= -65.0f, msg);
+    }
+
+    // ---- (no T26) -----------------------------------------------------------
+    // There was a test here for the peak list filling up: collection scans from the
+    // low edge upward, and dropping newcomers once full keeps the N lowest peaks
+    // and discards everything above them regardless of prominence. The code change
+    // stands - the list now evicts its least prominent entry - but the test could
+    // not be made to fail on the old rule, because 120 packed tones only ever
+    // produced 8 prominent peaks against a list of 96: they raise each other's
+    // local median and stop qualifying. A test that passes either way proves
+    // nothing, so it is gone rather than sitting here looking like cover.
+    //
+    // Whether the rig ever fills that list is still unmeasured. It was NOT the
+    // cause of either marked miss - see T25 and T27 for what actually was.
+
+    // ---- T27: a ring building in a QUIET channel ---------------------------
+    // The marked miss this comes from. A 7 kHz ring, 33 dB prominent from the
+    // moment it appeared, climbing 25 dB/s in a channel that was otherwise nearly
+    // silent - local median -114 dB. It was ignored for a full second while it
+    // gained 24 dB, then detected at -45 dB, by which point it was audible across
+    // the room and had been visible on the meter throughout.
+    //
+    // Nothing rejected it. The broadband input gate sat at -55 dB, so while the
+    // CHANNEL was quiet the detector never looked at all, however prominent the
+    // ring. It opened only when the ring itself dragged the channel past -55.
+    // Feedback starts in the quiet moments; a broadband gate is deaf exactly then.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 2468.0f;    // the rig's own settings
+        fk::FeedbackDetector det; init (det, p);
+
+        // No gate-keeper tone: the channel is quiet apart from the ring, which is
+        // the whole point. It climbs at the measured 25 dB/s.
+        auto r = runTone (det, 5.0, [] (double t) {
+            return std::make_pair (7031.0, juce::jmin (0.000004 * std::pow (10.0, 25.0 * t / 20.0),
+                                                       0.006));
+        }, 0.0000025, 0.0);
+
+        std::snprintf (msg, sizeof msg, r.fired ? "caught at %.1f dB after %.0f ms" : "NEVER caught",
+                       r.firstLevelDb, r.firstSeconds * 1000.0);
+        // Caught as it crosses the action threshold, not 30 dB later.
+        report ("T27 a ring in a quiet channel is not ignored",
+                r.fired && r.firstLevelDb <= -65.0f, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);

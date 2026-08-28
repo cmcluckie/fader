@@ -47,7 +47,20 @@ public:
         // every filter was spent on something inaudible, and the pile of them was
         // not. Track from the floor; only act once it is worth acting on.
         float  actionDb       = -75.0f;
-        float  inputGateDb    = -55.0f; // skip detection when broadband input is below this
+        // Only true silence, not "quiet". This was -55 dB, meant to stop the
+        // detector chasing noise between songs, and it is the reason rings took so
+        // long to find: a marked miss at 7 kHz was 33 dB prominent and climbing
+        // steadily for a full second - 24 dB of it - with the detector not even
+        // looking, because the CHANNEL was quiet. It only opened when the ring
+        // itself dragged the channel past -55, by which time it was -45 dB and
+        // audible across the room.
+        //
+        // Feedback starts in the quiet moments. A broadband gate is deaf exactly
+        // then, and it was never needed: noise is not prominent, so the prominence
+        // test already rejects it, and actionDb already refuses to spend a filter
+        // on anything inaudible. Both are per-bin, which is the right shape for
+        // this question. This now only stops a dead input.
+        float  inputGateDb    = -90.0f;
         float  minFreq        = 200.0f; // low edge of the watched band
         float  maxFreq        = 16000.0f; // high edge; still clamped to Nyquist by bin count
 
@@ -110,7 +123,10 @@ public:
     // graceful degradation, it is blindness: see track() for what a newcomer had to
     // do to get in. Each slot is a frequency/level history, ~1 KB.
     static constexpr int maxSuspects = 64;
-    static constexpr int maxPeaks    = 48;   // prominent peaks kept per frame
+    // Peaks kept per analysis frame. A live stage in a wide listen band offers
+    // more than this, so what happens when the list fills is not a detail - see
+    // the collection loop.
+    static constexpr int maxPeaks    = 96;
     static constexpr int eventQueueSize = 16;
 
     FeedbackDetector() : fft (fftOrder),
@@ -279,15 +295,45 @@ private:
 
                 const float freq = refineFrequency (i, here);
 
+                const float prom = here - localFloor;
+
                 if (peakCount < maxPeaks)
                 {
                     peakFreq[(size_t) peakCount]  = freq;
                     peakLevel[(size_t) peakCount] = here;
-                    peakProm[(size_t) peakCount]  = here - localFloor;
+                    peakProm[(size_t) peakCount]  = prom;
                     ++peakCount;
+                }
+                else
+                {
+                    // The list is full. This scan runs from firstBin UPWARD, so
+                    // simply dropping the newcomer keeps the 48 lowest peaks and
+                    // silently discards everything above them - a frequency
+                    // guillotine, not a prominence one. Measured at the rig: a
+                    // 7 kHz ring in a band starting at 2.5 kHz, climbing 36 dB and
+                    // plainly audible, never entered the peak list at all, so it
+                    // could not become a suspect, so no gate ever saw it and no
+                    // rejection could be logged for it. Raising the suspect table
+                    // did nothing, because the peak never got that far.
+                    //
+                    // Keep the most prominent instead. A ring is by definition one
+                    // of the most prominent things in the spectrum; the rank it
+                    // must win is that one, not an accident of frequency order.
+                    int weakest = 0;
+                    for (int j = 1; j < maxPeaks; ++j)
+                        if (peakProm[(size_t) j] < peakProm[(size_t) weakest]) weakest = j;
+
+                    if (prom > peakProm[(size_t) weakest])
+                    {
+                        peakFreq[(size_t) weakest]  = freq;
+                        peakLevel[(size_t) weakest] = here;
+                        peakProm[(size_t) weakest]  = prom;
+                    }
                 }
             }
         }
+
+        if (peakCount > maxSeenPeaks) maxSeenPeaks = peakCount;
 
         // §4.4 harmonic guard, judged between PEAKS.
         //
@@ -771,6 +817,11 @@ private:
 
     std::array<float, maxPeaks> peakFreq {}, peakLevel {}, peakProm {};
     int peakCount = 0;
+public:
+    mutable int maxSeenPeaks = 0;
+private:
+public:
+
 
     std::array<Suspect, maxSuspects> suspects {};
     std::array<Event, eventQueueSize> events {};
