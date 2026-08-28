@@ -52,6 +52,7 @@ struct NotchSlot
     bool   locked   = false;   // never auto-released or auto-deepened
     bool   manual   = false;   // placed by hand rather than detected
     double freq     = 1000.0;
+    double originHz = 0.0;     // where it was placed; tracking may not ratchet away from this
     double q        = 40.0;
     double targetDb = 0.0;     // negative
     double currentDb= 0.0;     // smoothed toward targetDb
@@ -117,7 +118,25 @@ public:
                 // mode was measured drifting 460 Hz - and a filter this narrow
                 // slides off a peak that moves even a little. Without this, a notch
                 // can sit at its deepest cut while the ring grows beside it.
-                s.freq += (f - s.freq) * freqTrack;
+                //
+                // But tracking has to be anchored, or it RATCHETS: the merge window
+                // travels with the filter, so a tone at the edge pulls the notch part
+                // of the way over, which opens a fresh window further out, and the
+                // filter random-walks across the spectrum dragged by whatever knocked
+                // last. Measured at the rig: notches wandering 650-900 Hz, more than
+                // twice their own bandwidth at Q25, ending up covering neither the
+                // ring they were placed for nor the one that pulled them away. One
+                // was caught sliding 275 Hz off a ring that then climbed 28 dB
+                // through the gap while the abandoned filter released.
+                //
+                // Follow drift up to half a bandwidth from where it was placed, and
+                // no further. A tone beyond that is a different tone and deserves its
+                // own filter - which, with 48 of them, it can have.
+                // Measured from the anchor, not the current centre: a leash that
+                // grows as the notch moves is a slower ratchet, not a limit.
+                const double leash = std::max (10.0, s.originHz / (2.0 * defaultQ));
+                s.freq = std::clamp (s.freq + (f - s.freq) * freqTrack,
+                                     s.originHz - leash, s.originHz + leash);
 
                 // deepen a step; allow the hard cap only once we are already at the
                 // soft cap and the tone is still knocking (spec §5).
@@ -138,6 +157,7 @@ public:
         s = NotchSlot{};
         s.active   = true;
         s.freq     = f;
+        s.originHz = f;
         s.q        = defaultQ;
         s.targetDb = openDb;
         s.currentDb= 0.0;
@@ -160,6 +180,7 @@ public:
         s.locked   = true;
         s.manual   = true;
         s.freq     = f;
+        s.originHz = f;
         s.q        = defaultQ;
         s.targetDb = depthDb;
         s.currentDb= 0.0;
@@ -264,8 +285,13 @@ public:
         double bestErr = window;
         for (int i = 0; i < MaxNotches; ++i)
         {
-            if (! slots[(size_t) i].active) continue;
-            const double err = std::abs (slots[(size_t) i].freq - f);
+            const auto& s = slots[(size_t) i];
+            if (! s.active) continue;
+            // Must be near the filter AND reachable from its anchor. Merging onto a
+            // tone the notch is leashed away from would deepen a filter that cannot
+            // move to cover it - the exact failure this window exists to prevent.
+            if (std::abs (s.originHz - f) > 2.0 * window) continue;
+            const double err = std::abs (s.freq - f);
             if (err < bestErr) { bestErr = err; best = i; }
         }
         return best;

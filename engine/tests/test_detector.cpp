@@ -636,6 +636,39 @@ int main()
         report ("T19 30 simultaneous resonances all get a filter", active == 30, msg);
     }
 
+    // ---- T20: a notch may follow a drifting tone, but may not ratchet ------
+    // The merge window travels with the filter, so before this a tone at the edge
+    // of the window pulled the notch part of the way over, which opened a fresh
+    // window further out, and the filter random-walked across the spectrum dragged
+    // by whatever knocked last. Measured at the rig: notches wandering 650-900 Hz,
+    // more than twice their own bandwidth at Q25. One slid 275 Hz off a ring that
+    // then climbed 28 dB through the gap while the abandoned filter released.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        // Walk a tone steadily upward, well past the filter's bandwidth, hitting
+        // the bank at every step - the ratchet's ideal food.
+        double t = 0.0;
+        for (int i = 0; i < 120; ++i, t += 0.02) bank.trigger (10000.0 + 8.0 * i, t);
+
+        // The notch placed at 10 kHz must still be within half a bandwidth of it.
+        const double leash = 10000.0 / (2.0 * 25.0);     // ~200 Hz
+        double anchored = 1.0e9;
+        int active = 0;
+        for (int i = 0; i < 48; ++i)
+        {
+            const auto& s = bank.getSlot (i);
+            if (! s.active) continue;
+            ++active;
+            anchored = juce::jmin (anchored, std::abs (s.freq - 10000.0));
+        }
+        std::snprintf (msg, sizeof msg, "tone swept 10000->10952 Hz: %d filters, nearest sits %.0f Hz from 10 kHz",
+                       active, anchored);
+        report ("T20 a notch never ratchets past half a bandwidth", anchored <= leash + 1.0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
