@@ -669,6 +669,51 @@ int main()
         report ("T20 a notch never ratchets past half a bandwidth", anchored <= leash + 1.0, msg);
     }
 
+    // ---- T21: a deep notch must not be a wide notch ------------------------
+    // A peaking EQ's shape is fixed by Q, so deepening it drags the skirts down.
+    // At 5 kHz with Q=25 a -6 dB notch is 428 Hz wide at its -1 dB points and a
+    // -24 dB one is 1449 Hz - each deep filter doing audible damage across more
+    // than a kilohertz. Measured at the rig with dozens live, the skirts summed to
+    // -13 dB of average cut above 4 kHz, which is a shelf, not a set of notches.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        // RBJ peaking-EQ magnitude, evaluated directly so the test does not depend
+        // on the filter object's internals.
+        auto respDb = [] (double fq, double f0, double cutDb, double q)
+        {
+            const double A = std::pow (10.0, cutDb / 40.0);
+            const double w = 2.0 * M_PI * f0 / kSR, a = std::sin (w) / (2.0 * q);
+            const double W = 2.0 * M_PI * fq / kSR;
+            auto mag = [W] (double c0, double c1, double c2)
+            {
+                const double re = c0 + c1 * std::cos (W) + c2 * std::cos (2.0 * W);
+                const double im = -(c1 * std::sin (W) + c2 * std::sin (2.0 * W));
+                return std::sqrt (re * re + im * im);
+            };
+            const double num = mag (1.0 + a * A, -2.0 * std::cos (w), 1.0 - a * A);
+            const double den = mag (1.0 + a / A, -2.0 * std::cos (w), 1.0 - a / A);
+            return 20.0 * std::log10 (std::max (num / den, 1.0e-12));
+        };
+
+        auto widthAt = [&] (double cutDb)
+        {
+            const double q = fk::NotchBank<48>::qForDepth (25.0, cutDb);
+            double lo = 5000.0, hi = 5000.0;
+            while (lo > 500.0   && respDb (lo, 5000.0, cutDb, q) < -1.0) lo -= 1.0;
+            while (hi < 15000.0 && respDb (hi, 5000.0, cutDb, q) < -1.0) hi += 1.0;
+            return hi - lo;
+        };
+
+        const double w6 = widthAt (-6.0), w24 = widthAt (-24.0);
+        // Four times the depth must not mean four times the damage.
+        std::snprintf (msg, sizeof msg, "-6 dB spans %.0f Hz, -24 dB spans %.0f Hz (%.1fx)",
+                       w6, w24, w24 / w6);
+        report ("T21 a 4x deeper notch is not 4x wider", w24 < 3.0 * w6, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

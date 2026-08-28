@@ -99,8 +99,6 @@ private:
         else if (name == "releaseSeconds") engine.setReleaseSeconds (v);
         else if (name == "prominenceDb")   engine.setProminenceDb (v);
         else if (name == "persistFrames")  engine.setPersistFrames ((int) v);
-        else if (name == "pitchTolerance") engine.setPitchTolerance (v);
-        else if (name == "harmonicDb")     engine.setHarmonicDb (v);
         else if (name == "floorDb")        engine.setFloorDb (v);
         else if (name == "minFreq")        engine.setMinFreq (v);
         else if (name == "maxFreq")        engine.setMaxFreq (v);

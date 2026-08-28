@@ -68,8 +68,6 @@ public:
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
     void setProminenceDb (float v) noexcept  { prominenceDb.store (v); }
     void setPersistFrames (int v) noexcept   { persistFrames.store (v); }
-    void setPitchTolerance (float v) noexcept{ pitchTolerance.store (v); }
-    void setHarmonicDb (float v) noexcept    { harmonicDb.store (v); }
     void setFloorDb (float v) noexcept       { floorDb.store (v); }
     void setMinFreq (float v) noexcept       { minFreq.store (v); }
     void setMaxFreq (float v) noexcept       { maxFreq.store (v); }
@@ -141,8 +139,6 @@ public:
         FeedbackDetector::Params p;
         p.prominenceDb   = prominenceDb.load();
         p.persistFrames  = persistFrames.load();
-        p.pitchTolerance = pitchTolerance.load();
-        p.harmonicDb     = harmonicDb.load();
         p.floorDb        = floorDb.load();
         p.minFreq        = minFreq.load();
         p.maxFreq        = maxFreq.load();
@@ -220,7 +216,7 @@ public:
                 {
                     const double step = 2.0 * juce::MathConstants<double>::pi * tone / sr;
                     double p = tonePhase;
-                    for (int n = 0; n < numSamples; ++n) { out[n] = 0.2f * (float) std::sin (p); p += step; }
+                    for (int k = 0; k < numSamples; ++k) { out[k] = 0.2f * (float) std::sin (p); p += step; }
                     if (ch == active - 1) tonePhase = std::fmod (p, 2.0 * juce::MathConstants<double>::pi);
                 }
             }
@@ -296,7 +292,7 @@ private:
     // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs
 // deeper cuts that stay put, not shallow ones that bleed out in 2 s.
     std::atomic<float> maxCutDb { -24.0f }, notchQ { 25.0f }, releaseSeconds { 10.0f };
-    std::atomic<float> prominenceDb { 12.0f }, pitchTolerance { 0.006f }, harmonicDb { 20.0f }, floorDb { -70.0f };
+    std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
     std::atomic<float> initialCut { -12.0f };

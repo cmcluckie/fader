@@ -35,13 +35,11 @@ public:
         float  growthDb       = 3.0f;   // required rise expressed per 100 ms (loop gain > 1);
                                         // scaled to the real window so the threshold does
                                         // not silently change when the hop size does
-        float  harmonicDb     = 20.0f;  // energy at 2f/3f within this of f => musical
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
         float  inputGateDb    = -55.0f; // skip detection when broadband input is below this
         float  minFreq        = 200.0f; // low edge of the watched band
         float  maxFreq        = 16000.0f; // high edge; still clamped to Nyquist by bin count
-        float  pitchTolerance = 0.006f; // (retained for compatibility; superseded by stabilityHz)
 
         // A sung harmonic is prominent, steady and growing - it passes every test
         // feedback does. These three separate them.
@@ -147,7 +145,6 @@ public:
         return publishedMag[(size_t) bin].load (std::memory_order_relaxed);
     }
 
-    float binToHz (int bin) const noexcept { return bin * binHz; }
     float getBinHz() const noexcept        { return binHz; }
 
 private:
@@ -401,27 +398,6 @@ private:
         return depth  >= params.vibratoDepth
             && rateHz >= params.vibratoMinHz
             && rateHz <= params.vibratoMaxHz;
-    }
-
-    /** True if this looks like part of a harmonic series rather than a lone tone. */
-    bool hasHarmonicSupport (float f, float levelDb) const noexcept
-    {
-        auto levelAt = [this] (float hz) -> float
-        {
-            const int b = (int) std::round (hz / binHz);
-            if (b < 1 || b >= numBins - 1) return -120.0f;
-            return juce::jmax (mag[(size_t) (b - 1)], juce::jmax (mag[(size_t) b], mag[(size_t) (b + 1)]));
-        };
-
-        // upward: is there a partial at 2f or 3f close behind it?
-        if (levelAt (f * 2.0f) > levelDb - params.harmonicDb) return true;
-        if (levelAt (f * 3.0f) > levelDb - params.harmonicDb) return true;
-
-        // downward: are we ourselves the 2nd or 3rd partial of something louder?
-        if (levelAt (f * 0.5f)        > levelDb - params.harmonicDb) return true;
-        if (levelAt (f * (1.0f/3.0f)) > levelDb - params.harmonicDb) return true;
-
-        return false;
     }
 
     /**

@@ -237,6 +237,28 @@ public:
         for (auto& s : slots) if (s.active) s.locked = true;
     }
 
+    /**
+        Q that holds the audible width roughly constant as the cut deepens.
+
+        A peaking EQ's SHAPE is fixed by Q, so pushing it deeper drags the skirts
+        down with it. Measured at 5 kHz, Q=25: a -6 dB notch is 428 Hz wide at the
+        -1 dB points, a -24 dB notch is 1449 Hz and a -30 dB one is 2043 Hz. The
+        deep cuts are therefore doing audible damage across more than a kilohertz
+        each, and with dozens live their skirts sum - the rig was measured applying
+        -13 dB of average cut above 4 kHz, which is not a set of notches any more,
+        it is a shelf.
+
+        Scaling Q with depth keeps the ring just as suppressed while shrinking what
+        goes with it. Deliberately conservative: never below the configured Q, so
+        this can only ever narrow a filter, never widen one. Shallow cuts are left
+        exactly as they were; only the deep ones, which are the ones doing the
+        damage, get tightened.
+    */
+    static double qForDepth (double baseQ, double cutDb) noexcept
+    {
+        return baseQ * std::max (1.0, std::abs (cutDb) / 18.0);
+    }
+
     /** Smooth gains, refresh coefficients, filter in place. */
     void process (float* data, int numSamples, bool bypassAudio) noexcept
     {
@@ -250,7 +272,7 @@ public:
             s.currentDb += (target - s.currentDb) * coeff;
 
             if (std::abs (s.currentDb) < 0.01) filters[i].setBypass();
-            else                               filters[i].setPeaking (fs, s.freq, s.q, s.currentDb);
+            else                               filters[i].setPeaking (fs, s.freq, qForDepth (s.q, s.currentDb), s.currentDb);
         }
 
         if (bypassAudio) return;
@@ -267,10 +289,6 @@ public:
 
     NotchSlot  getSlot (int i) const noexcept { return slots[(size_t) i]; }
     NotchSlot& slotRef  (int i)       noexcept { return slots[(size_t) i]; }
-    int  activeCount() const noexcept
-    {
-        int c = 0; for (auto& s : slots) if (s.active) ++c; return c;
-    }
 
     /** Index of the active notch within `tolOctaves` of f, closest first, or -1. */
     int findNear (double f) const noexcept
