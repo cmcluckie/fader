@@ -240,9 +240,9 @@ public:
                 else
                 {
                     const double step = 2.0 * juce::MathConstants<double>::pi * tone / sr;
-                    double p = tonePhase;
-                    for (int k = 0; k < numSamples; ++k) { out[k] = 0.2f * (float) std::sin (p); p += step; }
-                    if (ch == active - 1) tonePhase = std::fmod (p, 2.0 * juce::MathConstants<double>::pi);
+                    double ph = tonePhase;
+                    for (int k = 0; k < numSamples; ++k) { out[k] = 0.2f * (float) std::sin (ph); ph += step; }
+                    if (ch == active - 1) tonePhase = std::fmod (ph, 2.0 * juce::MathConstants<double>::pi);
                 }
             }
         }
