@@ -639,6 +639,10 @@ int main()
         fk::NotchBank<48> bank;
         bank.prepare (kSR, 64);
         bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+        // This tests POOL CAPACITY, so the stacking budget is off: with it on, 30
+        // filters 450 Hz apart are refused on purpose - overlapping that heavily is
+        // a high-cut, which is T29's subject, not this one.
+        bank.budgetDb = 0.0;
 
         // 30 distinct resonances, as a real room presents.
         double t = 0.0;
@@ -962,6 +966,61 @@ int main()
         else
             std::snprintf (msg, sizeof msg, "%d/%d caught, MISSED %s Hz", caught, total, missed.c_str());
         report ("T28 the studio's low-end rings are all caught", caught == total && worst <= 10.0, msg);
+    }
+
+    // ---- T29: the guard may not turn into a high-cut filter -----------------
+    // Measured live: 22 filters spanning 3.8-16 kHz, twelve of them at the -24 dB
+    // cap, summing to -13.6 dB average across the top end and -28 dB at 6 kHz. The
+    // least attenuated point up there was still down 5.6 dB. Every single one of
+    // those filters was individually a correct decision - the room really was
+    // ringing at all of them. Together they are a savage high-cut, and it sounded
+    // like one.
+    //
+    // A system ringing across its entire top end needs less gain. No amount of EQ
+    // fixes that; it only trades howl for dullness. The guard now refuses to keep
+    // stacking cut in one region, so that trade is the user's to make.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        // Hammer a whole region, as a rig on the edge everywhere would.
+        double t = 0.0;
+        for (int round = 0; round < 8; ++round)
+            for (int i = 0; i < 22; ++i, t += 0.01)
+                bank.trigger (3800.0 + 560.0 * i, t);
+
+        // Sum the real response across the region it was told to destroy.
+        auto respDb = [] (double fq, double f0, double cutDb, double qq)
+        {
+            const double A = std::pow (10.0, cutDb / 40.0);
+            const double w = 2.0 * M_PI * f0 / kSR, a = std::sin (w) / (2.0 * qq);
+            const double W = 2.0 * M_PI * fq / kSR;
+            auto mag = [W] (double c0, double c1, double c2)
+            {
+                const double re = c0 + c1 * std::cos (W) + c2 * std::cos (2.0 * W);
+                const double im = -(c1 * std::sin (W) + c2 * std::sin (2.0 * W));
+                return std::sqrt (re * re + im * im);
+            };
+            return 20.0 * std::log10 (std::max (mag (1.0 + a * A, -2.0 * std::cos (w), 1.0 - a * A)
+                                              / mag (1.0 + a / A, -2.0 * std::cos (w), 1.0 - a / A), 1.0e-12));
+        };
+
+        double worst = 0.0, sum = 0.0; int n = 0;
+        for (double f = 3800.0; f <= 16000.0; f *= 1.02)
+        {
+            double tot = 0.0;
+            for (int i = 0; i < 48; ++i)
+            {
+                const auto& sl = bank.getSlot (i);
+                if (sl.active) tot += respDb (f, sl.freq, sl.targetDb,
+                                              fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+            }
+            worst = std::min (worst, tot); sum += tot; ++n;
+        }
+        std::snprintf (msg, sizeof msg, "top end averages %.1f dB, worst point %.1f dB",
+                       sum / n, worst);
+        report ("T29 stacked notches cannot become a high-cut", sum / n >= -10.0, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);

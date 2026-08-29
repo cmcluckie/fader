@@ -107,7 +107,27 @@ public:
     */
     int trigger (double f, double nowSeconds, bool growing = true) noexcept
     {
+        // A budget on how much cut may pile up in one region.
+        //
+        // Without it the guard will answer every ring it finds, and if the system
+        // is ringing everywhere it answers everywhere: measured live, 22 filters
+        // spanning 3.8-16 kHz, twelve at the cap, summing to -13.6 dB average
+        // across the top end and -28 dB at 6 kHz. Individually every one of those
+        // was a correct decision. Together they are a high-cut filter, and it
+        // sounded like one.
+        //
+        // Past the budget the answer is not another filter. A system ringing
+        // across its whole top end needs less gain, and no amount of EQ fixes that
+        // - it only trades howl for dullness. Refusing here makes that trade the
+        // user's to make rather than one the guard makes silently.
         const int existing = findNear (f);
+
+        // The budget limits STACKING, not depth: a lone ring must still be allowed
+        // its full cut, so the filter that would handle this frequency is excluded
+        // from its own budget check. Otherwise a notch blocks its own escalation,
+        // which T10 caught - it stopped at -12 dB instead of reaching the cap.
+        if (budgetDb < 0.0 && neighbourhoodCutDb (f, existing) <= budgetDb)
+            return -1;
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
@@ -336,9 +356,41 @@ public:
     double retireDb       = -1.0;    // shallower than this -> drop the notch
     double minReleaseGap  = 0.5;     // min seconds between release steps
 
+    // Most cut allowed to accumulate in any one region of the spectrum. 0 = no
+    // limit. Bounds how dull the guard is permitted to make things.
+    double budgetDb       = -12.0;
+
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 
 private:
+    /** Roughly how much cut is already sitting on this part of the spectrum.
+        Cheap approximation - overlap weighted linearly by distance in bandwidths -
+        because this runs on the audio thread and the exact biquad sum is not worth
+        it for a budget check. */
+    double neighbourhoodCutDb (double f, int skip) const noexcept
+    {
+        double total = 0.0;
+        for (int i = 0; i < MaxNotches; ++i)
+        {
+            if (i == skip) continue;        // the filter that will handle f itself
+            const auto& s = slots[(size_t) i];
+            if (! s.active) continue;
+            // Six bandwidths, not one. The nominal f/Q understates what a deep
+            // notch actually does to its surroundings by a wide margin - T21
+            // measured a -24 dB filter spanning 1449 Hz between its -1 dB points
+            // at 5 kHz, against a nominal bandwidth of 200. Sizing the budget's
+            // window on the nominal figure meant filters 560 Hz apart counted as
+            // not overlapping at all, when in truth they overlap almost entirely.
+            const double bw = std::max (10.0, s.freq / defaultQ);
+            const double d  = std::abs (s.freq - f) / (6.0 * bw);
+            // targetDb, not currentDb: the smoothed value lags behind by the
+            // attack time, so a budget read from it lets a burst of triggers all
+            // pass the check before any of them has taken effect.
+            if (d < 1.0) total += s.targetDb * (1.0 - d);
+        }
+        return total;
+    }
+
     int findFree() const noexcept
     {
         for (int i = 0; i < MaxNotches; ++i) if (! slots[(size_t) i].active) return i;
