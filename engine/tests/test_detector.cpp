@@ -895,6 +895,75 @@ int main()
                 r.fired && r.firstLevelDb <= -65.0f, msg);
     }
 
+    // ---- T28: the low-end rings from the studio, replayed -------------------
+    // Wednesday 2026-08-26: "a whole bunch of really low feedback, killing me the
+    // entire night - all the high feedback was gone, but none of that."
+    //
+    // The reason none of it was caught is not subtle. minHz was 1320 Hz that
+    // night, so everything below was outside the search band and the detector
+    // never looked: the loudest thing under 2 kHz was 656 Hz at -17.8 dB, and only
+    // 1 detection in 200 was below 2 kHz. But the band being wrong is no reason to
+    // assume the detector would have coped, so these are measured from that night
+    // and checked properly: 20 distinct frequencies from 281 Hz to 2438 Hz, median
+    // 39.5 dB/s, peaks reaching -20 dB.
+    //
+    // These sit in the voice band, where the detector waits ~300 ms and tests for
+    // vibrato before it will fire, so this is the case that has to work without
+    // notching a singer - T4 and T22 guard the other side of that.
+    {
+        struct Ring { double hz, rate, startDb; };
+        static const Ring wed[] = {
+            {  281.0, 11.6, -68.8 },   // slowest of the night
+            {  281.0, 54.2, -54.6 },
+            {  469.0, 65.3, -50.4 },
+            {  562.0, 13.6, -81.7 },
+            {  656.0, 11.0, -83.6 },
+            {  844.0, 61.8, -58.9 },
+            { 1031.0, 47.4, -46.0 },
+            { 1125.0, 48.0, -38.9 },
+            { 1594.0, 42.2, -58.9 },
+        };
+
+        int caught = 0; double worst = 0.0; double worstHz = 0.0;
+        std::string missed;
+        for (const auto& r : wed)
+        {
+            fk::FeedbackDetector::Params p;
+            p.floorDb = -95.0f;
+            p.minFreq = 200.0f;          // the band it SHOULD have been watching
+            fk::FeedbackDetector det; init (det, p);
+
+            const double hz = r.hz, rate = r.rate;
+            auto res = runTone (det, 8.0, [hz, rate] (double t) {
+                return std::make_pair (hz, juce::jmin (0.000004 * std::pow (10.0, rate * t / 20.0),
+                                                       0.05));
+            }, 0.0000025, 0.0);
+
+            if (res.fired && std::abs (res.firstHz - (float) hz) < juce::jmax (25.0f, 0.02f * (float) hz))
+            {
+                ++caught;
+                // Measured against the level at which the detector is ALLOWED to
+                // act, not against the floor. The floor is deliberately 20 dB
+                // lower - it is where watching starts, not acting - so measuring
+                // from it reports that gap as though it were a failure.
+                const double escape = res.firstLevelDb - (double) fk::FeedbackDetector::Params{}.actionDb;
+                if (escape > worst) { worst = escape; worstHz = hz; }
+            }
+            else
+            {
+                if (! missed.empty()) missed += " ";
+                missed += std::to_string ((int) hz);
+            }
+        }
+        const int total = (int) (sizeof wed / sizeof wed[0]);
+        if (caught == total)
+            std::snprintf (msg, sizeof msg, "%d/%d caught, worst escape %.1f dB at %.0f Hz",
+                           caught, total, worst, worstHz);
+        else
+            std::snprintf (msg, sizeof msg, "%d/%d caught, MISSED %s Hz", caught, total, missed.c_str());
+        report ("T28 the studio's low-end rings are all caught", caught == total && worst <= 10.0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
