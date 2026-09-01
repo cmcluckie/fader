@@ -50,6 +50,11 @@ public:
 
     /// <summary>Pass audio through untouched, keeping every notch's state intact.</summary>
     void setBypass (bool b) noexcept         { bypassed.store (b); }
+
+    /// Keep analysing while bypassed, for an on/off comparison that produces two
+    /// comparable sets of measurements rather than one set and a silence. Never
+    /// triggers the bank - see the bypass branch in process().
+    void setAnalysis (bool b) noexcept       { analysis.store (b); }
     bool isBypassed() const noexcept         { return bypassed.load(); }
 
     /// <summary>
@@ -82,7 +87,7 @@ public:
     void lockAll     (int ch) noexcept                          { push ({ Cmd::LockAll, ch, 0, 0, 0 }); }
 
     // ---- telemetry (called from the OSC thread) -----------------------------
-    struct EventOut { int ch; float hz; float levelDb; };
+    struct EventOut { int ch; float hz; float levelDb; float ageMs; float widthLoHz; float widthHiHz; };
     struct RejectOut { int ch; float hz; float levelDb; int reason; int frames; };
 
     bool popReject (RejectOut& out) noexcept
@@ -198,14 +203,38 @@ public:
             // it has been off, the CLEANER the return, rather than the worse.
             if (bypass)
             {
-                if (! wasBypassed) wasBypassed = true;
+                const bool watching = analysis.load();
+                if (watching)
+                {
+                    // Capture mode: keep LOOKING with the guard off, so a session
+                    // with it on and off produces two comparable sets of
+                    // measurements rather than one set and a silence. Nothing is
+                    // triggered and nothing is applied - the bank is untouched, so
+                    // this cannot walk back into the accumulate-while-bypassed bug
+                    // that made switching the guard back on so much worse than
+                    // leaving it off.
+                    if (wasBypassed && ! wasWatching) det.resetAnalysis();
+                    det.push (out, numSamples);
+
+                    FeedbackDetector::Event ev;
+                    while (det.popEvent (ev))
+                        pushEvent ({ ch, ev.freq, ev.levelDb, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
+
+                    FeedbackDetector::Reject rj;
+                    while (det.popReject (rj))
+                        pushReject ({ ch, rj.freq, rj.levelDb, rj.reason, rj.frames });
+                }
+                wasWatching = watching;
+                wasBypassed = true;
                 bank.process (out, numSamples, true);
             }
             else
             {
                 // The window is stale after a bypass; refilling it from a join would
                 // read as every tone in the room arriving at once.
-                if (wasBypassed) { det.resetAnalysis(); wasBypassed = false; }
+                // Only stale if nothing was watching through the bypass.
+                if (wasBypassed && ! wasWatching) det.resetAnalysis();
+                wasBypassed = false; wasWatching = false;
 
                 det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
 
@@ -217,7 +246,7 @@ public:
                 while (det.popEvent (ev))
                 {
                     bank.trigger (ev.freq, elapsed, ev.growing);  // bank owns depth
-                    pushEvent ({ ch, ev.freq, ev.levelDb });      // C# logs + displays it
+                    pushEvent ({ ch, ev.freq, ev.levelDb, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
                 }
 
                 bank.process (out, numSamples, false);
@@ -317,7 +346,8 @@ private:
     // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs
 // deeper cuts that stay put, not shallow ones that bleed out in 2 s.
     std::atomic<float> maxCutDb { -24.0f }, notchQ { 25.0f }, releaseSeconds { 10.0f };
-    bool wasBypassed = false;
+    bool wasBypassed = false, wasWatching = false;
+    std::atomic<bool>  analysis { false };     // off unless asked for
     std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };

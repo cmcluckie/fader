@@ -56,6 +56,8 @@ public sealed class SetupView : UserControl
     private readonly StackPanel _notchList = new() { Spacing = 6 };
     private readonly TextBlock _pathState = Ui.Text("", 13, Tokens.InkDim);
     private readonly Button _pathCheck = Ui.Small("Check signal path", Tokens.Accent);
+    private readonly Button _capture = Ui.Small("Start capture", Tokens.InkDim);
+    private readonly TextBlock _captureState = Ui.Text("", 12.5, Tokens.InkFaint);
     private readonly TextBlock _ringOutState = Ui.Text("", 12.5, Tokens.InkFaint);
     private readonly Button _lockFound = Ui.Small("Lock found filters", Tokens.Accent);
     private string _notchSignature = "";
@@ -363,12 +365,37 @@ public sealed class SetupView : UserControl
             finally { _pathCheck.IsEnabled = true; }
         };
 
+        // Capture: a diagnostic you switch on when something needs answering, and
+        // off again afterwards. It writes a row per detection with how long the ring
+        // took to be called feedback and how wide it was, and it keeps detection
+        // running while the guard is bypassed - so a song played half on and half
+        // off produces two comparable sets instead of one set and a silence.
+        _capture.Click += (_, _) =>
+        {
+            _feedback.SetCapture(!_feedback.CaptureEnabled);
+            RenderCapture();
+        };
+        RenderCapture();
+
         return Ui.Card(Ui.Stack(Orientation.Vertical, 10,
             Ui.Caption("Signal path"),
             Ui.Stack(Orientation.Horizontal, 12, _pathCheck,
                 Ui.Text("Soundcheck only — this puts a brief tone through the PA.",
                         12.5, Tokens.InkFaint)),
-            _pathState), background: Tokens.Ground2);
+            _pathState,
+            Ui.Caption("Capture"),
+            Ui.Stack(Orientation.Horizontal, 12, _capture, _captureState)),
+            background: Tokens.Ground2);
+    }
+
+    private void RenderCapture()
+    {
+        var on = _feedback.CaptureEnabled;
+        _capture.Content = on ? "Stop capture" : "Start capture";
+        _capture.Foreground = on ? Tokens.Catch : Tokens.InkDim;
+        _captureState.Text = on
+            ? "Recording every catch: how long it took, how wide it was. Guard off is measured too."
+            : "Off. Logs every catch with its detection time and width, guard on and off.";
     }
 
     /// <summary>

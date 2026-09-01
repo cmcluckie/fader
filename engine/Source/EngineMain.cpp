@@ -85,6 +85,7 @@ private:
         else if (a == "/fk/inputs")                        requestInputs (m);
         else if (a == "/fk/outputs")                       requestOutputs (m);
         else if (a == "/fk/bypass"       && m.size() >= 1) engine.setBypass (m[0].getInt32() != 0);
+        else if (a == "/fk/analysis"     && m.size() >= 1) engine.setAnalysis (m[0].getInt32() != 0);
         else if (a == "/fk/testtone"     && m.size() >= 1) engine.setTestTone (m[0].isFloat32() ? m[0].getFloat32() : (float) m[0].getInt32());
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
@@ -167,7 +168,8 @@ private:
 
             AudioEngine::EventOut e;
             while (engine.popEvent (e))
-                sender.send (juce::OSCMessage ("/fk/event", e.ch, e.hz, e.levelDb));
+                sender.send (juce::OSCMessage ("/fk/event", e.ch, e.hz, e.levelDb,
+                                               e.ageMs, e.widthLoHz, e.widthHiHz));
 
             if ((mask & 0x2) && tick % 2 == 0)  sendNotches();    // ~10 Hz
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz

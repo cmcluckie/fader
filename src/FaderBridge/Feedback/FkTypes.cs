@@ -11,7 +11,12 @@ public enum FkTelemetry { None = 0, Events = 1, Notches = 2, Spectrum = 4, Statu
 public sealed record FkStatus(bool EngineOk, float CpuLoad);
 
 /// <summary><c>/fk/event</c> — a detection fired on a channel.</summary>
-public sealed record FkDetection(int Channel, float Hz, float LevelDb);
+public sealed record FkDetection(int Channel, float Hz, float LevelDb,
+                                 float AgeMs = 0f, float WidthLoHz = 0f, float WidthHiHz = 0f)
+{
+    /// <summary>How wide the peak was, in Hz, at the frame that fired it.</summary>
+    public float WidthHz => WidthHiHz > WidthLoHz ? WidthHiHz - WidthLoHz : 0f;
+}
 
 /// <summary>One notch slot, decoded from a <c>/fk/notches</c> frame.</summary>
 public readonly record struct FkNotch(

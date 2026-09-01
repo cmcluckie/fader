@@ -83,6 +83,13 @@ public:
         float freq   = 0.0f;
         float levelDb= 0.0f;
         bool  growing= false;   // still climbing, as opposed to merely still present
+
+        // Measurements for the capture log. Free to collect - the numbers are all
+        // in hand at the moment of firing - and impossible to reconstruct after the
+        // fact, which is what every "why was that slow" investigation has needed.
+        float ageMs  = 0.0f;    // tracked for this long before it was called feedback
+        float widthLoHz = 0.0f; // -6 dB skirts of the peak as measured in the frame
+        float widthHiHz = 0.0f; // that fired it
     };
 
     /// Why a candidate that looked like a peak did NOT become a detection.
@@ -544,6 +551,39 @@ private:
         return s.wLevel[(size_t) newest] - s.wLevel[(size_t) oldest];
     }
 
+    /// The -20 dB skirts of the peak nearest f. Answers "how wide was the thing
+    /// you notched", which is what decides whether one filter could ever have
+    /// covered it.
+    ///
+    /// Twenty dB, not six: a pure tone through a Hann window is already about 6 dB
+    /// down in the bins either side of its centre, so a -6 dB rule stops before it
+    /// starts and reports every peak as zero wide. Nor does the walk require the
+    /// spectrum to descend monotonically - with real noise on the skirts it does
+    /// not, and insisting on it truncates at the first ripple.
+    void peakWidth (float f, float& loHz, float& hiHz) const noexcept
+    {
+        loHz = hiHz = f;
+        const int centre = (int) std::round (f / binHz);
+        if (centre < 2 || centre >= numBins - 2) return;
+
+        constexpr float dropDb = 20.0f;
+        constexpr int   maxSpan = 64;          // ~1.5 kHz; past that it is not a peak
+
+        const float peak = mag[(size_t) centre];
+        int lo = centre;
+        while (lo > 1 && centre - lo < maxSpan && peak - mag[(size_t) (lo - 1)] < dropDb) --lo;
+        int hi = centre;
+        while (hi < numBins - 2 && hi - centre < maxSpan && peak - mag[(size_t) (hi + 1)] < dropDb) ++hi;
+
+        loHz = (float) lo * binHz;
+        hiHz = (float) hi * binHz;
+    }
+
+    float ageMsOf (const Suspect& s) const noexcept
+    {
+        return (float) s.frames * (float) hopSize / (float) sampleRate * 1000.0f;
+    }
+
     void track (float freq, float levelDb, bool harmonic) noexcept
     {
         // Associate with an existing candidate (a wider window than the stability
@@ -672,7 +712,11 @@ private:
                     s.reportLevel = s.lastLevel;
                     s.sinceReport = 0;
                     if (s.lastLevel >= params.actionDb)
-                        pushEvent ({ s.freq, s.lastLevel, true });
+                    {
+                        float wlo = 0.0f, whi = 0.0f;
+                        peakWidth (s.freq, wlo, whi);
+                        pushEvent ({ s.freq, s.lastLevel, true, ageMsOf (s), wlo, whi });
+                    }
                 }
             }
             else
@@ -714,7 +758,11 @@ private:
                     // a fifth of them at the cap - two dozen deep filters held
                     // permanently, which is a high shelf, and it sounded like one.
                     if (s.lastLevel >= params.actionDb)
-                        pushEvent ({ s.freq, s.lastLevel, climbing });
+                    {
+                        float wlo = 0.0f, whi = 0.0f;
+                        peakWidth (s.freq, wlo, whi);
+                        pushEvent ({ s.freq, s.lastLevel, climbing, ageMsOf (s), wlo, whi });
+                    }
                 }
             }
             return;

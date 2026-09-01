@@ -12,16 +12,20 @@ public sealed class FkEventLog : IDisposable
 {
     private readonly StreamWriter? _writer;
     private readonly StreamWriter? _eq;
+    private StreamWriter? _capture;
+    private readonly string _directory;
     private readonly object _lock = new();
 
     public string Path { get; }
     public string EqPath { get; private set; } = string.Empty;
+    public string CapturePath { get; private set; } = string.Empty;
 
     public static string ChannelName(int ch) => ch == 0 ? "LEAD" : "BGV";
 
     public FkEventLog(string directory, string? stamp = null)
     {
         Directory.CreateDirectory(directory);
+        _directory = directory;
         stamp ??= DateTime.Now.ToString("yyyyMMdd-HHmmss");
         Path = System.IO.Path.Combine(directory, $"feedback-log-{stamp}.csv");
         try
@@ -36,6 +40,49 @@ public sealed class FkEventLog : IDisposable
         catch
         {
             _writer = null; _eq = null;   // logging is best-effort; never fatal
+        }
+    }
+
+    /// <summary>
+    /// The capture log: one row per detection, with the measurements that can only
+    /// be taken at the moment of firing.
+    ///
+    /// Opened on demand, because it is a diagnostic and not something to accumulate
+    /// through every gig. "How long did that take to catch" and "how wide was it"
+    /// have been the two questions behind every investigation here, and both were
+    /// being reconstructed after the fact from a downsampled spectrum. Recorded at
+    /// the source they are exact. The guard column is the point: with capture on,
+    /// detection keeps running while the guard is off, so a session played half on
+    /// and half off yields two comparable sets rather than one set and a silence.
+    /// </summary>
+    public void WriteCapture(double seconds, int slot, bool guardOn, FkDetection d)
+    {
+        if (_capture is null) return;
+        var line = string.Create(CultureInfo.InvariantCulture,
+            $"{seconds:F3},{ChannelName(slot)},{(guardOn ? 1 : 0)},{d.Hz:F1},{d.LevelDb:F1}," +
+            $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1}");
+        lock (_lock)
+        {
+            _capture.WriteLine(line);
+        }
+    }
+
+    /// <summary>Start (or stop) the capture log. Off unless explicitly asked for.</summary>
+    public void SetCapture(bool on)
+    {
+        lock (_lock)
+        {
+            if (on == (_capture is not null)) return;
+            if (! on) { _capture?.Flush(); _capture?.Dispose(); _capture = null; return; }
+            try
+            {
+                CapturePath = System.IO.Path.Combine(
+                    _directory, $"capture-log-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
+                _capture = new StreamWriter(CapturePath, append: false) { AutoFlush = true };
+                _capture.WriteLine("seconds,channel,guard_on,frequency_hz,level_db," +
+                                   "age_ms,width_lo_hz,width_hi_hz,width_hz");
+            }
+            catch { _capture = null; }
         }
     }
 
@@ -85,6 +132,8 @@ public sealed class FkEventLog : IDisposable
             _writer?.Dispose();
             _eq?.Flush();
             _eq?.Dispose();
+            _capture?.Flush();
+            _capture?.Dispose();
         }
     }
 }

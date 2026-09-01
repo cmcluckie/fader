@@ -1023,6 +1023,49 @@ int main()
         report ("T29 stacked notches cannot become a high-cut", sum / n >= -10.0, msg);
     }
 
+    // ---- T30: every catch reports how long it took and how wide it was ------
+    // The two questions behind every investigation in this project - "why was that
+    // slow" and "could one filter ever have covered it" - were both being answered
+    // after the fact by simulating against a downsampled spectrum. They are exact
+    // at the moment of firing and free to collect there.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 1000.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double ph = 0.0;
+        fk::FeedbackDetector::Event first {};
+        bool got = false;
+
+        for (int b = 0; b < (int) (5.0 * kSR / block) && ! got; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                ph += 2.0 * M_PI * 6000.0 / kSR;
+                buf[(size_t) i] = (float) (juce::jmin (0.000004 * std::pow (10.0, 25.0 * t / 20.0), 0.006)
+                                           * std::sin (ph) + noise (0.0000025));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev)) if (! got && std::abs (ev.freq - 6000.0f) < 60.0f) { first = ev; got = true; }
+        }
+
+        // A pure tone through a Hann window occupies a few bins; at 23.4 Hz per bin
+        // that is a width in the low hundreds of Hz, and certainly not zero and not
+        // a whole octave. Age must be a real span, not the single frame it fired on.
+        const bool ageOk   = first.ageMs > 20.0f && first.ageMs < 5000.0f;
+        const bool widthOk = first.widthHiHz > first.widthLoHz
+                             && (first.widthHiHz - first.widthLoHz) < 1000.0f
+                             && first.widthLoHz < 6000.0f && first.widthHiHz > 6000.0f;
+        std::snprintf (msg, sizeof msg, "age %.0f ms, width %.0f-%.0f Hz (%.0f Hz)",
+                       first.ageMs, first.widthLoHz, first.widthHiHz,
+                       first.widthHiHz - first.widthLoHz);
+        report ("T30 a catch reports its age and peak width", got && ageOk && widthOk, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -100,6 +100,8 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void ListDevices()                        => Send(new OscMessage("/fk/listdevices"));
     /// <summary>Pass audio through untouched; notch state is kept, just not applied.</summary>
     public void SetBypass(bool on)                   => Send(new OscMessage("/fk/bypass", on ? 1 : 0));
+    /// <summary>Keep detecting while bypassed, so guard-off can be measured too.</summary>
+    public void SetAnalysis(bool on)                 => Send(new OscMessage("/fk/analysis", on ? 1 : 0));
     /// <summary>
     /// Replace what every armed slot writes to its return: 0 = normal audio,
     /// negative = hard silence, positive = a sine at that frequency. The only
@@ -152,8 +154,14 @@ public sealed class FkEngineClient : IAsyncDisposable
                 StatusReceived?.Invoke(new FkStatus(ok != 0, cpu));
                 break;
 
-            case "/fk/event" when m.Arguments is [int ch, float hz, float lvl]:
-                DetectionReceived?.Invoke(new FkDetection(ch, hz, lvl));
+            // The engine now sends age and peak width alongside; the three-argument
+            // form is kept so an older engine binary still reports detections.
+            case "/fk/event" when m.Arguments is [int ch, float hz, float lvl, float age, float wlo, float whi]:
+                DetectionReceived?.Invoke(new FkDetection(ch, hz, lvl, age, wlo, whi));
+                break;
+
+            case "/fk/event" when m.Arguments is [int ch2, float hz2, float lvl2]:
+                DetectionReceived?.Invoke(new FkDetection(ch2, hz2, lvl2));
                 break;
 
             case "/fk/reject" when m.Arguments is [int rch, float rhz, float rlvl, int reason, int frames]:

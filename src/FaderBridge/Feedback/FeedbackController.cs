@@ -406,6 +406,26 @@ public sealed class FeedbackController : IAsyncDisposable
     /// </summary>
     public bool IsBypassed { get; private set; }
 
+    /// <summary>
+    /// Diagnostic capture: per-detection measurements to a CSV, and detection kept
+    /// running while the guard is bypassed so guard-on and guard-off can be
+    /// compared. Off by default and never persisted on - it is for answering a
+    /// question, not for running through every gig.
+    /// </summary>
+    public bool CaptureEnabled { get; private set; }
+
+    public void SetCapture(bool on)
+    {
+        if (on == CaptureEnabled) return;
+        CaptureEnabled = on;
+        _log.SetCapture(on);
+        _supervisor.Client.SetAnalysis(on);
+        Log?.Invoke(on ? $"capture on: {Path.GetFileName(_log.CapturePath)}" : "capture off");
+        CaptureChanged?.Invoke(on);
+    }
+
+    public event Action<bool>? CaptureChanged;
+
     public void SetBypass(bool on)
     {
         IsBypassed = on;
@@ -748,13 +768,22 @@ public sealed class FeedbackController : IAsyncDisposable
                 t = Math.Round(_clock.Elapsed.TotalSeconds, 3),
                 hz = Math.Round(d.Hz, 1),
                 db = Math.Round(d.LevelDb, 1),
+                age_ms = Math.Round(d.AgeMs, 0),
+                width_hz = Math.Round(d.WidthHz, 1),
                 slot = d.Channel,
             });
             while (_recentDetections.Count > 200) _recentDetections.Dequeue();
         }
 
+        // With capture on, detection keeps running while the guard is off, so the
+        // guard column is what makes an on/off session comparable.
+        if (CaptureEnabled)
+        {
+            _log.WriteCapture(_clock.Elapsed.TotalSeconds, d.Channel, ! IsBypassed, d);
+        }
+
         // enabled channels always cut, so a detection on an active slot was applied
-        _log.Write(d, applied: true, _clock.Elapsed.TotalSeconds);
+        _log.Write(d, applied: ! IsBypassed, _clock.Elapsed.TotalSeconds);
         DetectionReceived?.Invoke(d);
     }
 
