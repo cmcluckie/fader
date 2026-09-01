@@ -101,11 +101,20 @@ internal static class Program
         spectrum.SetSlot(0, SynthSpectrum());
         spectrum.SetRange(1000f, 16000f);
         spectrum.SetFloor(-55f);
-        var many = new List<(float, float)>();
-        for (var i = 0; i < 20; i++) many.Add((180f + i * 42f, -3f - i * 1.2f));
-        many.Add((2140f, -24f)); many.Add((9840f, -30f));
+        // The exact filter set read off the rig on 2026-08-27, when the guard was
+        // reported as muffled: 22 live filters, twelve at the -24 dB cap, summing
+        // to -13.6 dB across the top end. This is the case the EQ curve exists to
+        // make visible, so it is the case the render harness should show.
+        var many = new List<(float, float)>
+        {
+            (3803f, -24f), (4342f, -24f), (4985f, -18f), (5316f, -24f), (5819f, -24f),
+            (6029f, -24f), (6464f, -10.5f), (7020f, -18f), (7403f, -12f), (8107f, -12f),
+            (8648f, -12f), (9304f, -18f), (9744f, -12f), (10235f, -12f), (10621f, -24f),
+            (11438f, -24f), (11889f, -18f), (12912f, -24f), (13792f, -24f), (14567f, -24f),
+            (15095f, -24f), (15864f, -18f),
+        };
         spectrum.SetNotches(many);
-        spectrum.AddCatch(2140f);
+        spectrum.AddCatch(6029f);
 
         var tiles = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 12 };
         var lead = new ChannelTile("Lead", "CH 4");

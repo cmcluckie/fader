@@ -4,6 +4,8 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
 
+using Fader.Bridge.Feedback;
+
 namespace Fader.MenuBar;
 
 /// <summary>
@@ -45,6 +47,11 @@ public sealed class GuardSpectrum : Control
     private static readonly IPen GridPen = new Pen(new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF)), 1);
     private static readonly IPen Curve = new Pen(new SolidColorBrush(Color.FromArgb(0xCC, 0x78, 0xF0, 0xAA)), 1.5);
     private static readonly IBrush LabelBrush = Tokens.InkFaint;
+    private static readonly IPen EqPen =
+        new Pen(new SolidColorBrush(Color.FromArgb(0xF0, 0xF4, 0x5D, 0x9C)), 1.8);
+    private static readonly IBrush EqFill = new SolidColorBrush(Color.FromArgb(0x3A, 0xF4, 0x5D, 0x9C));
+    private static readonly IPen NotchTick =
+        new Pen(new SolidColorBrush(Color.FromArgb(0x70, 0xF4, 0x5D, 0x9C)), 1.5);
 
     private static readonly (float Hz, string Text)[] Ticks =
         { (100f, "100"), (1000f, "1k"), (3000f, "3k"), (6000f, "6k"), (12000f, "12k") };
@@ -117,6 +124,7 @@ public sealed class GuardSpectrum : Control
         }
 
         DrawBand(ctx, w, h);
+        DrawEqCurve(ctx, w, h);
         DrawNotches(ctx, w, h);
         DrawCatches(ctx, w, h);
     }
@@ -180,12 +188,85 @@ public sealed class GuardSpectrum : Control
     private static double DbForY(double y, double h) =>
         Math.Clamp(MinDb * (y / Math.Max(1, h - 18)), MinFloorDb, MaxFloorDb);
 
+    /// <summary>
+    /// The summed response of every live filter, drawn hanging from the top of the
+    /// plot: how much of the sound the guard is currently removing, at every
+    /// frequency, at a glance.
+    ///
+    /// The markers alone could never show this. Each filter is a tidy single line,
+    /// and twenty-two tidy lines 400-800 Hz apart - each over a kilohertz wide -
+    /// look like twenty-two small surgical cuts while adding up to a high-cut
+    /// filter. Measured on the rig: -13.6 dB average across the top end and -28 dB
+    /// at 6 kHz, with nothing on screen saying so.
+    /// </summary>
+    private void DrawEqCurve(DrawingContext ctx, double w, double h)
+    {
+        if (_notches.Count == 0) return;
+
+        var live = _notches.Where(n => n.Hz > 0f && n.Depth < -0.1f)
+                           .Select(n => (n.Hz, n.Depth))
+                           .ToList();
+        if (live.Count == 0) return;
+
+        // Full scale is 30 dB of cut over the top half of the plot: enough room
+        // that a shelf looks like a shelf rather than a crease at the ceiling.
+        // Sampled every pixel - every second pixel aliased the narrow filters into
+        // a comb, which read as lots of small cuts instead of one broad one.
+        const double fullScaleDb = 30.0;
+        var band = (h - 18) * 0.5;
+
+        var pts = new List<Point>((int) w + 1);
+        for (var px = 0; px <= (int) w; px++)
+        {
+            var cut = NotchResponse.SumDb(live, HzForX(px, w));
+            pts.Add(new Point(px, Math.Clamp(-cut / fullScaleDb, 0, 1) * band));
+        }
+
+        // Filled down from the top edge: the shaded region IS what is being taken
+        // away, which is the thing to see at a glance from behind a mic.
+        var fill = new StreamGeometry();
+        using (var g = fill.Open())
+        {
+            g.BeginFigure(new Point(0, 0), true);
+            foreach (var pt in pts) g.LineTo(pt);
+            g.LineTo(new Point(w, 0));
+            g.EndFigure(true);
+        }
+        ctx.DrawGeometry(EqFill, null, fill);
+
+        var line = new StreamGeometry();
+        using (var g = line.Open())
+        {
+            g.BeginFigure(pts[0], false);
+            for (var i = 1; i < pts.Count; i++) g.LineTo(pts[i]);
+            g.EndFigure(false);
+        }
+        ctx.DrawGeometry(null, EqPen, line);
+
+        // One number for "how muffled am I": the average cut across the top end,
+        // which is the part a vocal misses first.
+        var avg = NotchResponse.AverageDb(live, 4000, 16000);
+        if (avg <= -0.5)
+        {
+            // Top left: the only reliably empty corner. The floor handle prints
+            // its own dB at top right, the range badges sit mid-top, and the
+            // frequency ticks own the bottom edge.
+            ctx.DrawText(Label($"guard is removing {-avg:F1} dB of 4-16k"), new Point(8, 4));
+        }
+    }
+
     private void DrawNotches(DrawingContext ctx, double w, double h)
     {
+        // Short ticks on the baseline, not full-height bars. Twenty-two bars
+        // across the plot hide the very thing they are reporting - the summed
+        // curve above them - and the curve already shows where the cuts are. The
+        // ticks are just the tally.
         foreach (var (hz, depth, _) in _notches)
         {
             if (hz <= 0f) continue;
-            ctx.DrawLine(new Pen(Tokens.Catch, 2), new Point(XForHz(hz, w), 6), new Point(XForHz(hz, w), h - 18));
+            var x = XForHz(hz, w);
+            var len = 6 + Math.Clamp(-depth / 24.0, 0, 1) * 8;
+            ctx.DrawLine(NotchTick, new Point(x, h - 18), new Point(x, h - 18 - len));
         }
 
         // Label only the deepest few. Twenty tags at once collide into unreadable

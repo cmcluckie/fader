@@ -557,6 +557,44 @@ public sealed class FeedbackController : IAsyncDisposable
             }
             while (_recentNotches.Count > 1500) _recentNotches.Dequeue();
         }
+
+        LogEq(slot, notches, now);
+    }
+
+    private readonly double[] _lastEqLog = new double[MaxChans];
+
+    /// <summary>
+    /// Record the summed response of the live filters once a second, with the
+    /// bypass state beside it.
+    ///
+    /// The detection log answers "what did it catch". Nothing answered "what is it
+    /// costing", and that is the question behind every report of muffling: the
+    /// filters are individually correct and collectively a high-cut, and no log
+    /// carried the collective number. With bypass in the same row, an on/off
+    /// comparison becomes a subtraction instead of an argument about memory.
+    /// </summary>
+    private void LogEq(int slot, FkNotch[] notches, double now)
+    {
+        if (now - _lastEqLog[slot] < 1.0) return;
+        _lastEqLog[slot] = now;
+
+        var live = notches.Where(n => n.Active && n.CurrentDb < -0.1f)
+                          .Select(n => (n.FreqHz, n.CurrentDb))
+                          .ToArray();
+
+        var worstDb = 0.0;
+        var worstHz = 0.0;
+        for (var i = 0; i < 60; i++)
+        {
+            var f = 1000.0 * Math.Pow(16.0, i / 59.0);      // 1 kHz .. 16 kHz
+            var v = NotchResponse.SumDb(live, f);
+            if (v < worstDb) { worstDb = v; worstHz = f; }
+        }
+
+        _log.WriteEq(now, slot, IsBypassed, live.Length,
+                     NotchResponse.AverageDb(live, 1000, 4000),
+                     NotchResponse.AverageDb(live, 4000, 16000),
+                     worstDb, worstHz);
     }
 
     /// <summary>
