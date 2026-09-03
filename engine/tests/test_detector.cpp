@@ -1066,6 +1066,55 @@ int main()
         report ("T30 a catch reports its age and peak width", got && ageOk && widthOk, msg);
     }
 
+    // ---- T31: the upper partials of a sung note are not feedback ------------
+    // Measured live on 2026-09-02 with capture running: 6908 catches in 2.3
+    // minutes - 49 a second - scattered over 158 frequency buckets and 73% of them
+    // between 2 and 8 kHz. One busy moment caught 505, 757, 1001, 1249, 1501,
+    // 2263, 2522, 2776 and 3279 Hz. The gaps are 243, 244, 246 and 252: a sung B3
+    // and its harmonics 2 through 13, every one of them notched.
+    //
+    // T4 did not catch this because it watches a 400 Hz note with five partials,
+    // all inside the reach of the ratio-based series test. The failure lives in
+    // the TOP of a series, at partial ten and above, where that test cannot
+    // propose a low enough fundamental to see it.
+    {
+        constexpr double f0 = 252.0;
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f;
+        p.minFreq = 40.0f;               // the rig's own band
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double ph = 0.0;
+        std::vector<float> hit;
+
+        for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                // A held note with the gentle drift a real voice always has, and a
+                // full series up to 3.3 kHz - the partials actually seen notched.
+                ph += 2.0 * M_PI * (f0 * (1.0 + 0.004 * std::sin (2.0 * M_PI * 4.6 * t))) / kSR;
+                double v = 0.0;
+                for (int h = 2; h <= 13; ++h) v += (0.05 / std::sqrt ((double) h)) * std::sin (ph * h);
+                buf[(size_t) i] = (float) (v * std::min (1.0, t / 0.4) + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev)) hit.push_back (ev.freq);
+        }
+
+        std::string where;
+        for (size_t k = 0; k < hit.size() && k < 5; ++k)
+            where += (k ? " " : "") + std::to_string ((int) hit[k]);
+        std::snprintf (msg, sizeof msg, hit.empty() ? "no partial notched"
+                                                    : "NOTCHED %d partials: %s Hz",
+                       (int) hit.size(), where.c_str());
+        report ("T31 the upper partials of a sung note are left alone", hit.empty(), msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

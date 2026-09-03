@@ -399,6 +399,28 @@ private:
                 harmonic = members >= 3 && lowPartial;
             }
 
+            // The series test above proposes f0 = peak/n for n up to 5 and asks
+            // which peaks land on exact multiples. That can only ever see the
+            // bottom of a series, and it is the TOP that gets notched: a voice at
+            // 250 Hz puts its 2-8 kHz energy on harmonics 10 to 40, and no
+            // candidate f0 is ever 250 Hz. Worse, the test is a ratio test, so an
+            // error in f0 multiplies with k - at 0.8% tolerance the fifth partial
+            // is already marginal.
+            //
+            // Measured live on 2026-09-02, singing into it with capture on: 6908
+            // catches in 2.3 minutes, 49 a second, scattered across 158 different
+            // frequency buckets and concentrated 73% in 2-8 kHz. One busy moment
+            // caught 505, 757, 1001, 1249, 1501, 2263, 2522, 2776 and 3279 Hz -
+            // gaps of 243, 244, 246, 252. That is a sung B3 and its harmonics 2
+            // through 13, every one of them notched.
+            //
+            // Spacing is the robust question. Adjacent partials of a series are
+            // separated by f0 wherever you are in it, so a comb can be recognised
+            // from differences alone, with no f0 to estimate and no error to
+            // multiply. A ring is a lone peak: it has no evenly-spaced companions.
+            if (! harmonic)
+                harmonic = sitsOnAComb (i);
+
             // A harmonic-series member must be markedly more prominent to be believed.
             if (harmonic && peakProm[(size_t) i] < params.prominenceDb + params.harmonicPromDb)
                 continue;
@@ -551,6 +573,41 @@ private:
         return s.wLevel[(size_t) newest] - s.wLevel[(size_t) oldest];
     }
 
+    /// Is this peak one tooth of an evenly-spaced comb - i.e. a harmonic series?
+    ///
+    /// For each other peak below it, take the gap as a candidate fundamental and
+    /// count how many further peaks land on that grid. Differences, not ratios, so
+    /// an error in the estimate does not multiply with the partial number. Two
+    /// other teeth are required, which random peaks rarely supply and a voice
+    /// always does.
+    bool sitsOnAComb (int i) const noexcept
+    {
+        const float f = peakFreq[(size_t) i];
+
+        for (int j = 0; j < peakCount; ++j)
+        {
+            if (j == i) continue;
+            const float d = f - peakFreq[(size_t) j];
+            // A sung fundamental. Below ~70 Hz the grid is so fine that anything
+            // lands on it; above ~500 Hz it is not a voice.
+            if (d < 70.0f || d > 500.0f) continue;
+
+            const float tol = juce::jmax (0.12f * d, 2.0f * binHz);
+            int teeth = 0;
+            for (int k = 0; k < peakCount; ++k)
+            {
+                if (k == i || k == j) continue;
+                const float off = std::abs (peakFreq[(size_t) k] - f);
+                const float steps = off / d;
+                const float nearest = std::round (steps);
+                if (nearest >= 1.0f && nearest <= 6.0f && std::abs (off - nearest * d) < tol)
+                    ++teeth;
+            }
+            if (teeth >= 2) return true;      // three teeth counting j: a comb
+        }
+        return false;
+    }
+
     /// The -20 dB skirts of the peak nearest f. Answers "how wide was the thing
     /// you notched", which is what decides whether one filter could ever have
     /// covered it.
@@ -603,8 +660,21 @@ private:
             s.wLevel[(size_t) s.windowPos] = levelDb;
             s.windowPos = (s.windowPos + 1) % windowSize;
 
-            // §4.2/§4.3 over the last N frames only
-            const int n = juce::jlimit (1, windowSize, juce::jmin (s.frames, params.persistFrames));
+            // §4.2/§4.3 over the last N frames only.
+            //
+            // Anything that looks harmonic is judged over a much longer window. A
+            // partial carrying vibrato moves across FFT bins, and the scalloping
+            // that produces is amplitude modulation: over 32 ms a rising quarter of
+            // that wobble supplies the ~1 dB the growth gate wants, and the partial
+            // is called a building ring. Over ~300 ms the modulation completes more
+            // than a cycle and nets out to nothing, while a real ring - which is
+            // still climbing the whole time - passes either way.
+            //
+            // This is what was notching the voice: measured live, harmonics 2
+            // through 13 of a sung B3, 49 catches a second. Path B already refuses
+            // harmonics; path A was the way through.
+            const int growthWindow = s.harmonic ? params.voiceFrames : params.persistFrames;
+            const int n = juce::jlimit (1, windowSize, juce::jmin (s.frames, growthWindow));
             float lo = 1.0e9f, hi = -1.0e9f;
             for (int i = 1; i <= n; ++i)
             {
