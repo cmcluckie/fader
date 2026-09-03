@@ -592,18 +592,35 @@ private:
             // lands on it; above ~500 Hz it is not a voice.
             if (d < 70.0f || d > 500.0f) continue;
 
-            const float tol = juce::jmax (0.12f * d, 2.0f * binHz);
+            // The peak must sit ON the grid, not merely near something spaced d
+            // away: if d is really the fundamental then f is a whole number of
+            // them. Two arbitrary peaks always define SOME spacing, which is why
+            // the first version of this - two teeth and nothing else - found a
+            // comb through almost anything once the spectrum was busy. Measured:
+            // with 45 unrelated tones present a real ring was never caught at all,
+            // because it was being called harmonic every frame.
+            const float partial = f / d;
+            if (std::abs (partial - std::round (partial)) > 0.06f) continue;
+            if (std::round (partial) < 2.0f) continue;
+
+            const float tol = juce::jmax (0.10f * d, 1.5f * binHz);
             int teeth = 0;
+            bool reachesDown = false;
             for (int k = 0; k < peakCount; ++k)
             {
-                if (k == i || k == j) continue;
-                const float off = std::abs (peakFreq[(size_t) k] - f);
-                const float steps = off / d;
-                const float nearest = std::round (steps);
-                if (nearest >= 1.0f && nearest <= 6.0f && std::abs (off - nearest * d) < tol)
+                if (k == i) continue;
+                const float other = peakFreq[(size_t) k];
+                const float off = std::abs (other - f);
+                const float nearest = std::round (off / d);
+                if (nearest >= 1.0f && nearest <= 12.0f && std::abs (off - nearest * d) < tol)
+                {
                     ++teeth;
+                    // A voice has partials all the way down to its fundamental. A
+                    // grid that only exists up here is a coincidence.
+                    if (other < f && other < 1200.0f) reachesDown = true;
+                }
             }
-            if (teeth >= 2) return true;      // three teeth counting j: a comb
+            if (teeth >= 3 && reachesDown) return true;
         }
         return false;
     }

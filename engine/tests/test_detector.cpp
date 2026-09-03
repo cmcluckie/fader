@@ -1115,6 +1115,69 @@ int main()
         report ("T31 the upper partials of a sung note are left alone", hit.empty(), msg);
     }
 
+    // ---- T32: a ring must survive a busy spectrum ---------------------------
+    // T31's fix went too far and broke the guard outright on the rig - detections
+    // fell from 6957 to 129 and real feedback stopped being caught.
+    //
+    // The comb test asked only for two peaks evenly spaced through the candidate,
+    // and any two peaks define SOME spacing. On a quiet bench that is fine; in a
+    // room with dozens of live peaks it finds a grid through almost anything, so
+    // every ring was called harmonic - which bars it from the sustain path and
+    // makes it wait ~490 ms for a growth test judged over 300 ms. Nothing fired.
+    //
+    // T31 could not see this because it holds one clean voice and nothing else.
+    // The question is not "is the voice protected" but "is the voice protected
+    // WITHOUT deafening it to everything else", and that needs a busy spectrum.
+    {
+        constexpr double ringHz = 9616.0;
+        int caught = 0;
+        std::string missed;
+        for (int nclut : { 0, 25, 45, 80 })
+        {
+            fk::FeedbackDetector::Params p;
+            p.floorDb = -95.0f; p.minFreq = 40.0f;
+            fk::FeedbackDetector det; init (det, p);
+
+            constexpr int block = 64;
+            std::vector<float> buf ((size_t) block);
+            double vp = 0.0, rp = 0.0;
+            std::vector<double> clutter ((size_t) nclut, 0.0);
+            bool fired = false;
+
+            for (int b = 0; b < (int) (8.0 * kSR / block) && ! fired; ++b)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const double t = (double) (b * block + i) / kSR;
+                    // a sung note, as T31
+                    vp += 2.0 * M_PI * (252.0 * (1.0 + 0.004 * std::sin (2.0 * M_PI * 4.6 * t))) / kSR;
+                    double v = 0.0;
+                    for (int h = 2; h <= 13; ++h) v += (0.05 / std::sqrt ((double) h)) * std::sin (vp * h);
+                    v *= std::min (1.0, t / 0.4);
+                    // ...and a room. Irregularly spaced on purpose: these are not a
+                    // series, and nothing should mistake them for one.
+                    for (size_t c = 0; c < clutter.size(); ++c)
+                    {
+                        clutter[c] += 2.0 * M_PI * (900.0 + 317.0 * (double) c) / kSR;
+                        v += 0.0018 * std::sin (clutter[c]);
+                    }
+                    rp += 2.0 * M_PI * ringHz / kSR;
+                    v += juce::jmin (0.000004 * std::pow (10.0, 25.0 * t / 20.0), 0.006) * std::sin (rp);
+                    buf[(size_t) i] = (float) (v + noise (0.00008));
+                }
+                det.push (buf.data(), block);
+                fk::FeedbackDetector::Event ev;
+                while (det.popEvent (ev))
+                    if (! fired && std::abs (ev.freq - (float) ringHz) < 80.0f) fired = true;
+            }
+            if (fired) ++caught;
+            else { if (! missed.empty()) missed += " "; missed += std::to_string (nclut); }
+        }
+        if (caught == 4) std::snprintf (msg, sizeof msg, "caught through 0, 25, 45 and 80 other tones");
+        else std::snprintf (msg, sizeof msg, "%d/4 - LOST at clutter %s", caught, missed.c_str());
+        report ("T32 a ring is still caught in a busy spectrum", caught == 4, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
