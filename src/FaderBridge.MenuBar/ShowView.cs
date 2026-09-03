@@ -34,6 +34,14 @@ public sealed class ShowView : UserControl
     // ear gets recorded. Pressed during rehearsal when a ring fires - especially
     // the ones heard before the detector reacts.
     private readonly TapButton _mark = new("That Was Feedback", "tap · saves the last 6 s");
+    // Capture belongs here, not in Setup. It is something you switch on mid-show
+    // because a song is misbehaving, and you need to see at a glance that it is
+    // running while you are stood at the mic - not go hunting through soundcheck
+    // screens for it and then have no idea whether it took.
+    private readonly TapButton _capture = new("Capture", "tap · logs every catch")
+    {
+        LitColour = Tokens.CatchColor,   // recording, not protecting
+    };
 
     private readonly Dictionary<int, ChannelTile> _byPhysical = new();
     private readonly Dictionary<int, float[]> _slotBands = new();
@@ -71,6 +79,7 @@ public sealed class ShowView : UserControl
         _spectrum.SetFloor(feedback.FloorDb);
 
         _bypass.Clicked += () => _feedback.SetBypass(!_feedback.IsBypassed);
+        _capture.Clicked += () => _feedback.SetCapture(!_feedback.CaptureEnabled);
         _panic.Fired += () => _feedback.ClearAll(includeLocked: true);
         _mark.Clicked += () =>
         {
@@ -86,16 +95,19 @@ public sealed class ShowView : UserControl
             pad: 14);
         ribbon.CornerRadius = Tokens.RadiusLg;
 
-        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto") };
+        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto") };
         Grid.SetColumn(ribbon, 0);
         Grid.SetColumn(_mark, 1);
         _mark.Margin = new Thickness(14, 0, 0, 0);
-        Grid.SetColumn(_bypass, 2);
+        Grid.SetColumn(_capture, 2);
+        _capture.Margin = new Thickness(14, 0, 0, 0);
+        Grid.SetColumn(_bypass, 3);
         _bypass.Margin = new Thickness(14, 0, 0, 0);
-        Grid.SetColumn(_panic, 3);
+        Grid.SetColumn(_panic, 4);
         _panic.Margin = new Thickness(14, 0, 0, 0);
         actions.Children.Add(ribbon);
         actions.Children.Add(_mark);
+        actions.Children.Add(_capture);
         actions.Children.Add(_bypass);
         actions.Children.Add(_panic);
 
@@ -125,7 +137,8 @@ public sealed class ShowView : UserControl
         _feedback.ChannelsChanged += OnChannels;
         _feedback.EngineOkChanged += OnEngineOk;
         _feedback.SearchRangeChanged += OnRange;
-        _feedback.BypassChanged += _ => Dispatcher.UIThread.Post(RenderState);
+        _feedback.BypassChanged += OnStateFlag;
+        _feedback.CaptureChanged += OnStateFlag;
 
         RebuildTiles();
         RenderState();
@@ -147,7 +160,17 @@ public sealed class ShowView : UserControl
         _feedback.ChannelsChanged -= OnChannels;
         _feedback.EngineOkChanged -= OnEngineOk;
         _feedback.SearchRangeChanged -= OnRange;
+        _feedback.BypassChanged -= OnStateFlag;
+        _feedback.CaptureChanged -= OnStateFlag;
     }
+
+    /// <summary>
+    /// Named so Teardown can actually remove it. BypassChanged was subscribed with
+    /// a lambda and never unsubscribed, so every rebuild of this view left another
+    /// one behind, repainting a dead view on the next toggle. That exact pattern -
+    /// a leaked subscription on this screen - has already crashed this app once.
+    /// </summary>
+    private void OnStateFlag(bool _) => Dispatcher.UIThread.Post(RenderState);
 
     /// <summary>Driven by the window's single animation timer.</summary>
     public void Tick()
@@ -245,6 +268,14 @@ public sealed class ShowView : UserControl
         _bypass.Label = !ok ? "ENGINE DOWN" : bypassed ? "GUARD OFF" : "GUARD ON";
         _bypass.Hint = bypassed ? "tap to protect" : "tap to bypass";
         _bypass.InvalidateVisual();
+
+        // Same vocabulary rule as the guard button: the state is the label, so it
+        // can never be ambiguous whether it is recording. Lit = recording.
+        var capturing = _feedback.CaptureEnabled;
+        _capture.IsLit = capturing;
+        _capture.Label = capturing ? "CAPTURING" : "CAPTURE";
+        _capture.Hint = capturing ? "tap to stop · writing every catch" : "tap · logs every catch";
+        _capture.InvalidateVisual();
 
         _rigValue.Text = ok ? "running" : "down";
         _rigValue.Foreground = ok ? Tokens.Safe : Tokens.Clip;

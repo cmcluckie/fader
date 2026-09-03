@@ -135,7 +135,14 @@ internal static class Program
         // both guard states side by side, so the wording can be checked at a glance
         var guardOn = new TapButton("Guard On", "tap to bypass") { IsLit = true };
         var guardOff = new TapButton("Guard Off", "tap to protect") { IsLit = false };
+        var capOff = new TapButton("CAPTURE", "tap · logs every catch") { IsLit = false };
+        var capOn  = new TapButton("CAPTURING", "tap to stop · writing every catch")
+        {
+            IsLit = true, LitColour = Tokens.CatchColor,
+        };
         var buttons = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 14 };
+        buttons.Children.Add(capOff);
+        buttons.Children.Add(capOn);
         buttons.Children.Add(guardOn);
         buttons.Children.Add(guardOff);
         buttons.Children.Add(new HoldButton("Panic", "hold 1s · clears every notch", Tokens.Clip));

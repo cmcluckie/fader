@@ -143,6 +143,14 @@ public sealed class TapButton : Control
     /// <summary>Lit means the thing this button names is currently active.</summary>
     public bool IsLit { get; set; }
 
+    /// <summary>
+    /// Colour when lit. Teal by default, which is "this is protecting you". A
+    /// recording state wants to read differently from a protecting one even at a
+    /// glance from behind a microphone, so Capture lights pink instead - two lit
+    /// teal buttons side by side say the same thing twice.
+    /// </summary>
+    public Color LitColour { get; set; } = Tokens.AccentColor;
+
     public event Action? Clicked;
 
     private string LabelText => Label;
@@ -174,11 +182,13 @@ public sealed class TapButton : Control
         var h = Bounds.Height;
         var rect = new RoundedRect(new Rect(0, 0, w, h), Tokens.RadiusLg.TopLeft);
 
-        var bg = IsLit ? Tokens.AccentSoft : _hover ? Tokens.Panel3 : Tokens.Panel2;
-        var border = IsLit ? Tokens.Accent : Tokens.Line;
+        var lit = new SolidColorBrush(LitColour);
+        var litSoft = new SolidColorBrush(Color.FromArgb(0x22, LitColour.R, LitColour.G, LitColour.B));
+        var bg = IsLit ? (IBrush) litSoft : _hover ? Tokens.Panel3 : Tokens.Panel2;
+        var border = IsLit ? (IBrush) lit : Tokens.Line;
         ctx.DrawRectangle(bg, new Pen(border, 1), rect);
 
-        var ink = IsLit ? Tokens.Accent : Tokens.Ink;
+        var ink = IsLit ? (IBrush) lit : Tokens.Ink;
         var label = new FormattedText(Label, CultureInfo.InvariantCulture, FlowDirection.LeftToRight,
             new Typeface(Tokens.Display, FontStyle.Normal, FontWeight.Bold), 14, ink);
         ctx.DrawText(label, new Point((w - label.Width) / 2, h / 2 - label.Height + 2));
