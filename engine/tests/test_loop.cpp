@@ -48,6 +48,99 @@ double noise (double amp) { return amp * std::uniform_real_distribution<double> 
 /// (peaks every 1/tau Hz). The first arrival is set from the rig's own measured
 /// mode spacing - a median 179 Hz between adjacent ring frequencies implies a
 /// loop of about 5.6 ms, which is roughly two metres of air.
+/// A shoebox room, modelled the way the physics divides.
+///
+/// Above the Schroeder frequency the field is dense and geometric acoustics is
+/// valid, so the loudspeaker-to-microphone path is built by the image-source
+/// method (Allen & Berkley 1979). Below it the field is a handful of sparse,
+/// high-Q axial and tangential modes, and image-source is simply the wrong model -
+/// so those are added explicitly as resonators derived from the room dimensions.
+///
+/// Both halves come from geometry and absorption, not from taste. That is the
+/// whole point: a path invented to be convenient proves nothing about a room.
+struct Room
+{
+    const char* name = "";
+    double L = 3.0, W = 3.0, H = 3.0;      // metres
+    double alpha = 0.02;                    // mean absorption coefficient
+    double spk[3] = { 0.6, 0.6, 1.2 };      // wedge monitor
+    double mic[3] = { 1.1, 0.6, 1.4 };      // vocal mic, 0.5 m away
+
+    double volume()  const { return L * W * H; }
+    double surface() const { return 2.0 * (L * W + L * H + W * H); }
+    /// Sabine. Crude, but it is the figure the Schroeder expression expects.
+    double rt60()    const { return 0.161 * volume() / (surface() * alpha); }
+    double schroeder() const { return 2000.0 * std::sqrt (rt60() / volume()); }
+    double micDistance() const
+    {
+        double d = 0.0;
+        for (int i = 0; i < 3; ++i) d += (mic[i] - spk[i]) * (mic[i] - spk[i]);
+        return std::sqrt (d);
+    }
+
+    /// Axial, tangential and oblique modes below `upTo`, with their Q from RT60.
+    /// f = (c/2)*sqrt((nx/L)^2 + (ny/W)^2 + (nz/H)^2).
+    struct Mode { double hz, q, gain; };
+    std::vector<Mode> modes (double upTo) const
+    {
+        constexpr double c = 343.0;
+        std::vector<Mode> out;
+        const double t60 = rt60();
+        for (int nx = 0; nx <= 8; ++nx)
+        for (int ny = 0; ny <= 8; ++ny)
+        for (int nz = 0; nz <= 8; ++nz)
+        {
+            if (nx + ny + nz == 0) continue;
+            const double f = 0.5 * c * std::sqrt ((nx / L) * (nx / L)
+                                                + (ny / W) * (ny / W)
+                                                + (nz / H) * (nz / H));
+            if (f < 20.0 || f > upTo) continue;
+            // Q = pi*f*T60/ln(1000): a mode decaying at the room's rate.
+            const double q = juce::MathConstants<double>::pi * f * t60 / std::log (1000.0);
+            // Axial modes carry the most energy, oblique the least.
+            const int order = (nx > 0) + (ny > 0) + (nz > 0);
+            const double gain = order == 1 ? 1.0 : order == 2 ? 0.5 : 0.25;
+            out.push_back ({ f, juce::jlimit (2.0, 400.0, q), gain });
+        }
+        std::sort (out.begin(), out.end(), [] (auto& a, auto& b) { return a.gain > b.gain; });
+        if (out.size() > 24) out.resize (24);
+        return out;
+    }
+
+    /// Image-source taps: delay in samples and pressure gain, strongest first.
+    std::vector<std::pair<int,double>> images (int maxTaps, double maxSeconds) const
+    {
+        constexpr double c = 343.0;
+        const double beta = std::sqrt (1.0 - alpha);
+        std::vector<std::pair<int,double>> taps;
+        const int order = 12;
+        for (int mx = -order; mx <= order; ++mx)
+        for (int my = -order; my <= order; ++my)
+        for (int mz = -order; mz <= order; ++mz)
+        for (int px = 0; px < 2; ++px)
+        for (int py = 0; py < 2; ++py)
+        for (int pz = 0; pz < 2; ++pz)
+        {
+            const double sx = (1 - 2 * px) * spk[0] + 2 * mx * L;
+            const double sy = (1 - 2 * py) * spk[1] + 2 * my * W;
+            const double sz = (1 - 2 * pz) * spk[2] + 2 * mz * H;
+            const double d = std::sqrt ((sx - mic[0]) * (sx - mic[0])
+                                      + (sy - mic[1]) * (sy - mic[1])
+                                      + (sz - mic[2]) * (sz - mic[2]));
+            const double t = d / c;
+            if (t > maxSeconds || d < 0.05) continue;
+            const int refl = std::abs (2 * mx - px) + std::abs (2 * my - py) + std::abs (2 * mz - pz);
+            const double g = std::pow (beta, refl) / (4.0 * juce::MathConstants<double>::pi * d);
+            if (std::abs (g) < 1.0e-6) continue;
+            taps.push_back ({ (int) std::lround (t * kSR), g });
+        }
+        std::sort (taps.begin(), taps.end(),
+                   [] (auto& a, auto& b) { return std::abs (a.second) > std::abs (b.second); });
+        if ((int) taps.size() > maxTaps) taps.resize ((size_t) maxTaps);
+        return taps;
+    }
+};
+
 struct FeedbackPath
 {
     struct Tap { int delay; double gain; };
@@ -163,6 +256,117 @@ struct FeedbackPath
             sum += t.gain * history[idx];
         }
         return shape (sum);
+    }
+};
+
+
+/// A feedback path built from a room rather than invented.
+struct RoomPath
+{
+    std::vector<std::pair<int,double>> taps;
+    std::vector<double> history;
+    size_t writePos = 0;
+
+    // One biquad resonator per room mode, in parallel with the image field.
+    struct Res { double b0,b1,b2,a1,a2, x1,x2,y1,y2, gain; };
+    std::vector<Res> res;
+
+    /// The transducers, which are part of the loop and were missing.
+    ///
+    /// Image-source gains are all positive - beta^n / 4.pi.d, no sign inversion -
+    /// so several hundred taps sum to an enormous gain at DC, and the simulated
+    /// loop went unstable at 23 Hz in every room before any acoustic mode got
+    /// started. Real rigs do not do this because a wedge does not reproduce DC and
+    /// neither does a vocal microphone. Modelling the room and forgetting the
+    /// transducers is modelling half the loop.
+    ///
+    /// Second-order high pass at 70 Hz (wedge) and low pass at 16 kHz (driver
+    /// plus mic), which is a fair caricature of the pair in series.
+    struct Biquad
+    {
+        double b0=1,b1=0,b2=0,a1=0,a2=0,x1=0,x2=0,y1=0,y2=0;
+        double run (double x) noexcept
+        {
+            const double y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2;
+            x2=x1; x1=x; y2=y1; y1=y; return y;
+        }
+        void highpass (double hz, double q)
+        {
+            const double w = 2.0*juce::MathConstants<double>::pi*hz/kSR;
+            const double al = std::sin(w)/(2.0*q), c = std::cos(w), a0 = 1.0+al;
+            b0=(1.0+c)/2.0/a0; b1=-(1.0+c)/a0; b2=(1.0+c)/2.0/a0;
+            a1=(-2.0*c)/a0; a2=(1.0-al)/a0; x1=x2=y1=y2=0.0;
+        }
+        void lowpass (double hz, double q)
+        {
+            const double w = 2.0*juce::MathConstants<double>::pi*hz/kSR;
+            const double al = std::sin(w)/(2.0*q), c = std::cos(w), a0 = 1.0+al;
+            b0=(1.0-c)/2.0/a0; b1=(1.0-c)/a0; b2=(1.0-c)/2.0/a0;
+            a1=(-2.0*c)/a0; a2=(1.0-al)/a0; x1=x2=y1=y2=0.0;
+        }
+    };
+    Biquad hp1, hp2, lp;
+
+    void build (const Room& room, int maxTaps = 700)
+    {
+        taps = room.images (maxTaps, 0.35);
+        int longest = 8;
+        for (auto& t : taps) longest = std::max (longest, t.first);
+        history.assign ((size_t) longest + 8, 0.0);
+        writePos = 0;
+
+        // Normalise the direct field so gain sweeps mean the same thing in every
+        // room - otherwise a big room just looks stable because it is quiet.
+        double peak = 0.0;
+        for (auto& t : taps) peak = std::max (peak, std::abs (t.second));
+        if (peak > 0.0) for (auto& t : taps) t.second /= peak;
+
+        hp1.highpass (70.0, 0.707);
+        hp2.highpass (70.0, 0.707);      // 4th order overall: a wedge really does roll off
+        lp.lowpass  (16000.0, 0.707);
+
+        res.clear();
+        for (const auto& m : room.modes (room.schroeder()))
+        {
+            // Constant-Q bandpass at the mode frequency.
+            const double w = 2.0 * juce::MathConstants<double>::pi * m.hz / kSR;
+            const double alpha = std::sin (w) / (2.0 * m.q);
+            const double a0 = 1.0 + alpha;
+            Res r {};
+            r.b0 = alpha / a0; r.b1 = 0.0; r.b2 = -alpha / a0;
+            r.a1 = (-2.0 * std::cos (w)) / a0;
+            r.a2 = (1.0 - alpha) / a0;
+            r.gain = m.gain;
+            res.push_back (r);
+        }
+    }
+
+    void push (double x) noexcept
+    {
+        history[writePos] = x;
+        writePos = (writePos + 1) % history.size();
+    }
+
+    double read() noexcept
+    {
+        double direct = 0.0;
+        for (const auto& t : taps)
+        {
+            const size_t idx = (writePos + history.size() - (size_t) t.first) % history.size();
+            direct += t.second * history[idx];
+        }
+        // Modal field, driven by the same signal. Below the Schroeder frequency
+        // this is the room; the image sum up there is not to be believed.
+        const size_t newest = (writePos + history.size() - 1) % history.size();
+        const double drive = history[newest];
+        double modal = 0.0;
+        for (auto& r : res)
+        {
+            const double y = r.b0 * drive + r.b1 * r.x1 + r.b2 * r.x2 - r.a1 * r.y1 - r.a2 * r.y2;
+            r.x2 = r.x1; r.x1 = drive; r.y2 = r.y1; r.y1 = y;
+            modal += r.gain * y;
+        }
+        return lp.run (hp2.run (hp1.run (direct + 0.5 * modal)));
     }
 };
 
@@ -383,6 +587,142 @@ Ring findRing (double firstMs, double aimHz, double resonanceDb, double q, doubl
     return r;
 }
 
+
+/// Run the loop in a real room. Returns MSG in dB.
+int lastFilters = 0, lastEvents = 0; double lastRingHz = 0.0;
+
+double roomMsg (const Room& room, bool guard, double lo = -60.0, double hi = 30.0)
+{
+    constexpr int block = 64;
+    for (int it = 0; it < 10; ++it)
+    {
+        const double mid = 0.5 * (lo + hi);
+        RoomPath path; path.build (room);
+
+        fk::FeedbackDetector det;
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 60.0f;
+        det.prepare (kSR); det.setParams (p);
+
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, block);
+        bank.initialCutDb   = tuning.initialCut;
+        bank.fastTrackCutDb = tuning.initialCut - 3.0;
+        bank.softCapDb      = tuning.softCap;
+        bank.hardCapDb      = tuning.hardCap;
+        bank.defaultQ       = tuning.q;
+        bank.holdSeconds    = 4.0;
+
+        const double G = std::pow (10.0, mid / 20.0);
+        std::vector<float> buf ((size_t) block);
+        std::vector<double> out ((size_t) block, 0.0);
+        double elapsed = 0.0;
+        bool blew = false;
+
+        for (int b = 0; b < (int) (5.0 * kSR / block) && ! blew; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double mic = noise (0.0006) + path.read();
+                if (! std::isfinite (mic) || std::abs (mic) > 50.0) { blew = true; break; }
+                buf[(size_t) i] = (float) mic;
+                path.push (G * out[(size_t) i]);
+            }
+            if (blew) break;
+            if (guard)
+            {
+                det.push (buf.data(), block);
+                fk::FeedbackDetector::Event ev;
+                while (det.popEvent (ev))
+                {
+                    ++lastEvents; lastRingHz = ev.freq;
+                    bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+                }
+                bank.process (buf.data(), block, false);
+            }
+            for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];
+            elapsed += (double) block / kSR;
+            if (guard) bank.release (elapsed);
+        }
+        if (blew) hi = mid; else lo = mid;
+        if (guard)
+        {
+            lastFilters = 0;
+            for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++lastFilters;
+        }
+    }
+    return lo;
+}
+
+
+/// Run one room at a fixed gain and report what the detector actually saw.
+void probeRoom (const Room& room, double gainDb, bool guard)
+{
+    constexpr int block = 64;
+    RoomPath path; path.build (room);
+
+    fk::FeedbackDetector det;
+    fk::FeedbackDetector::Params p;
+    p.floorDb = -95.0f; p.minFreq = 60.0f;
+    det.prepare (kSR); det.setParams (p);
+
+    fk::NotchBank<48> bank;
+    bank.prepare (kSR, block);
+    bank.initialCutDb = -12; bank.softCapDb = -18; bank.hardCapDb = -24;
+    bank.defaultQ = 25; bank.holdSeconds = 4.0;
+
+    const double G = std::pow (10.0, gainDb / 20.0);
+    std::vector<float> buf ((size_t) block);
+    std::vector<double> out ((size_t) block, 0.0);
+    double elapsed = 0.0, peak = -200.0;
+    int events = 0; double firstHz = 0.0, firstAtDb = 0.0;
+    bool blew = false;
+
+    for (int b = 0; b < (int) (6.0 * kSR / block) && ! blew; ++b)
+    {
+        for (int i = 0; i < block; ++i)
+        {
+            const double mic = noise (0.0006) + path.read();
+            if (! std::isfinite (mic) || std::abs (mic) > 50.0) { blew = true; break; }
+            buf[(size_t) i] = (float) mic;
+            if (std::abs (mic) > 1e-9) peak = std::max (peak, 20.0 * std::log10 (std::abs (mic)));
+            path.push (G * out[(size_t) i]);
+        }
+        if (blew) break;
+        if (guard)
+        {
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+            {
+                if (events++ == 0) { firstHz = ev.freq; firstAtDb = ev.levelDb; }
+                bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+            }
+            bank.process (buf.data(), block, false);
+        }
+        for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];
+        elapsed += (double) block / kSR;
+        if (guard) bank.release (elapsed);
+    }
+    int filters = 0;
+    for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++filters;
+    if (guard)
+    {
+        // What did the detector actually have in front of it?
+        float best = -200.0f; int bestBin = 0;
+        for (int i = 1; i < fk::FeedbackDetector::numBins; ++i)
+            if (det.getBinDb (i) > best) { best = det.getBinDb (i); bestBin = i; }
+        std::printf ("      [ran %.0f ms, loudest bin %.0f Hz at %.1f dB]\n",
+                     elapsed * 1000.0,
+                     bestBin * kSR / fk::FeedbackDetector::fftSize, best);
+    }
+    std::printf ("  %-18s %+6.1f dB %-6s peak %6.1f dB  %s  events %4d  filters %2d",
+                 room.name, gainDb, guard ? "guard" : "bare", peak,
+                 blew ? "RANAWAY" : "stable ", events, filters);
+    if (events) std::printf ("  first %.0f Hz at %.1f dB", firstHz, firstAtDb);
+    std::printf ("\n");
+}
+
 /// Does the simulation obey the physics? Growth rate in dB/s should equal excess
 /// loop gain divided by loop delay (van Waterschoot & Moonen; RaneNote 158). If
 /// this does not hold, nothing else the simulator says is worth reading.
@@ -515,6 +855,40 @@ int main()
         std::printf ("%-28s %6.1f dB %9d\n", label, on - off, at.notches);
     }
     tuning = Tuning{};
+
+    // ---- the room ladder --------------------------------------------------
+    std::printf ("\nThe room ladder - geometry, not invented paths\n");
+    std::printf ("%-22s %7s %7s %8s %9s %8s %8s\n",
+                 "room", "V m3", "RT60", "f_c", "MSG off", "ASG", "filters");
+
+    const Room rungs[] = {
+        { "1 concrete cube",  3.0,  3.0,  3.0, 0.02, { 0.6,0.6,1.2 }, { 1.1,0.6,1.4 } },
+        { "2 gymnasium",     30.0, 18.0,  9.0, 0.03, { 3.0,4.0,1.6 }, { 4.0,4.0,1.5 } },
+        { "3 church nave",   40.0, 14.0, 12.0, 0.05, { 8.0,7.0,4.0 }, { 3.0,7.0,1.5 } },
+        { "4 hotel ballroom",26.0, 16.0,  3.6, 0.12, { 3.0,5.0,1.5 }, { 4.0,5.0,1.5 } },
+        { "5 treated club",  14.0, 10.0,  4.5, 0.28, { 2.0,3.0,1.4 }, { 2.8,3.0,1.5 } },
+        { "6 large studio",  25.0, 18.0,  8.0, 0.35, { 4.0,5.0,1.6 }, { 4.8,5.0,1.5 } },
+    };
+
+    for (const auto& room : rungs)
+    {
+        const double off = roomMsg (room, false);
+        lastEvents = 0; lastFilters = 0; lastRingHz = 0.0;
+        const double on  = roomMsg (room, true);
+        char det[32];
+        std::snprintf (det, sizeof det, "%d/%d", lastFilters, lastEvents);
+        std::printf ("%-22s %7.0f %6.1fs %7.0f %8.1f %8.1f %8s  ring %.0f Hz\n",
+                     room.name, room.volume(), room.rt60(), room.schroeder(),
+                     off, on - off, det, lastRingHz);
+    }
+
+    std::printf ("\nAbove threshold, explicitly - is the detector even seeing it?\n");
+    for (const auto& room : { rungs[0], rungs[1], rungs[5] })
+    {
+        const double off = roomMsg (room, false);
+        probeRoom (room, off + 3.0, false);
+        probeRoom (room, off + 3.0, true);
+    }
 
     std::printf ("\nFor reference: Sabine claim 6-9 dB typical; frequency shifting buys\n"
                  "2-6 dB; hearing-aid adaptive cancellation exceeds 10 dB. Under 3 dB and\n"
