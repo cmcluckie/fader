@@ -67,6 +67,30 @@ target_link_libraries(fk-tests
     PRIVATE juce::juce_dsp
     PUBLIC  juce::juce_recommended_config_flags)
 
+# ---------------------------------------------------------------------------
+# fk-loop — closed-loop feedback simulation.
+#
+# Every test in fk-tests is open loop: inject a tone, ask whether it was found.
+# None of them can answer whether a notch actually STOPS feedback, which is why
+# that question kept having to be settled on a stage. This puts the real detector
+# and the real notch bank inside a real loop and measures Added Stable Gain.
+#
+#   cmake --build build --target fk-loop && ./build/fk-loop_artefacts/Release/fk-loop
+# ---------------------------------------------------------------------------
+juce_add_console_app(fk-loop PRODUCT_NAME "fk-loop")
+
+target_sources(fk-loop PRIVATE tests/test_loop.cpp)
+
+target_compile_definitions(fk-loop PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+target_link_libraries(fk-loop
+    PRIVATE juce::juce_dsp
+    PUBLIC  juce::juce_recommended_config_flags)
+
 # Build:
 #   brew install cmake            # not present in the dev sandbox
 #   cmake -B build -G "Unix Makefiles"   # or -G Xcode if full Xcode is installed
