@@ -144,12 +144,19 @@ public:
         // improved by 6 dB and dullness worsened by 8; that is not a trade worth
         // making. Between a nuisance and a howl the allowance grows smoothly, so
         // the guard can fight hard without ever being handed the whole spectrum.
+        // Already handled: another filter here would only stack depth on a
+        // frequency that is under control, which is how the top end got dulled.
+        if (cutAtDb (f, existing) <= coveredDb)
+            return -1;
+
+        // Region already dark: adding more here makes a shelf rather than a notch.
+        // Scaled by urgency - a nuisance does not justify dullness, a howl does.
         if (budgetDb < 0.0)
         {
             const double urgency = juce::jlimit (0.0, 1.0, (levelDb - budgetQuietDb)
                                                            / (urgentDb - budgetQuietDb));
             const double allowed = budgetDb + urgency * (budgetUrgentDb - budgetDb);
-            if (neighbourhoodCutDb (f, existing) <= allowed)
+            if (regionalCutDb (f, existing) <= allowed)
                 return -1;
         }
         if (existing >= 0)
@@ -382,43 +389,90 @@ public:
 
     // Most cut allowed to accumulate in any one region of the spectrum. 0 = no
     // limit. Bounds how dull the guard is permitted to make things.
-    double budgetDb       = -12.0;
+    double budgetDb       = -5.0;
 
     // How the allowance grows between a nuisance and a howl. At quietDb and below
     // the guard may stack budgetDb; at urgentDb and above, budgetUrgentDb.
+    // A frequency already cut this deep does not need another filter on it.
+    double coveredDb      = -15.0;
+
     double budgetQuietDb  = -65.0;
     double urgentDb       = -30.0;
-    double budgetUrgentDb = -26.0;
+    double budgetUrgentDb = -7.0;
 
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 
 private:
-    /** Roughly how much cut is already sitting on this part of the spectrum.
-        Cheap approximation - overlap weighted linearly by distance in bandwidths -
-        because this runs on the audio thread and the exact biquad sum is not worth
-        it for a budget check. */
-    double neighbourhoodCutDb (double f, int skip) const noexcept
+    /** How much cut is already sitting on this exact frequency.
+
+        The real peaking-EQ magnitude, summed, not an approximation. It used to
+        weight each filter linearly over six bandwidths, and that was wrong in the
+        direction that matters: measured at the rig, a ring at 7274 Hz with a filter
+        179 Hz away was scored as already having 21.6 dB on it, so the budget
+        refused to cover it - while the actual response there was 8 dB. The ring
+        climbed to -13.6 dB under 8 dB of cut, and across the whole session the
+        median cut ON a caught frequency was 3.1 dB, with a quarter of catches
+        getting less than 2.
+
+        A budget that guesses generously about coverage does not limit dullness, it
+        just leaves rings uncovered. This runs on triggers, not per sample, so the
+        trigonometry is affordable.
+    */
+    double cutAtDb (double f, int skip) const noexcept
     {
+        if (f <= 0.0) return 0.0;
+        const double w = 2.0 * juce::MathConstants<double>::pi * f / fs;
+        const double cosW = std::cos (w), cos2W = std::cos (2.0 * w);
+        const double sinW = std::sin (w), sin2W = std::sin (2.0 * w);
+
         double total = 0.0;
         for (int i = 0; i < MaxNotches; ++i)
         {
             if (i == skip) continue;        // the filter that will handle f itself
             const auto& s = slots[(size_t) i];
-            if (! s.active) continue;
-            // Six bandwidths, not one. The nominal f/Q understates what a deep
-            // notch actually does to its surroundings by a wide margin - T21
-            // measured a -24 dB filter spanning 1449 Hz between its -1 dB points
-            // at 5 kHz, against a nominal bandwidth of 200. Sizing the budget's
-            // window on the nominal figure meant filters 560 Hz apart counted as
-            // not overlapping at all, when in truth they overlap almost entirely.
-            const double bw = std::max (10.0, s.freq / defaultQ);
-            const double d  = std::abs (s.freq - f) / (6.0 * bw);
-            // targetDb, not currentDb: the smoothed value lags behind by the
-            // attack time, so a budget read from it lets a burst of triggers all
-            // pass the check before any of them has taken effect.
-            if (d < 1.0) total += s.targetDb * (1.0 - d);
+            // targetDb, not currentDb: the smoothed value lags by the attack time,
+            // so a budget read from it lets a burst of triggers all pass the check
+            // before any of them has taken effect.
+            if (! s.active || s.targetDb > -0.1) continue;
+
+            const double q  = qForDepth (s.q, s.targetDb);
+            const double A  = std::pow (10.0, s.targetDb / 40.0);
+            const double w0 = 2.0 * juce::MathConstants<double>::pi * s.freq / fs;
+            const double a  = std::sin (w0) / (2.0 * q);
+            const double c0 = std::cos (w0);
+
+            auto mag = [&] (double k0, double k1, double k2)
+            {
+                const double re = k0 + k1 * cosW + k2 * cos2W;
+                const double im = -(k1 * sinW + k2 * sin2W);
+                return std::sqrt (re * re + im * im);
+            };
+            const double num = mag (1.0 + a * A, -2.0 * c0, 1.0 - a * A);
+            const double den = mag (1.0 + a / A, -2.0 * c0, 1.0 - a / A);
+            total += 20.0 * std::log10 (std::max (num / den, 1.0e-12));
         }
         return total;
+    }
+
+    /** The average cut across half an octave either side of f.
+
+        Two different questions were being asked of one number. "Is this exact
+        frequency already handled" decides whether another filter would be
+        redundant; "is this region already too dull" decides whether the guard is
+        about to turn itself into a shelf. The old estimate answered neither
+        properly: generous enough about coverage to leave rings uncovered, and the
+        only thing standing between the bank and a high-cut.
+    */
+    double regionalCutDb (double f, int skip) const noexcept
+    {
+        double total = 0.0;
+        int n = 0;
+        for (int k = -4; k <= 4; ++k)
+        {
+            total += cutAtDb (f * std::pow (2.0, k / 8.0), skip);
+            ++n;
+        }
+        return total / (double) n;
     }
 
     int findFree() const noexcept

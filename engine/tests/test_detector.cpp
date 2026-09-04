@@ -1210,7 +1210,13 @@ int main()
         const int loud  = deploy (-15.0);   // howl: it should not
 
         std::snprintf (msg, sizeof msg, "quiet ring -> %d filters, runaway -> %d filters", quiet, loud);
-        report ("T33 a runaway gets more filters than a nuisance", loud > quiet + 4, msg);
+        // The margin is narrower than it first was - 12 against 15, where it used
+        // to be 8 against 18. That is the coverage estimate becoming accurate
+        // rather than the urgency rule weakening: the old figure was inflated by a
+        // budget that hallucinated coverage and blocked the quiet case far too
+        // hard. Flattening the urgency now gives 12 against 12, so it still earns
+        // its place; it just no longer has a broken baseline to look good against.
+        report ("T33 a runaway gets more filters than a nuisance", loud >= quiet + 3, msg);
     }
 
     // ---- T34: a ring under a coincident voice partial ----------------------
@@ -1385,6 +1391,65 @@ int main()
         std::snprintf (msg, sizeof msg, "broad hump: %d catches (want 0); ring: %s",
                        broadHits, ring.fired ? "caught" : "MISSED");
         report ("T36 a broad hump is not carved into rings", broadHits == 0 && ring.fired, msg);
+    }
+
+    // ---- T37: a ring beside a filter must get its own ----------------------
+    // The three-second and ten-second rings, finally explained by measurement
+    // rather than inference. From the capture log of 2026-09-04, with the cut
+    // recorded AT each caught frequency for the first time:
+    //
+    //   median cut on a caught frequency          -3.1 dB
+    //   catches receiving less than 2 dB          26%
+    //   loud catches: median cut / distance       -3.2 dB / 272 Hz away
+    //   worst: 7274 Hz reaching -13.6 dB under    -8.0 dB, nearest filter 179 Hz off
+    //
+    // The filters were landing BESIDE the rings. The budget estimated neighbouring
+    // cut with a linear falloff over six bandwidths, which scored that 179 Hz gap
+    // as 21.6 dB of coverage when the real response there was 8. So it refused to
+    // place a filter on a ring that had almost nothing on it, believing the job
+    // done. A budget that guesses generously about coverage does not limit
+    // dullness - it just leaves rings uncovered.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        double t = 0.0;
+        // An established deep filter, as at the rig...
+        for (int i = 0; i < 6; ++i, t += 0.02) bank.trigger (7453.0, t, true, -40.0);
+        // ...then a ring 179 Hz away, climbing hard.
+        for (int i = 0; i < 6; ++i, t += 0.02) bank.trigger (7274.0, t, true, -20.0);
+
+        // How much is actually on the ring?
+        auto respDb = [] (double fq, double f0, double cutDb, double qq)
+        {
+            const double A = std::pow (10.0, cutDb / 40.0);
+            const double w = 2.0 * M_PI * f0 / kSR, a = std::sin (w) / (2.0 * qq);
+            const double W = 2.0 * M_PI * fq / kSR;
+            auto mag = [W] (double c0, double c1, double c2)
+            {
+                const double re = c0 + c1 * std::cos (W) + c2 * std::cos (2.0 * W);
+                const double im = -(c1 * std::sin (W) + c2 * std::sin (2.0 * W));
+                return std::sqrt (re * re + im * im);
+            };
+            return 20.0 * std::log10 (std::max (mag (1.0 + a * A, -2.0 * std::cos (w), 1.0 - a * A)
+                                              / mag (1.0 + a / A, -2.0 * std::cos (w), 1.0 - a / A), 1.0e-12));
+        };
+
+        double onTheRing = 0.0;
+        int active = 0;
+        for (int i = 0; i < 48; ++i)
+        {
+            const auto& sl = bank.getSlot (i);
+            if (! sl.active) continue;
+            ++active;
+            onTheRing += respDb (7274.0, sl.freq, sl.targetDb,
+                                 fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+        }
+        std::snprintf (msg, sizeof msg, "%d filters, %.1f dB on the ring itself", active, onTheRing);
+        // It measured -8.0 dB at the rig and ran away regardless.
+        report ("T37 a ring beside an existing filter still gets covered",
+                active >= 2 && onTheRing <= -15.0, msg);
     }
 
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
