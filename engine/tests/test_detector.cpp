@@ -1334,6 +1334,59 @@ int main()
                 active > 10 && active < 48 && sum / n >= -12.0, msg);
     }
 
+    // ---- T36: broad energy is not a ring ------------------------------------
+    // "Started out better, then as I sang it got worse." The eq log shows exactly
+    // that: 0 filters at rest, climbing to 29 and -7.3 dB across a fifteen-second
+    // phrase, then releasing again afterwards. The release was working; the
+    // accumulation was not earned.
+    //
+    // The capture says why. 121 distinct frequencies in 16 seconds, only 2.5% of
+    // them narrow, with adjacent buckets at 10000-10400 Hz and 6800-6900 Hz that
+    // are plainly ONE broad feature carved into a dozen separate suspects - and
+    // every suspect becomes a filter. A voice formant and a sibilant both do this.
+    //
+    // Feedback is a pure tone: through this window a ring measures about 94 Hz
+    // between its -20 dB skirts. Width was already being measured at every catch
+    // and simply not used.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 1000.0f;
+
+        // A formant-like hump: band-limited noise, loud, ~600 Hz wide.
+        fk::FeedbackDetector det; init (det, p);
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        const double w0 = 2.0 * M_PI * 9000.0 / kSR, alpha = std::sin (w0) / (2.0 * 15.0);
+        const double b0 = alpha, b2 = -alpha, a0 = 1 + alpha,
+                     a1 = -2 * std::cos (w0), a2 = 1 - alpha;
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        int broadHits = 0;
+        for (int b = 0; b < (int) (5.0 * kSR / block); ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                const double x = noise (1.0);
+                const double y = (b0 * x + b2 * x2 - a1 * y1 - a2 * y2) / a0;
+                x2 = x1; x1 = x; y2 = y1; y1 = y;
+                buf[(size_t) i] = (float) (y * 0.5 * std::min (1.0, t / 0.3) + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev)) ++broadHits;
+        }
+
+        // ...and a genuine ring in the same place, which must still be caught.
+        fk::FeedbackDetector det2; init (det2, p);
+        auto ring = runTone (det2, 5.0, [] (double t) {
+            return std::make_pair (9000.0, juce::jmin (0.00016 * std::pow (10.0, 30.0 * t / 20.0), 0.006));
+        }, 0.00008, 0.05);
+
+        std::snprintf (msg, sizeof msg, "broad hump: %d catches (want 0); ring: %s",
+                       broadHits, ring.fired ? "caught" : "MISSED");
+        report ("T36 a broad hump is not carved into rings", broadHits == 0 && ring.fired, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

@@ -47,6 +47,20 @@ public:
         // every filter was spent on something inaudible, and the pile of them was
         // not. Track from the floor; only act once it is worth acting on.
         float  actionDb       = -75.0f;
+        // Feedback is a pure tone. Through this window a real ring measures about
+        // 94 Hz between its -20 dB skirts, and the rig's own good sessions bear
+        // that out: 63% of real catches under 50 Hz wide, 96% under 250.
+        //
+        // Broad energy is not a ring, however prominent its local maxima. A voice
+        // formant or a sibilant carries several, and each was becoming a separate
+        // suspect and then a separate filter: measured while singing, 121 distinct
+        // frequencies in 16 seconds with only 2.5% of them narrow, adjacent buckets
+        // at 10000-10400 and 6800-6900 that are plainly one feature carved up. That
+        // is what built 29 filters and -7.3 dB over a fifteen-second phrase.
+        //
+        // At 200 Hz this keeps 94% of the frequencies caught in a session that
+        // sounded right and rejects 64% of those from one that did not.
+        float  maxWidthHz     = 200.0f;
         // Only true silence, not "quiet". This was -55 dB, meant to stop the
         // detector chasing noise between songs, and it is the reason rings took so
         // long to find: a marked miss at 7 kHz was 33 dB prominent and climbing
@@ -308,6 +322,16 @@ private:
                 const float freq = refineFrequency (i, here);
 
                 const float prom = here - localFloor;
+
+                // Too broad to be a ring. Checked here rather than at firing so a
+                // formant never becomes a suspect at all - it is the suspects that
+                // turn into filters, and a wide feature spawns many of them.
+                if (params.maxWidthHz > 0.0f)
+                {
+                    float wlo = 0.0f, whi = 0.0f;
+                    peakWidth (freq, wlo, whi);
+                    if (whi - wlo > params.maxWidthHz) continue;
+                }
 
                 if (peakCount < maxPeaks)
                 {
