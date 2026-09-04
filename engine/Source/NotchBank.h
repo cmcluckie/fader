@@ -144,10 +144,19 @@ public:
         // improved by 6 dB and dullness worsened by 8; that is not a trade worth
         // making. Between a nuisance and a howl the allowance grows smoothly, so
         // the guard can fight hard without ever being handed the whole spectrum.
+        // Why a trigger was refused. Twice now I have reasoned about which of
+        // these fired and been wrong, from logs that recorded the outcome and not
+        // the cause - exactly the gap the detector had before it started saying
+        // which gate stopped a candidate.
+        lastRefusal = Refusal::None;
+
         // Already handled: another filter here would only stack depth on a
         // frequency that is under control, which is how the top end got dulled.
         if (cutAtDb (f, existing) <= coveredDb)
+        {
+            lastRefusal = Refusal::AlreadyCovered;
             return -1;
+        }
 
         // Region already dark: adding more here makes a shelf rather than a notch.
         // Scaled by urgency - a nuisance does not justify dullness, a howl does.
@@ -157,7 +166,10 @@ public:
                                                            / (urgentDb - budgetQuietDb));
             const double allowed = budgetDb + urgency * (budgetUrgentDb - budgetDb);
             if (regionalCutDb (f, existing) <= allowed)
+            {
+                lastRefusal = Refusal::RegionTooDark;
                 return -1;
+            }
         }
         if (existing >= 0)
         {
@@ -202,7 +214,7 @@ public:
 
         int slot = findFree();
         if (slot < 0) slot = stealLru();          // pool full: evict the coldest notch
-        if (slot < 0) return -1;                   // everything locked
+        if (slot < 0) { lastRefusal = Refusal::AllLocked; return -1; }
 
         const double openDb = (offenderCount (f, nowSeconds) >= fastTrackStrikes)
                                   ? fastTrackCutDb : initialCutDb;
@@ -393,12 +405,27 @@ public:
 
     // How the allowance grows between a nuisance and a howl. At quietDb and below
     // the guard may stack budgetDb; at urgentDb and above, budgetUrgentDb.
+    //
+    // The range matters more than either end. It was -5 to -7, a two-decibel
+    // spread, which meant two or three filters anywhere in the region blocked
+    // everything - including a ring screaming at -17 dB with 5 dB on it and 33 free
+    // slots in the pool. Measured at the rig: 7108 Hz and 9897 Hz caught dozens of
+    // times each, the nearest filter 344 and 508 Hz away, the cut on them never
+    // moving off -5 and -3 dB. The budget was refusing to cover them.
+    //
+    // Widening the urgent end does not touch the quiet case - T29 is unchanged at
+    // -9.3 dB across it - because level is what selects between them. Dullness
+    // while singing and dullness during a howl are different questions and level
+    // is what tells them apart.
+    enum class Refusal { None = 0, AlreadyCovered = 1, RegionTooDark = 2, AllLocked = 3 };
+    Refusal lastRefusal = Refusal::None;
+
     // A frequency already cut this deep does not need another filter on it.
     double coveredDb      = -15.0;
 
     double budgetQuietDb  = -65.0;
     double urgentDb       = -30.0;
-    double budgetUrgentDb = -7.0;
+    double budgetUrgentDb = -16.0;
 
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 

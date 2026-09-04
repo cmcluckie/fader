@@ -13,8 +13,14 @@ public sealed record FkStatus(bool EngineOk, float CpuLoad);
 /// <summary><c>/fk/event</c> — a detection fired on a channel.</summary>
 public sealed record FkDetection(int Channel, float Hz, float LevelDb,
                                  float AgeMs = 0f, float WidthLoHz = 0f, float WidthHiHz = 0f,
-                                 int Path = 0)
+                                 int Path = 0, int Refused = 0)
 {
+    /// <summary>Why the bank declined to put a filter on this, if it did.</summary>
+    public string Refusal => Refused switch
+    {
+        1 => "already-covered", 2 => "region-too-dark", 3 => "all-locked", _ => "placed",
+    };
+
     /// <summary>Which gate let it through - the thing every "why was that slow" needs.</summary>
     public string Gate => Path switch
     {

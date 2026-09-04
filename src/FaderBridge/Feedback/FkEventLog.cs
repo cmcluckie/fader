@@ -62,7 +62,7 @@ public sealed class FkEventLog : IDisposable
         var line = string.Create(CultureInfo.InvariantCulture,
             $"{seconds:F3},{ChannelName(slot)},{(guardOn ? 1 : 0)},{d.Hz:F1},{d.LevelDb:F1}," +
             $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1},{d.Gate}," +
-            $"{cutHere:F1},{nearestNotchHz:F0}");
+            $"{cutHere:F1},{nearestNotchHz:F0},{d.Refusal}");
         lock (_lock)
         {
             _capture.WriteLine(line);
@@ -83,7 +83,7 @@ public sealed class FkEventLog : IDisposable
                 _capture = new StreamWriter(CapturePath, append: false) { AutoFlush = true };
                 _capture.WriteLine("seconds,channel,guard_on,frequency_hz,level_db," +
                                    "age_ms,width_lo_hz,width_hi_hz,width_hz,gate," +
-                                   "cut_here_db,nearest_notch_hz");
+                                   "cut_here_db,nearest_notch_hz,filter");
             }
             catch { _capture = null; }
         }

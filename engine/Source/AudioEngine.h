@@ -87,7 +87,7 @@ public:
     void lockAll     (int ch) noexcept                          { push ({ Cmd::LockAll, ch, 0, 0, 0 }); }
 
     // ---- telemetry (called from the OSC thread) -----------------------------
-    struct EventOut { int ch; float hz; float levelDb; int path; float ageMs; float widthLoHz; float widthHiHz; };
+    struct EventOut { int ch; float hz; float levelDb; int path; float ageMs; float widthLoHz; float widthHiHz; int refused; };
     struct RejectOut { int ch; float hz; float levelDb; int reason; int frames; };
 
     bool popReject (RejectOut& out) noexcept
@@ -218,7 +218,10 @@ public:
 
                     FeedbackDetector::Event ev;
                     while (det.popEvent (ev))
-                        pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
+                        // Capture mode with the guard off: nothing is triggered, so
+                        // there is no refusal to report.
+                        pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs,
+                                     ev.widthLoHz, ev.widthHiHz, 0 });
 
                     FeedbackDetector::Reject rj;
                     while (det.popReject (rj))
@@ -245,8 +248,10 @@ public:
                 FeedbackDetector::Event ev;
                 while (det.popEvent (ev))
                 {
-                    bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);  // bank owns depth
-                    pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
+                    const int placed = bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+                    const int refused = placed >= 0 ? 0 : (int) bank.lastRefusal;
+                    pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs,
+                                 ev.widthLoHz, ev.widthHiHz, refused });
                 }
 
                 bank.process (out, numSamples, false);

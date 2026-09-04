@@ -156,8 +156,12 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             // The engine now sends age and peak width alongside; the three-argument
             // form is kept so an older engine binary still reports detections.
-            case "/fk/event" when m.Arguments is [int ch, float hz, float lvl, float age, float wlo, float whi, int path]:
-                DetectionReceived?.Invoke(new FkDetection(ch, hz, lvl, age, wlo, whi, path));
+            case "/fk/event" when m.Arguments is [int ch, float hz, float lvl, float age, float wlo, float whi, int path, int refused]:
+                DetectionReceived?.Invoke(new FkDetection(ch, hz, lvl, age, wlo, whi, path, refused));
+                break;
+
+            case "/fk/event" when m.Arguments is [int ch0, float hz0, float lvl0, float age0, float wlo0, float whi0, int path0]:
+                DetectionReceived?.Invoke(new FkDetection(ch0, hz0, lvl0, age0, wlo0, whi0, path0));
                 break;
 
             case "/fk/event" when m.Arguments is [int ch1, float hz1, float lvl1, float age1, float wlo1, float whi1]:
