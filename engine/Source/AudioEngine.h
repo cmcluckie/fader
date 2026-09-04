@@ -245,7 +245,7 @@ public:
                 FeedbackDetector::Event ev;
                 while (det.popEvent (ev))
                 {
-                    bank.trigger (ev.freq, elapsed, ev.growing);  // bank owns depth
+                    bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);  // bank owns depth
                     pushEvent ({ ch, ev.freq, ev.levelDb, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
                 }
 

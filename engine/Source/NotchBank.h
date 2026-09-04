@@ -105,7 +105,8 @@ public:
         Returns the slot index, or -1 only if every slot is locked. `nowSeconds`
         is the transport clock.
     */
-    int trigger (double f, double nowSeconds, bool growing = true) noexcept
+    int trigger (double f, double nowSeconds, bool growing = true,
+                 double levelDb = -1000.0) noexcept
     {
         // A budget on how much cut may pile up in one region.
         //
@@ -126,7 +127,17 @@ public:
         // its full cut, so the filter that would handle this frequency is excluded
         // from its own budget check. Otherwise a notch blocks its own escalation,
         // which T10 caught - it stopped at -12 dB instead of reaching the cap.
-        if (budgetDb < 0.0 && neighbourhoodCutDb (f, existing) <= budgetDb)
+        // ...but only while the problem is small. A ring at -70 dB is inaudible
+        // and not worth dulling a vocal to stop; one at -15 dB is screaming, and
+        // then dullness is plainly the better of two bad outcomes.
+        //
+        // Measured on 2026-09-04: a runaway reaching -12.9 dB across 6.6-12.3 kHz,
+        // and the guard answered it with 5 to 8 filters out of 48 and -3.5 dB of
+        // average cut. It was barely fighting, because a flat budget cannot tell an
+        // emergency from a quiet afternoon. The budget exists to stop the guard
+        // dulling the top end for no reason - not to stand back during a howl.
+        const bool urgent = levelDb >= urgentDb;
+        if (! urgent && budgetDb < 0.0 && neighbourhoodCutDb (f, existing) <= budgetDb)
             return -1;
         if (existing >= 0)
         {
@@ -359,6 +370,9 @@ public:
     // Most cut allowed to accumulate in any one region of the spectrum. 0 = no
     // limit. Bounds how dull the guard is permitted to make things.
     double budgetDb       = -12.0;
+
+    // Above this level the budget is set aside: this is a runaway, not a nuisance.
+    double urgentDb       = -50.0;
 
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 

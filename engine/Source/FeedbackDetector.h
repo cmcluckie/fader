@@ -287,7 +287,7 @@ private:
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
         {
-            constexpr int floorHalfWidth = 20;   // ~+-470 Hz of local median
+            const int floorHalfWidth = floorHalfWidthOverride > 0 ? floorHalfWidthOverride : 20;
             const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
             const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
@@ -947,6 +947,9 @@ private:
     std::array<float, (size_t) numBins>*   prevIm = &imB;
     bool hasPrevFrame = false;
     int  samplesSeen  = 0;
+public:
+    int floorHalfWidthOverride = 0;   // test hook
+private:
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
     std::array<std::atomic<float>, (size_t) numBins> publishedMag;
 

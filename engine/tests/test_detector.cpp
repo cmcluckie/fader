@@ -1178,6 +1178,41 @@ int main()
         report ("T32 a ring is still caught in a busy spectrum", caught == 4, msg);
     }
 
+    // ---- T33: the budget must not stand back during a runaway ---------------
+    // Measured on 2026-09-04: feedback running away to -12.9 dB across 6.6-12.3
+    // kHz, and the guard answered with 5 to 8 filters out of 48 and -3.5 dB of
+    // average cut. It was barely fighting.
+    //
+    // The stacking budget did that. It was added to stop the guard turning itself
+    // into a high-cut filter (T29) and it works - but a flat budget cannot tell an
+    // emergency from a quiet afternoon, so it throttled the response to a howl
+    // exactly as hard as it throttles a -70 dB nuisance. A ring that quiet is not
+    // worth dulling a vocal to stop; one at -15 dB plainly is.
+    {
+        auto deploy = [] (double levelDb)
+        {
+            fk::NotchBank<48> bank;
+            bank.prepare (kSR, 64);
+            bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+            // A runaway hops modes: many frequencies across the top end at once.
+            double t = 0.0;
+            for (int round = 0; round < 6; ++round)
+                for (int i = 0; i < 18; ++i, t += 0.01)
+                    bank.trigger (6600.0 + 320.0 * i, t, true, levelDb);
+
+            int active = 0;
+            for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++active;
+            return active;
+        };
+
+        const int quiet = deploy (-70.0);   // nuisance: the budget should hold
+        const int loud  = deploy (-15.0);   // howl: it should not
+
+        std::snprintf (msg, sizeof msg, "quiet ring -> %d filters, runaway -> %d filters", quiet, loud);
+        report ("T33 a runaway gets more filters than a nuisance", loud > quiet + 4, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
