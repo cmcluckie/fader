@@ -882,6 +882,34 @@ int main()
                      off, on - off, det, lastRingHz);
     }
 
+    // ---- Rule 2, tested on geometry ---------------------------------------
+    // The physics says the excess loop gain is a fraction of a dB. If that is
+    // right, a 24 dB cut is answering a 0.3 dB problem and the depth is pure
+    // damage. Asked on invented comb paths it came out flat; asked on rooms it
+    // either holds or it does not.
+    std::printf ("\nNotch depth against ASG, per room\n");
+    std::printf ("%-18s %-22s %7s %8s\n", "room", "tuning", "ASG", "filters");
+    for (const auto& room : { rungs[0], rungs[1], rungs[3], rungs[5] })
+    {
+        tuning = Tuning{};
+        const double off = roomMsg (room, false);
+        for (auto t : { Tuning{ -12, -18, -24, 25 },
+                        Tuning{  -6, -12, -18, 25 },
+                        Tuning{  -3,  -6, -12, 25 },
+                        Tuning{  -6, -12, -18, 12 },
+                        Tuning{  -3,  -6,  -9, 12 } })
+        {
+            tuning = t;
+            lastFilters = 0;
+            const double on = roomMsg (room, true);
+            char label[48];
+            std::snprintf (label, sizeof label, "open %.0f cap %.0f Q%.0f",
+                           t.initialCut, t.hardCap, t.q);
+            std::printf ("%-18s %-22s %6.1f dB %8d\n", room.name, label, on - off, lastFilters);
+        }
+        tuning = Tuning{};
+    }
+
     std::printf ("\nAbove threshold, explicitly - is the detector even seeing it?\n");
     for (const auto& room : { rungs[0], rungs[1], rungs[5] })
     {
