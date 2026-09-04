@@ -55,20 +55,97 @@ struct FeedbackPath
     std::vector<double> history;
     size_t writePos = 0;
 
-    void prepare (double firstMs)
+    // A resonance in the path, which is what decides WHERE a room rings.
+    //
+    // Delays alone give a flat comb: every peak is equally likely, so the loop
+    // picks a frequency essentially at random and the simulation cannot be aimed.
+    // Real rooms are not flat. Below the Schroeder frequency the field is a few
+    // sparse high-Q axial modes; above it, the horn and driver response dominate.
+    // One peaking biquad models either, and it is the knob that lets this rig's
+    // own measured ring frequencies be reproduced.
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+    void resonate (double hz, double gainDb, double q)
     {
-        const int d0 = (int) std::lround (firstMs * 0.001 * kSR);
+        const double A = std::pow (10.0, gainDb / 40.0);
+        const double w = 2.0 * juce::MathConstants<double>::pi * hz / kSR;
+        const double alpha = std::sin (w) / (2.0 * q);
+        const double a0 = 1.0 + alpha / A;
+        b0 = (1.0 + alpha * A) / a0;
+        b1 = (-2.0 * std::cos (w))   / a0;
+        b2 = (1.0 - alpha * A) / a0;
+        a1 = (-2.0 * std::cos (w))   / a0;
+        a2 = (1.0 - alpha / A) / a0;
+        x1 = x2 = y1 = y2 = 0.0;
+    }
+
+    double shape (double x) noexcept
+    {
+        const double y = b0 * x + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x; y2 = y1; y1 = y;
+        return y;
+    }
+
+    /// Aim the path so a 0-degree phase point lands on `aimHz`.
+    ///
+    /// Magnitude alone cannot steer a feedback loop - it rings only where the gain
+    /// condition AND the phase condition are met at once. Boosting a frequency
+    /// whose loop phase is -177 degrees achieves nothing, which is exactly what
+    /// the first version of this did: every aim rang at 141 Hz because the comb's
+    /// own peaks won regardless of where the resonance was put.
+    ///
+    /// For a dominant first tap the phase is -2.pi.f.d/fs, so it passes through
+    /// zero when f.d/fs is a whole number. Round the delay to the nearest such
+    /// value near the wanted length, and keep the later taps small so they colour
+    /// the comb without moving the phase much.
+    /// `extra` is any delay elsewhere in the loop - notably the processing block,
+    /// which is part of the round trip and therefore part of the phase. Leaving it
+    /// out was a real error: the first version aimed the acoustic path alone, and
+    /// with a 64-sample block unaccounted for the phase at the target was nowhere
+    /// near zero, so the loop rang wherever it liked.
+    static int delayFor (double aimHz, double approxMs, int extra = 0)
+    {
+        const double want = approxMs * 0.001 * kSR;
+        const double period = kSR / aimHz;                 // samples per cycle
+        const int k = std::max (2, (int) std::lround ((want + extra) / period));
+        return std::max (8, (int) std::lround (k * period) - extra);
+    }
+
+    void prepareAimed (double firstMs, double aimHz, int extra)
+    {
+        prepare (firstMs, 0.0);
+        const int d0 = delayFor (aimHz, firstMs, extra);
         taps = {
             { d0,                        1.00 },
-            { (int) (d0 * 1.7) + 31,    -0.55 },
-            { (int) (d0 * 2.6) + 67,     0.34 },
-            { (int) (d0 * 4.1) + 113,   -0.21 },
-            { (int) (d0 * 6.3) + 191,    0.13 },
+            { (int) (d0 * 1.7) + 31,    -0.28 },
+            { (int) (d0 * 2.6) + 67,     0.17 },
+            { (int) (d0 * 4.1) + 113,   -0.10 },
+            { (int) (d0 * 6.3) + 191,    0.06 },
         };
         int longest = 0;
         for (auto& t : taps) longest = std::max (longest, t.delay);
         history.assign ((size_t) longest + 8, 0.0);
         writePos = 0;
+        x1 = x2 = y1 = y2 = 0.0;
+    }
+
+    void prepare (double firstMs, double aimHz = 0.0)
+    {
+        const int d0 = aimHz > 0.0 ? delayFor (aimHz, firstMs)
+                                   : (int) std::lround (firstMs * 0.001 * kSR);
+        taps = {
+            { d0,                        1.00 },
+            { (int) (d0 * 1.7) + 31,    -0.28 },
+            { (int) (d0 * 2.6) + 67,     0.17 },
+            { (int) (d0 * 4.1) + 113,   -0.10 },
+            { (int) (d0 * 6.3) + 191,    0.06 },
+        };
+        int longest = 0;
+        for (auto& t : taps) longest = std::max (longest, t.delay);
+        history.assign ((size_t) longest + 8, 0.0);
+        writePos = 0;
+        x1 = x2 = y1 = y2 = 0.0;
     }
 
     void push (double x) noexcept
@@ -77,7 +154,7 @@ struct FeedbackPath
         writePos = (writePos + 1) % history.size();
     }
 
-    double read() const noexcept
+    double read() noexcept
     {
         double sum = 0.0;
         for (const auto& t : taps)
@@ -85,7 +162,7 @@ struct FeedbackPath
             const size_t idx = (writePos + history.size() - (size_t) t.delay) % history.size();
             sum += t.gain * history[idx];
         }
-        return sum;
+        return shape (sum);
     }
 };
 
@@ -180,6 +257,42 @@ Run runLoop (double gainDb, bool guard, double firstMs, double seconds = 6.0)
     return r;
 }
 
+/// MSG for a path with a resonance in it.
+double findMsgFor (FeedbackPath&, double firstMs, double aimHz, double resDb, double q)
+{
+    constexpr int block = 64;
+    double lo = -60.0, hi = 20.0;
+    for (int it = 0; it < 10; ++it)
+    {
+        const double mid = 0.5 * (lo + hi);
+        FeedbackPath p2;
+        p2.prepareAimed (firstMs, aimHz, block);
+        p2.resonate (aimHz, resDb, q);
+        const double G = std::pow (10.0, mid / 20.0);
+        std::vector<double> out ((size_t) block, 0.0);
+        std::vector<double> in  ((size_t) block, 0.0);
+        bool blew = false;
+        for (int b = 0; b < (int) (4.0 * kSR / block) && ! blew; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double mic = noise (0.0006) + p2.read();
+                if (! std::isfinite (mic) || std::abs (mic) > 50.0) { blew = true; break; }
+                in[(size_t) i] = mic;
+                // Sample-accurate: what goes back into the room is last block's
+                // processed output, pushed one sample at a time. Pushing a whole
+                // block after reading it made every read in the block see stale
+                // history, which quantised the path to block boundaries and
+                // destroyed the phase the aim depends on.
+                p2.push (G * out[(size_t) i]);
+            }
+            out = in;                       // no guard here: this is bare MSG
+        }
+        if (blew) hi = mid; else lo = mid;
+    }
+    return lo;
+}
+
 /// Maximum Stable Gain: the highest gain at which the loop does not run away.
 double findMsg (bool guard, double firstMs, double lo = -40.0, double hi = 20.0)
 {
@@ -193,6 +306,81 @@ double findMsg (bool guard, double firstMs, double lo = -40.0, double hi = 20.0)
     }
     return lo;
 }
+}
+
+/// Where did it actually ring, and how fast did it build?
+///
+/// The point of calibration: aim the path's resonance at a frequency this rig has
+/// really produced and check the loop rings THERE, at a rate its logs really
+/// recorded. A simulator that rings wherever it likes cannot be used to test
+/// anything, and one that only rings where it is aimed is proof of nothing until
+/// the aim is set from measurements rather than convenience.
+struct Ring { double hz = 0.0; double rateDbPerSec = 0.0; };
+
+Ring findRing (double firstMs, double aimHz, double resonanceDb, double q, double excessDb)
+{
+    FeedbackPath path;
+    path.prepareAimed (firstMs, aimHz, 64);
+    path.resonate (aimHz, resonanceDb, q);
+
+    // Threshold for THIS path, then push just past it.
+    const double msg = findMsgFor (path, firstMs, aimHz, resonanceDb, q);
+    const double G = std::pow (10.0, (msg + excessDb) / 20.0);
+
+    path.prepareAimed (firstMs, aimHz, 64);
+    path.resonate (aimHz, resonanceDb, q);
+
+    constexpr int block = 64;
+    constexpr int fftOrder = 13, fftSize = 1 << fftOrder;
+    std::vector<float> buf ((size_t) block);
+    std::vector<float> tail ((size_t) fftSize * 2, 0.0f);
+    size_t tailPos = 0;
+    std::vector<double> env;
+
+    std::vector<double> outBlock ((size_t) block, 0.0);
+    for (int b = 0; b < (int) (5.0 * kSR / block); ++b)
+    {
+        double pk = 0.0;
+        bool dead = false;
+        for (int i = 0; i < block; ++i)
+        {
+            const double mic = noise (0.0006) + path.read();
+            if (! std::isfinite (mic) || std::abs (mic) > 50.0) { dead = true; break; }
+            buf[(size_t) i] = (float) mic;
+            pk = std::max (pk, std::abs (mic));
+            tail[tailPos] = (float) mic;
+            tailPos = (tailPos + 1) % (size_t) fftSize;
+            path.push (G * outBlock[(size_t) i]);      // sample-accurate, one block late
+        }
+        if (dead) break;
+        if (pk > 0.0) env.push_back (20.0 * std::log10 (pk));
+        for (int i = 0; i < block; ++i) outBlock[(size_t) i] = (double) buf[(size_t) i];
+    }
+
+    // Which frequency dominates the last window?
+    juce::dsp::FFT fft (fftOrder);
+    std::vector<float> fd ((size_t) fftSize * 2, 0.0f);
+    for (int i = 0; i < fftSize; ++i)
+        fd[(size_t) i] = tail[(tailPos + (size_t) i) % (size_t) fftSize]
+                         * (0.5f - 0.5f * std::cos (2.0f * (float) M_PI * (float) i / (float) fftSize));
+    fft.performFrequencyOnlyForwardTransform (fd.data());
+
+    Ring r;
+    float best = 0.0f;
+    for (int i = 2; i < fftSize / 2; ++i)
+        if (fd[(size_t) i] > best) { best = fd[(size_t) i]; r.hz = i * kSR / fftSize; }
+
+    // ...and how fast it climbed, between fixed dB marks.
+    auto firstAbove = [&env] (double db) -> long
+    {
+        for (size_t i = 0; i < env.size(); ++i) if (env[i] >= db) return (long) i;
+        return -1;
+    };
+    const long a = firstAbove (-55.0), b2 = firstAbove (-15.0);
+    if (a >= 0 && b2 > a)
+        r.rateDbPerSec = (env[(size_t) b2] - env[(size_t) a])
+                         / ((double) (b2 - a) * block / kSR);
+    return r;
 }
 
 /// Does the simulation obey the physics? Growth rate in dB/s should equal excess
@@ -259,6 +447,34 @@ int main()
     std::printf ("===============================\n\n");
     std::printf ("Validating against theory: growth rate = excess gain / loop delay\n");
     validate (5.6);
+
+    // ---- calibration against the rig -------------------------------------
+    //
+    // Every frequency below was produced by the real system and is in its logs.
+    // The high ones are from 2026-09-04 (the rings that were escaping); the low
+    // ones from the studio on 08-26, the night the low end was the whole problem.
+    // Loop delay 5.6 ms is the rig's own, inferred from a median 179 Hz spacing
+    // between adjacent ring frequencies.
+    //
+    // Aiming the path's resonance at each and checking the loop rings THERE is
+    // what makes this simulator worth trusting for anything else.
+    std::printf ("\nCalibration against the rig's own measured rings\n");
+    std::printf ("%9s %10s %11s %12s %10s\n", "aimed at", "rang at", "error", "growth", "band");
+
+    struct Case { double hz; const char* band; };
+    for (auto c : { Case{  281.0, "low"  }, Case{  469.0, "low"  }, Case{  656.0, "low"  },
+                    Case{ 1125.0, "low"  }, Case{ 2438.0, "mid"  }, Case{ 4715.0, "mid"  },
+                    Case{ 7108.0, "high" }, Case{ 9897.0, "high" }, Case{ 14565.0, "high" } })
+    {
+        // A room mode below the Schroeder frequency is sparse and high-Q; a horn
+        // or driver peak up high is broader. That is the physical difference
+        // between the two bands, so the simulation should reflect it.
+        const bool low = c.hz < 1500.0;
+        const auto r = findRing (5.6, c.hz, low ? 14.0 : 10.0, low ? 20.0 : 8.0, 0.5);
+        const double err = 100.0 * std::abs (r.hz - c.hz) / c.hz;
+        std::printf ("%7.0f Hz %8.0f Hz %9.1f%% %9.0f dB/s %10s\n",
+                     c.hz, r.hz, err, r.rateDbPerSec, c.band);
+    }
     std::printf ("\n");
     std::printf ("Real detector and real notch bank inside an actual feedback loop.\n"
                  "Feedback path: sparse reflections, first arrival as given.\n\n");
