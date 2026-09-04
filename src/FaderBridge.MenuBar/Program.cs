@@ -107,6 +107,7 @@ internal static class Program
         // make visible, so it is the case the render harness should show.
         var many = new List<(float, float)>
         {
+            (6010f, -18f), (10500f, -24f),   // the two rings from the 09-04 screenshot
             (3803f, -24f), (4342f, -24f), (4985f, -18f), (5316f, -24f), (5819f, -24f),
             (6029f, -24f), (6464f, -10.5f), (7020f, -18f), (7403f, -12f), (8107f, -12f),
             (8648f, -12f), (9304f, -18f), (9744f, -12f), (10235f, -12f), (10621f, -24f),
@@ -312,8 +313,11 @@ internal static class Program
         for (var i = 0; i < bands.Length; i++)
         {
             var floor = -74f + 5f * MathF.Sin(i * 0.7f);
-            var peak1 = 44f * MathF.Exp(-MathF.Pow((i - 62) / 1.6f, 2));
-            var peak2 = 30f * MathF.Exp(-MathF.Pow((i - 74) / 1.8f, 2));
+            // Two tall narrow rings at 6.0 and 10.5 kHz - the pair photographed at
+            // the rig on 09-04, which the guard was catching while the display made
+            // it look untouched.
+            var peak1 = 44f * MathF.Exp(-MathF.Pow((i - 82) / 1.1f, 2));
+            var peak2 = 40f * MathF.Exp(-MathF.Pow((i - 90) / 1.1f, 2));
             bands[i] = floor + peak1 + peak2;
         }
         return bands;

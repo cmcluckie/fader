@@ -50,6 +50,8 @@ public sealed class GuardSpectrum : Control
     private static readonly IPen EqPen =
         new Pen(new SolidColorBrush(Color.FromArgb(0xF0, 0xF4, 0x5D, 0x9C)), 1.8);
     private static readonly IBrush EqFill = new SolidColorBrush(Color.FromArgb(0x3A, 0xF4, 0x5D, 0x9C));
+    private static readonly IPen InputLine =
+        new Pen(new SolidColorBrush(Color.FromArgb(0x55, 0x78, 0xF0, 0xAA)), 1.0);
     private static readonly IPen NotchTick =
         new Pen(new SolidColorBrush(Color.FromArgb(0x70, 0xF4, 0x5D, 0x9C)), 1.5);
 
@@ -116,11 +118,25 @@ public sealed class GuardSpectrum : Control
             ctx.DrawText(Label(text), new Point(x + 4, h - 15));
         }
 
+        // Two traces, because one of them was misleading on its own.
+        //
+        // What was drawn here is the signal the DETECTOR sees, and the detector
+        // analyses before the filters - so a ring the guard was killing perfectly
+        // still appeared at full height, and the only honest reading of this
+        // display was "it found it and did nothing". Reported from the rig exactly
+        // that way, of a ring that measurement shows is caught within 1 dB of the
+        // action threshold.
+        //
+        // The filled trace is now what LEAVES: the input with the notch response
+        // applied. The faint line above it is the input, so the size of the gap
+        // between them is the guard's work, visible.
         var composite = Composite();
         if (composite is not null)
         {
-            ctx.DrawGeometry(AreaFill(h), null, Area(composite, w, h));
-            ctx.DrawGeometry(null, Curve, Line(composite, w, h));
+            var outp = AfterNotches(composite);
+            ctx.DrawGeometry(AreaFill(h), null, Area(outp, w, h));
+            ctx.DrawGeometry(null, InputLine, Line(composite, w, h));
+            ctx.DrawGeometry(null, Curve, Line(outp, w, h));
         }
 
         DrawBand(ctx, w, h);
@@ -130,6 +146,29 @@ public sealed class GuardSpectrum : Control
     }
 
     /// <summary>Loudest armed channel per band - the "is anything ringing" view.</summary>
+    /// <summary>
+    /// The input with the live filters applied - what the desk actually receives.
+    /// Computed rather than measured: the engine analyses pre-notch, so this is the
+    /// only way to show the result without a second FFT on the audio thread. It
+    /// uses the same filter maths as the engine (see NotchResponse), so it is exact
+    /// to the extent that those agree.
+    /// </summary>
+    private float[] AfterNotches(float[] input)
+    {
+        var live = _notches.Where(n => n.Hz > 0f && n.Depth < -0.1f)
+                           .Select(n => (n.Hz, n.Depth))
+                           .ToList();
+        if (live.Count == 0) return input;
+
+        var outp = new float[Bands];
+        for (var i = 0; i < Bands; i++)
+        {
+            var hz = 20.0 * Math.Pow(1000.0, i / (double) (Bands - 1));
+            outp[i] = (float) Math.Max(input[i] + NotchResponse.SumDb(live, hz), MinDb);
+        }
+        return outp;
+    }
+
     private float[]? Composite()
     {
         if (_slots.Count == 0) return null;
