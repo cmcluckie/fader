@@ -60,7 +60,7 @@ public sealed class FkEventLog : IDisposable
         if (_capture is null) return;
         var line = string.Create(CultureInfo.InvariantCulture,
             $"{seconds:F3},{ChannelName(slot)},{(guardOn ? 1 : 0)},{d.Hz:F1},{d.LevelDb:F1}," +
-            $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1}");
+            $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1},{d.Gate}");
         lock (_lock)
         {
             _capture.WriteLine(line);
@@ -80,7 +80,7 @@ public sealed class FkEventLog : IDisposable
                     _directory, $"capture-log-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
                 _capture = new StreamWriter(CapturePath, append: false) { AutoFlush = true };
                 _capture.WriteLine("seconds,channel,guard_on,frequency_hz,level_db," +
-                                   "age_ms,width_lo_hz,width_hi_hz,width_hz");
+                                   "age_ms,width_lo_hz,width_hi_hz,width_hz,gate");
             }
             catch { _capture = null; }
         }

@@ -1213,6 +1213,72 @@ int main()
         report ("T33 a runaway gets more filters than a nuisance", loud > quiet + 4, msg);
     }
 
+    // ---- T34: a ring under a coincident voice partial ----------------------
+    // From an investigation into why recurring modes are sometimes slow. At the
+    // rig, 14400 Hz rang 37 times in 40 seconds and 9900 Hz 29 times; each had a
+    // BEST catch of 21 ms and a median of 130-250 ms.
+    //
+    // The hypothesis was that they were being tagged harmonic on the slow visits
+    // and made to serve the voice-protection wait, and that a detector-side memory
+    // of proven offenders would let them skip it. That was built and could not be
+    // shown to help in any scenario, so it was reverted - see the commit. What the
+    // attempt did establish is worth keeping, because it bounds what any amount of
+    // tuning can achieve:
+    //
+    //   - A ring sitting on a voice partial and QUIETER than it is not detectable.
+    //     At 2520 Hz under a 252 Hz note, a ring 8 dB below the tenth partial was
+    //     never caught, with or without any relaxation. That is masking, not a
+    //     threshold, and no gate change reaches it.
+    //   - A ring that dominates the partial it shares a frequency with IS caught,
+    //     which is what this asserts.
+    //   - Every attempt to time the GATES ended up timing the ring's climb
+    //     instead: at 60 dB/s a 50 dB rise takes 833 ms, and that is what the
+    //     numbers turned out to be measuring. Gate latency is small next to
+    //     journey time, which is worth remembering before tuning gates again.
+    {
+        constexpr double hz = 2520.0;          // 10 x the 252 Hz note sung below
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f; p.minFreq = 40.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double rp = 0.0, vp = 0.0;
+        int loudCaught = 0, quietCaught = 0;
+
+        for (int visit = 0; visit < 4; ++visit)
+        {
+            const bool loud = visit >= 2;      // 0.05 dominates the partial; 0.006 does not
+            bool got = false;
+            for (int b = 0; b < (int) (2.0 * kSR / block) && ! got; ++b)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const double t = (double) (b * block + i) / kSR;
+                    vp += 2.0 * M_PI * (252.0 * (1.0 + 0.004 * std::sin (2.0 * M_PI * 4.6 * t))) / kSR;
+                    double v = 0.0;
+                    for (int h = 2; h <= 13; ++h) v += (0.05 / std::sqrt ((double) h)) * std::sin (vp * h);
+                    rp += 2.0 * M_PI * hz / kSR;
+                    v += juce::jmin (0.00016 * std::pow (10.0, 60.0 * t / 20.0), loud ? 0.05 : 0.006)
+                         * std::sin (rp);
+                    buf[(size_t) i] = (float) (v + noise (0.00008));
+                }
+                det.push (buf.data(), block);
+                fk::FeedbackDetector::Event ev;
+                while (det.popEvent (ev))
+                    if (! got && std::abs (ev.freq - (float) hz) < 70.0f)
+                    { got = true; if (loud) ++loudCaught; else ++quietCaught; }
+            }
+            for (auto& x : buf) x = 0.0f;
+            for (int b = 0; b < (int) (0.6 * kSR / block); ++b) det.push (buf.data(), block);
+        }
+
+        std::snprintf (msg, sizeof msg, "dominant ring caught %d/2; masked ring caught %d/2 (expected 0)",
+                       loudCaught, quietCaught);
+        report ("T34 a ring is caught when it dominates a coincident partial",
+                loudCaught == 2, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

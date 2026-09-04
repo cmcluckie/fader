@@ -87,7 +87,7 @@ public:
     void lockAll     (int ch) noexcept                          { push ({ Cmd::LockAll, ch, 0, 0, 0 }); }
 
     // ---- telemetry (called from the OSC thread) -----------------------------
-    struct EventOut { int ch; float hz; float levelDb; float ageMs; float widthLoHz; float widthHiHz; };
+    struct EventOut { int ch; float hz; float levelDb; int path; float ageMs; float widthLoHz; float widthHiHz; };
     struct RejectOut { int ch; float hz; float levelDb; int reason; int frames; };
 
     bool popReject (RejectOut& out) noexcept
@@ -218,7 +218,7 @@ public:
 
                     FeedbackDetector::Event ev;
                     while (det.popEvent (ev))
-                        pushEvent ({ ch, ev.freq, ev.levelDb, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
+                        pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
 
                     FeedbackDetector::Reject rj;
                     while (det.popReject (rj))
@@ -246,7 +246,7 @@ public:
                 while (det.popEvent (ev))
                 {
                     bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);  // bank owns depth
-                    pushEvent ({ ch, ev.freq, ev.levelDb, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
+                    pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs, ev.widthLoHz, ev.widthHiHz });
                 }
 
                 bank.process (out, numSamples, false);

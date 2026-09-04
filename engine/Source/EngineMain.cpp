@@ -169,7 +169,7 @@ private:
             AudioEngine::EventOut e;
             while (engine.popEvent (e))
                 sender.send (juce::OSCMessage ("/fk/event", e.ch, e.hz, e.levelDb,
-                                               e.ageMs, e.widthLoHz, e.widthHiHz));
+                                               e.ageMs, e.widthLoHz, e.widthHiHz, e.path));
 
             if ((mask & 0x2) && tick % 2 == 0)  sendNotches();    // ~10 Hz
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz

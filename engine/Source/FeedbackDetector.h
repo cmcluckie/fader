@@ -87,6 +87,11 @@ public:
         // Measurements for the capture log. Free to collect - the numbers are all
         // in hand at the moment of firing - and impossible to reconstruct after the
         // fact, which is what every "why was that slow" investigation has needed.
+        // Which gate let it through. Every "why was that slow" question so far has
+        // been answered by guessing at this and then failing to reproduce it: the
+        // detector knows, and it costs a byte to say.
+        //   1 = growth (fast path)   2 = sustain (steady and risen)   3 = escalation
+        int   path   = 0;
         float ageMs  = 0.0f;    // tracked for this long before it was called feedback
         float widthLoHz = 0.0f; // -6 dB skirts of the peak as measured in the frame
         float widthHiHz = 0.0f; // that fired it
@@ -743,6 +748,7 @@ private:
                 // Path A - the classic attack: stable, and climbing.
                 bool fire = s.frames >= need && spread <= stabTol
                             && growth >= needGrowth && monotonic;
+                int firedPath = fire ? 1 : 0;
 
                 // Path B - the slow creep. A ring hovering near unity loop gain
                 // grows too slowly to trip the growth gate, but it sits dead
@@ -771,6 +777,7 @@ private:
                     const int  riseN = juce::jlimit (sustainN, windowSize - 1, s.frames - 1);
                     const bool grew  = riseOver (s, riseN) >= params.sustainRiseDb;
                     fire = longEnough && steady && grew;
+                    if (fire) firedPath = 2;
                     // Steady over 30 ms but wandering over 300 ms is a different
                     // failure from growing too slowly, and wants a different fix.
                     sustainWander = longEnough && ! steady;
@@ -802,7 +809,7 @@ private:
                     {
                         float wlo = 0.0f, whi = 0.0f;
                         peakWidth (s.freq, wlo, whi);
-                        pushEvent ({ s.freq, s.lastLevel, true, ageMsOf (s), wlo, whi });
+                        pushEvent ({ s.freq, s.lastLevel, true, firedPath, ageMsOf (s), wlo, whi });
                     }
                 }
             }
@@ -848,7 +855,7 @@ private:
                     {
                         float wlo = 0.0f, whi = 0.0f;
                         peakWidth (s.freq, wlo, whi);
-                        pushEvent ({ s.freq, s.lastLevel, climbing, ageMsOf (s), wlo, whi });
+                        pushEvent ({ s.freq, s.lastLevel, climbing, 3, ageMsOf (s), wlo, whi });
                     }
                 }
             }
