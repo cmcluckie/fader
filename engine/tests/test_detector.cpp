@@ -1279,6 +1279,61 @@ int main()
                 loudCaught == 2, msg);
     }
 
+    // ---- T35: even a runaway may not become a high-cut ----------------------
+    // T29 holds the quiet case and T33 makes sure a howl gets a harder answer than
+    // a nuisance. Between them sat the gap this closes: the first version of the
+    // urgency rule switched the budget OFF above -50 dB, so a busy passage went
+    // straight to the ceiling. Measured on 2026-09-04: 48 filters - the entire
+    // pool - and -10 to -14 dB across the top end, which is the muffling back.
+    // Escape improved by 6 dB and dullness worsened by 8. Not a trade worth making.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
+
+        // A sustained howl right across the top end, as loud as the rig has seen.
+        double t = 0.0;
+        for (int round = 0; round < 10; ++round)
+            for (int i = 0; i < 26; ++i, t += 0.01)
+                bank.trigger (4000.0 + 480.0 * i, t, true, -13.0);
+
+        auto respDb = [] (double fq, double f0, double cutDb, double qq)
+        {
+            const double A = std::pow (10.0, cutDb / 40.0);
+            const double w = 2.0 * M_PI * f0 / kSR, a = std::sin (w) / (2.0 * qq);
+            const double W = 2.0 * M_PI * fq / kSR;
+            auto mag = [W] (double c0, double c1, double c2)
+            {
+                const double re = c0 + c1 * std::cos (W) + c2 * std::cos (2.0 * W);
+                const double im = -(c1 * std::sin (W) + c2 * std::sin (2.0 * W));
+                return std::sqrt (re * re + im * im);
+            };
+            return 20.0 * std::log10 (std::max (mag (1.0 + a * A, -2.0 * std::cos (w), 1.0 - a * A)
+                                              / mag (1.0 + a / A, -2.0 * std::cos (w), 1.0 - a / A), 1.0e-12));
+        };
+
+        double sum = 0.0; int n = 0; int active = 0;
+        for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++active;
+        for (double f = 4000.0; f <= 16000.0; f *= 1.02)
+        {
+            double tot = 0.0;
+            for (int i = 0; i < 48; ++i)
+            {
+                const auto& sl = bank.getSlot (i);
+                if (sl.active) tot += respDb (f, sl.freq, sl.targetDb,
+                                              fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+            }
+            sum += tot; ++n;
+        }
+        std::snprintf (msg, sizeof msg, "%d filters, top end averages %.1f dB", active, sum / n);
+        // The bound, not silence: unlimited gives -16 dB and the whole pool, and
+        // the rig complained at -13.6 dB SUSTAINED. A howl lasting seconds may cost
+        // -11 dB - you would rather be briefly dull than howling - so long as it is
+        // bounded and releases afterwards, which is what makes it brief.
+        report ("T35 a runaway fights hard but not to the ceiling",
+                active > 10 && active < 48 && sum / n >= -12.0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

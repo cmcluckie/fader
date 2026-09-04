@@ -136,9 +136,22 @@ public:
         // average cut. It was barely fighting, because a flat budget cannot tell an
         // emergency from a quiet afternoon. The budget exists to stop the guard
         // dulling the top end for no reason - not to stand back during a howl.
-        const bool urgent = levelDb >= urgentDb;
-        if (! urgent && budgetDb < 0.0 && neighbourhoodCutDb (f, existing) <= budgetDb)
-            return -1;
+        // The budget SCALES with how bad things are; it does not switch off.
+        //
+        // First version made it vanish above -50 dB, and a busy passage went
+        // straight to the ceiling: measured, 48 filters - the entire pool - and
+        // -10 to -14 dB across the top end, which is the muffling back. Escape
+        // improved by 6 dB and dullness worsened by 8; that is not a trade worth
+        // making. Between a nuisance and a howl the allowance grows smoothly, so
+        // the guard can fight hard without ever being handed the whole spectrum.
+        if (budgetDb < 0.0)
+        {
+            const double urgency = juce::jlimit (0.0, 1.0, (levelDb - budgetQuietDb)
+                                                           / (urgentDb - budgetQuietDb));
+            const double allowed = budgetDb + urgency * (budgetUrgentDb - budgetDb);
+            if (neighbourhoodCutDb (f, existing) <= allowed)
+                return -1;
+        }
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
@@ -371,8 +384,11 @@ public:
     // limit. Bounds how dull the guard is permitted to make things.
     double budgetDb       = -12.0;
 
-    // Above this level the budget is set aside: this is a runaway, not a nuisance.
-    double urgentDb       = -50.0;
+    // How the allowance grows between a nuisance and a howl. At quietDb and below
+    // the guard may stack budgetDb; at urgentDb and above, budgetUrgentDb.
+    double budgetQuietDb  = -65.0;
+    double urgentDb       = -30.0;
+    double budgetUrgentDb = -26.0;
 
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 
