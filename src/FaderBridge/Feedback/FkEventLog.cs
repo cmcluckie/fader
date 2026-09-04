@@ -55,12 +55,14 @@ public sealed class FkEventLog : IDisposable
     /// detection keeps running while the guard is off, so a session played half on
     /// and half off yields two comparable sets rather than one set and a silence.
     /// </summary>
-    public void WriteCapture(double seconds, int slot, bool guardOn, FkDetection d)
+    public void WriteCapture(double seconds, int slot, bool guardOn, FkDetection d,
+                             double cutHere, double nearestNotchHz)
     {
         if (_capture is null) return;
         var line = string.Create(CultureInfo.InvariantCulture,
             $"{seconds:F3},{ChannelName(slot)},{(guardOn ? 1 : 0)},{d.Hz:F1},{d.LevelDb:F1}," +
-            $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1},{d.Gate}");
+            $"{d.AgeMs:F0},{d.WidthLoHz:F1},{d.WidthHiHz:F1},{d.WidthHz:F1},{d.Gate}," +
+            $"{cutHere:F1},{nearestNotchHz:F0}");
         lock (_lock)
         {
             _capture.WriteLine(line);
@@ -80,7 +82,8 @@ public sealed class FkEventLog : IDisposable
                     _directory, $"capture-log-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
                 _capture = new StreamWriter(CapturePath, append: false) { AutoFlush = true };
                 _capture.WriteLine("seconds,channel,guard_on,frequency_hz,level_db," +
-                                   "age_ms,width_lo_hz,width_hi_hz,width_hz,gate");
+                                   "age_ms,width_lo_hz,width_hi_hz,width_hz,gate," +
+                                   "cut_here_db,nearest_notch_hz");
             }
             catch { _capture = null; }
         }
