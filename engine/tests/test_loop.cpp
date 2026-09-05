@@ -376,6 +376,7 @@ struct Run
     double peakDb   = -200.0;   // loudest the microphone saw
     int    notches  = 0;        // filters the guard deployed
     double seconds  = 0.0;      // when it blew up, if it did
+    double eqDb     = 0.0;      // summed response the programme is put through
 };
 
 /// One pass of the loop at a fixed gain.
@@ -866,8 +867,254 @@ void validate (double firstMs)
     }
 }
 
+/// One run in a room at a fixed gain, reporting what it cost as well as whether
+/// it held. Cost and outcome belong in the same result - a guard that survives by
+/// removing the top end has not solved anything.
+Run runRoomAt (const Room& room, double gainDb, bool guard)
+{
+    constexpr int block = 64;
+    RoomPath path; path.build (room);
+
+    fk::FeedbackDetector det;
+    fk::FeedbackDetector::Params p;
+    p.floorDb = -95.0f; p.minFreq = 60.0f;
+    det.prepare (kSR); det.setParams (p);
+
+    fk::NotchBank<48> bank;
+    bank.prepare (kSR, block);
+    bank.initialCutDb = -6; bank.softCapDb = -12; bank.hardCapDb = -18;
+    bank.defaultQ = 12; bank.holdSeconds = 4.0;
+
+    const double G = std::pow (10.0, gainDb / 20.0);
+    std::vector<float> buf ((size_t) block);
+    std::vector<double> out ((size_t) block, 0.0);
+    double elapsed = 0.0;
+    Run r;
+
+    for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+    {
+        bool dead = false;
+        for (int i = 0; i < block; ++i)
+        {
+            const double mic = noise (0.0006) + path.read();
+            if (! std::isfinite (mic) || std::abs (mic) > 50.0) { dead = true; break; }
+            buf[(size_t) i] = (float) mic;
+            if (std::abs (mic) > 1e-9) r.peakDb = std::max (r.peakDb, 20.0 * std::log10 (std::abs (mic)));
+            path.push (G * out[(size_t) i]);
+        }
+        if (dead) { r.blewUp = true; break; }
+        if (guard)
+        {
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev)) bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+            bank.process (buf.data(), block, false);
+        }
+        for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];
+        elapsed += (double) block / kSR;
+        if (guard) bank.release (elapsed);
+    }
+
+    for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++r.notches;
+    double sum = 0.0; int n = 0;
+    for (double f = 200.0; f <= 16000.0; f *= 1.03) { sum += bank.cutAtDb (f, -1); ++n; }
+    r.eqDb = n ? sum / n : 0.0;
+    r.seconds = elapsed;
+    return r;
+}
+
+/// The measured room, as a test rather than a printout.
+///
+/// 102 x 102 x 96 inches, drywall over laminate, tape-measured 2026-09-04. Mic
+/// 60 in high, 23 in from the left wall, 32 in from the back; wedges 50 in high,
+/// 14 in from the front wall, 16 in from each side.
+///
+/// Two separate things are checked here and they must not be confused.
+///
+/// The ASSERTIONS are things known to be true, and they fail the build if they
+/// stop being true: the derived acoustics, that the guard clears the 3 dB floor
+/// in this room, that it holds a loop which otherwise runs away, and that it does
+/// so without turning itself into a shelf.
+///
+/// The GATE is the standard for touching hardware: the simulator must predict the
+/// frequencies this rig actually rings at. It does NOT pass yet, and it is
+/// reported every run rather than left as a gap someone has to remember. Absorption
+/// is still flat across the band when drywall absorbs low and reflects high, and
+/// the transducers are a generic pair of filters when a real wedge has horn
+/// resonances and a vocal mic has a presence rise. Those are what choose the
+/// winning frequency, and until they are modelled this cannot be expected to pass.
+int measuredRoom()
+{
+    const double in = 0.0254;
+    Room r;
+    r.name = "MEASURED";
+    r.L = 102 * in; r.W = 102 * in; r.H = 96 * in;
+    r.alpha = 0.073;
+    r.mic[0] = 23 * in; r.mic[1] = r.L - 32 * in; r.mic[2] = 60 * in;
+    r.spk[0] = 16 * in; r.spk[1] = 14 * in;       r.spk[2] = 50 * in;
+
+    int failures = 0;
+    auto check = [&failures] (const char* what, bool ok, const char* detail)
+    {
+        std::printf ("  %s  %-46s %s\n", ok ? "PASS" : "FAIL", what, detail);
+        if (! ok) ++failures;
+    };
+    char msg[160];
+
+    std::printf ("\nTHE MEASURED ROOM - assertions\n");
+
+    // Arithmetic from the tape measure. Guards against a fat-fingered dimension.
+    std::snprintf (msg, sizeof msg, "%.2f x %.2f x %.2f m, %.1f m3", r.L, r.W, r.H, r.volume());
+    check ("R1 dimensions and volume", std::abs (r.volume() - 16.4) < 0.2, msg);
+
+    std::snprintf (msg, sizeof msg, "RT60 %.2f s, Schroeder %.0f Hz", r.rt60(), r.schroeder());
+    check ("R2 Schroeder frequency in the vocal range",
+           r.schroeder() > 400.0 && r.schroeder() < 560.0, msg);
+
+    // Near-cubic: the reason this room is hard, and worth failing loudly if the
+    // numbers are ever mistyped into something benign.
+    const double ratio = std::max (r.L, r.W) / r.H;
+    std::snprintf (msg, sizeof msg, "L/H %.3f, W/H %.3f - degenerate", r.L / r.H, r.W / r.H);
+    check ("R3 near-cubic geometry", ratio < 1.15, msg);
+
+    std::snprintf (msg, sizeof msg, "%.2f m, %.2f ms, comb %.0f Hz",
+                   r.micDistance(), 1000.0 * r.micDistance() / 343.0, 343.0 / r.micDistance());
+    check ("R4 mic-wedge loop delay under 8 ms",
+           1000.0 * r.micDistance() / 343.0 < 8.0, msg);
+
+    const double off = roomMsg (r, false);
+    const double on  = roomMsg (r, true);
+    std::snprintf (msg, sizeof msg, "MSG bare %.1f dB, guarded %.1f dB, ASG %.1f dB", off, on, on - off);
+    check ("R5 ASG clears the 3 dB floor", on - off >= 3.0, msg);
+
+    // It must actually hold a loop that otherwise runs away...
+    const auto bare = runRoomAt (r, off + 3.0, false);
+    const auto held = runRoomAt (r, off + 3.0, true);
+    std::snprintf (msg, sizeof msg, "bare %s at %.0f dB, guarded %s at %.0f dB",
+                   bare.blewUp ? "ran away" : "stable", bare.peakDb,
+                   held.blewUp ? "ran away" : "stable", held.peakDb);
+    check ("R6 holds a loop 3 dB past bare threshold", bare.blewUp && ! held.blewUp, msg);
+
+    // ...without becoming a high-cut while it does it. This is the guarantee that
+    // used to live in T29 against a synthetic barrage; here it is against geometry.
+    std::snprintf (msg, sizeof msg, "%d filters, %.1f dB average 200 Hz-16 kHz",
+                   held.notches, held.eqDb);
+    check ("R7 does not become a high-cut", held.eqDb >= -8.0, msg);
+
+    return failures;
+}
+
+
+/// Hard gate: does the simulator predict the frequencies this rig actually rings
+/// at? Until it does, nothing the model says about a change is worth acting on
+/// without also checking it on the stage.
+///
+/// The rig's own logged rings, several sessions: 11100, 9200, 7650, 7108, 6650,
+/// 4700, 2500 Hz up top; 281, 469, 656, 1125 Hz on the low-end night.
+///
+/// Note what is NOT accepted as passing it: matching those to room modes on paper.
+/// This room has 1899 modes below 1.6 kHz with a median gap of 0.6 Hz above 400 Hz,
+/// and a null test put 19% of RANDOM frequency sets matching as well as the real
+/// ones. Anything fits. The loop is the test, because it needs gain and phase at
+/// once and is therefore far more selective than proximity to a mode.
+bool measuredRoomGate()
+{
+    const double in = 0.0254;
+    static const double measured[] = { 11100, 9200, 7650, 7108, 6650, 4700, 2500 };
+    constexpr double tol = 0.02;      // 2% - a random ring hits one of these 6.3% of the time
+
+    // One prediction proves nothing. The first version of this gate asked whether
+    // a single simulated ring landed within 5% of any measured one, and passed at
+    // 3.2% error - but a RANDOM frequency in the viable band passes that test 14.5%
+    // of the time. One in seven is not a prediction. This is the same trap the
+    // modal match fell into an hour earlier, where 19% of random frequency sets fit
+    // as well as the real ones, and it has to be tested for rather than hoped past.
+    //
+    // So: eight independent conditions - each wedge, four gains above threshold -
+    // and a majority must land on a measured frequency. At 6.3% per trial, five of
+    // eight by chance is about one in a hundred thousand.
+    struct Trial { bool rightWedge; double over; };
+    static const Trial trials[] = {
+        { false, 1.0 }, { false, 3.0 }, { false, 6.0 }, { false, 10.0 },
+        { true,  1.0 }, { true,  3.0 }, { true,  6.0 }, { true,  10.0 },
+    };
+
+    int hit = 0;
+    std::printf ("\nHARD GATE - predict the rig's own ring frequencies\n");
+    std::printf ("  %-14s %10s %12s %8s\n", "condition", "rang at", "nearest", "error");
+
+    for (const auto& t : trials)
+    {
+        Room r;
+        r.name = "MEASURED";
+        r.L = 102 * in; r.W = 102 * in; r.H = 96 * in;
+        r.alpha = 0.073;
+        r.mic[0] = 23 * in; r.mic[1] = r.L - 32 * in; r.mic[2] = 60 * in;
+        r.spk[0] = t.rightWedge ? r.W - 16 * in : 16 * in;
+        r.spk[1] = 14 * in; r.spk[2] = 50 * in;
+
+        const double off = roomMsg (r, false);
+        RoomPath path; path.build (r);
+        constexpr int block = 64, fftOrder = 13, fftSize = 1 << fftOrder;
+        const double G = std::pow (10.0, (off + t.over) / 20.0);
+        std::vector<float> buf ((size_t) block), tail ((size_t) fftSize, 0.0f);
+        std::vector<double> out ((size_t) block, 0.0);
+        size_t tp = 0;
+
+        for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+        {
+            bool dead = false;
+            for (int i = 0; i < block; ++i)
+            {
+                const double mic = noise (0.0006) + path.read();
+                if (! std::isfinite (mic) || std::abs (mic) > 50.0) { dead = true; break; }
+                buf[(size_t) i] = (float) mic;
+                tail[tp] = (float) mic; tp = (tp + 1) % (size_t) fftSize;
+                path.push (G * out[(size_t) i]);
+            }
+            if (dead) break;
+            for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];
+        }
+
+        juce::dsp::FFT fft (fftOrder);
+        std::vector<float> fd ((size_t) fftSize * 2, 0.0f);
+        for (int i = 0; i < fftSize; ++i)
+            fd[(size_t) i] = tail[(tp + (size_t) i) % (size_t) fftSize]
+                             * (0.5f - 0.5f * std::cos (2.0f * (float) M_PI * (float) i / (float) fftSize));
+        fft.performFrequencyOnlyForwardTransform (fd.data());
+
+        double rang = 0.0; float best = 0.0f;
+        for (int i = 2; i < fftSize / 2; ++i)
+            if (fd[(size_t) i] > best) { best = fd[(size_t) i]; rang = i * kSR / fftSize; }
+
+        double closest = 1e9, at = 0.0;
+        for (double m : measured)
+            if (std::abs (rang - m) / m < closest) { closest = std::abs (rang - m) / m; at = m; }
+        const bool ok = closest < tol;
+        if (ok) ++hit;
+
+        char cond[32];
+        std::snprintf (cond, sizeof cond, "%s wedge +%.0f", t.rightWedge ? "right" : "left ", t.over);
+        std::printf ("  %-14s %9.0f %11.0f %7.1f%%  %s\n", cond, rang, at, 100.0 * closest,
+                     ok ? "hit" : "-");
+    }
+
+    const int n = (int) (sizeof trials / sizeof trials[0]);
+    const bool pass = hit >= 5;
+    std::printf ("  %d of %d landed on a measured frequency (chance would give about 1)\n", hit, n);
+    std::printf ("  %s\n", pass
+        ? "GATE PASSED - the model predicts this rig, not just something."
+        : "GATE NOT PASSED. Absorption is flat across the band and the transducers\n"
+          "  are generic. Drywall absorbs low and reflects high, laminate the reverse,\n"
+          "  and a wedge horn plus a mic presence rise are what choose the winner up\n"
+          "  top. Model those before expecting this to pass; RT60 per octave is the\n"
+          "  missing input, and it has not been measured yet.");
+    return pass;
+}
+
 int main()
 {
+    int roomFailures = 0;
     std::printf ("\nClosed-loop feedback simulation\n");
     std::printf ("===============================\n\n");
     std::printf ("Validating against theory: growth rate = excess gain / loop delay\n");
@@ -1054,8 +1301,12 @@ int main()
                  "2-6 dB; hearing-aid adaptive cancellation exceeds 10 dB. Under 3 dB and\n"
                  "the honest answer is acoustics and gain structure, not software.\n");
 
+    roomFailures += measuredRoom();
+    measuredRoomGate();
+
     std::printf ("\n%s\n\n", ladderWorst >= 3.0
                  ? "ASG clears the floor in every room on the ladder."
                  : "ASG IS TOO SMALL TO MATTER IN AT LEAST ONE ROOM.");
-    return 0;
+    if (roomFailures) std::printf ("  %d measured-room assertion(s) FAILED\n\n", roomFailures);
+    return roomFailures ? 1 : 0;
 }
