@@ -350,13 +350,29 @@ private:
     std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
     // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs
 // deeper cuts that stay put, not shallow ones that bleed out in 2 s.
-    std::atomic<float> maxCutDb { -24.0f }, notchQ { 25.0f }, releaseSeconds { 10.0f };
+    // Q 12 and a -18 dB ceiling, not Q 25 and -24.
+    //
+    // Measured across four simulated rooms of different character - concrete cube,
+    // gymnasium, ballroom, large studio - halving both gives identical Added
+    // Stable Gain for 20 to 60 percent fewer filters. In the ballroom it is 16
+    // filters against 37 for slightly MORE gain. The depth past the first few dB
+    // was never doing stabilising work.
+    //
+    // It agrees with the physics from the other direction: excess loop gain at
+    // this rig's own measured growth rates is 0.15 to 0.7 dB, so a 24 dB cut was
+    // answering a 0.3 dB problem, and with the difference coming out of the top
+    // end of a vocal. Boner and Rane both put normal notch depth at 3 to 10 dB and
+    // reserve 30 for a room-ring mode coinciding with a feedback mode.
+    //
+    // A wider filter is also markedly more forgiving of being placed a few hundred
+    // Hz off, which is the other bug being fixed alongside this.
+    std::atomic<float> maxCutDb { -18.0f }, notchQ { 12.0f }, releaseSeconds { 10.0f };
     bool wasBypassed = false, wasWatching = false;
     std::atomic<bool>  analysis { false };     // off unless asked for
     std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
-    std::atomic<float> initialCut { -12.0f };
+    std::atomic<float> initialCut { -6.0f };   // first strike; see the note on maxCutDb
     std::atomic<int>   persistFrames { 6 };
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };

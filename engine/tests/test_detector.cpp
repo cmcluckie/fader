@@ -639,11 +639,6 @@ int main()
         fk::NotchBank<48> bank;
         bank.prepare (kSR, 64);
         bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
-        // This tests POOL CAPACITY, so the stacking budget is off: with it on, 30
-        // filters 450 Hz apart are refused on purpose - overlapping that heavily is
-        // a high-cut, which is T29's subject, not this one.
-        bank.budgetDb = 0.0;
-
         // 30 distinct resonances, as a real room presents.
         double t = 0.0;
         for (int i = 0; i < 30; ++i, t += 0.01) bank.trigger (1000.0 + 450.0 * i, t);
@@ -968,61 +963,6 @@ int main()
         report ("T28 the studio's low-end rings are all caught", caught == total && worst <= 10.0, msg);
     }
 
-    // ---- T29: the guard may not turn into a high-cut filter -----------------
-    // Measured live: 22 filters spanning 3.8-16 kHz, twelve of them at the -24 dB
-    // cap, summing to -13.6 dB average across the top end and -28 dB at 6 kHz. The
-    // least attenuated point up there was still down 5.6 dB. Every single one of
-    // those filters was individually a correct decision - the room really was
-    // ringing at all of them. Together they are a savage high-cut, and it sounded
-    // like one.
-    //
-    // A system ringing across its entire top end needs less gain. No amount of EQ
-    // fixes that; it only trades howl for dullness. The guard now refuses to keep
-    // stacking cut in one region, so that trade is the user's to make.
-    {
-        fk::NotchBank<48> bank;
-        bank.prepare (kSR, 64);
-        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
-
-        // Hammer a whole region, as a rig on the edge everywhere would.
-        double t = 0.0;
-        for (int round = 0; round < 8; ++round)
-            for (int i = 0; i < 22; ++i, t += 0.01)
-                bank.trigger (3800.0 + 560.0 * i, t);
-
-        // Sum the real response across the region it was told to destroy.
-        auto respDb = [] (double fq, double f0, double cutDb, double qq)
-        {
-            const double A = std::pow (10.0, cutDb / 40.0);
-            const double w = 2.0 * M_PI * f0 / kSR, a = std::sin (w) / (2.0 * qq);
-            const double W = 2.0 * M_PI * fq / kSR;
-            auto mag = [W] (double c0, double c1, double c2)
-            {
-                const double re = c0 + c1 * std::cos (W) + c2 * std::cos (2.0 * W);
-                const double im = -(c1 * std::sin (W) + c2 * std::sin (2.0 * W));
-                return std::sqrt (re * re + im * im);
-            };
-            return 20.0 * std::log10 (std::max (mag (1.0 + a * A, -2.0 * std::cos (w), 1.0 - a * A)
-                                              / mag (1.0 + a / A, -2.0 * std::cos (w), 1.0 - a / A), 1.0e-12));
-        };
-
-        double worst = 0.0, sum = 0.0; int n = 0;
-        for (double f = 3800.0; f <= 16000.0; f *= 1.02)
-        {
-            double tot = 0.0;
-            for (int i = 0; i < 48; ++i)
-            {
-                const auto& sl = bank.getSlot (i);
-                if (sl.active) tot += respDb (f, sl.freq, sl.targetDb,
-                                              fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
-            }
-            worst = std::min (worst, tot); sum += tot; ++n;
-        }
-        std::snprintf (msg, sizeof msg, "top end averages %.1f dB, worst point %.1f dB",
-                       sum / n, worst);
-        report ("T29 stacked notches cannot become a high-cut", sum / n >= -10.0, msg);
-    }
-
     // ---- T30: every catch reports how long it took and how wide it was ------
     // The two questions behind every investigation in this project - "why was that
     // slow" and "could one filter ever have covered it" - were both being answered
@@ -1178,47 +1118,6 @@ int main()
         report ("T32 a ring is still caught in a busy spectrum", caught == 4, msg);
     }
 
-    // ---- T33: the budget must not stand back during a runaway ---------------
-    // Measured on 2026-09-04: feedback running away to -12.9 dB across 6.6-12.3
-    // kHz, and the guard answered with 5 to 8 filters out of 48 and -3.5 dB of
-    // average cut. It was barely fighting.
-    //
-    // The stacking budget did that. It was added to stop the guard turning itself
-    // into a high-cut filter (T29) and it works - but a flat budget cannot tell an
-    // emergency from a quiet afternoon, so it throttled the response to a howl
-    // exactly as hard as it throttles a -70 dB nuisance. A ring that quiet is not
-    // worth dulling a vocal to stop; one at -15 dB plainly is.
-    {
-        auto deploy = [] (double levelDb)
-        {
-            fk::NotchBank<48> bank;
-            bank.prepare (kSR, 64);
-            bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 30.0;
-
-            // A runaway hops modes: many frequencies across the top end at once.
-            double t = 0.0;
-            for (int round = 0; round < 6; ++round)
-                for (int i = 0; i < 18; ++i, t += 0.01)
-                    bank.trigger (6600.0 + 320.0 * i, t, true, levelDb);
-
-            int active = 0;
-            for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++active;
-            return active;
-        };
-
-        const int quiet = deploy (-70.0);   // nuisance: the budget should hold
-        const int loud  = deploy (-15.0);   // howl: it should not
-
-        std::snprintf (msg, sizeof msg, "quiet ring -> %d filters, runaway -> %d filters", quiet, loud);
-        // The margin is narrower than it first was - 12 against 15, where it used
-        // to be 8 against 18. That is the coverage estimate becoming accurate
-        // rather than the urgency rule weakening: the old figure was inflated by a
-        // budget that hallucinated coverage and blocked the quiet case far too
-        // hard. Flattening the urgency now gives 12 against 12, so it still earns
-        // its place; it just no longer has a broken baseline to look good against.
-        report ("T33 a runaway gets more filters than a nuisance", loud >= quiet + 3, msg);
-    }
-
     // ---- T34: a ring under a coincident voice partial ----------------------
     // From an investigation into why recurring modes are sometimes slow. At the
     // rig, 14400 Hz rang 37 times in 40 seconds and 9900 Hz 29 times; each had a
@@ -1284,6 +1183,19 @@ int main()
         report ("T34 a ring is caught when it dominates a coincident partial",
                 loudCaught == 2, msg);
     }
+
+    // ---- (no T29, no T33) ---------------------------------------------------
+    // T29 asserted stacked notches cannot become a high-cut; T33 that a runaway
+    // draws more filters than a nuisance. Both tested a regional stacking budget
+    // that has been removed - across four simulated rooms it declined 30 to 40
+    // percent of triggers while the caught frequency itself carried 2 to 3 dB,
+    // which is the rig fault reproduced, and turning it off moved ASG by less than
+    // 0.4 dB anywhere. It cost coverage and bought nothing.
+    //
+    // T29 concern is real and is still the headline complaint, so it has not been
+    // dropped - it has moved somewhere it can be measured. fk-loop asserts the
+    // summed response across each simulated room, against geometry rather than a
+    // synthetic barrage of triggers no room produces.
 
     // ---- T35: even a runaway may not become a high-cut ----------------------
     // T29 holds the quiet case and T33 makes sure a howl gets a harder answer than

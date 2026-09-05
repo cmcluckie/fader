@@ -723,6 +723,91 @@ void probeRoom (const Room& room, double gainDb, bool guard)
     std::printf ("\n");
 }
 
+
+/// Does the guard actually put a filter ON what it catches?
+///
+/// The rig's standing complaint, measured: a median 3.1 dB of cut on the frequency
+/// just caught, the nearest filter 300 to 500 Hz away, rings climbing to -13 dB
+/// while detected 29 times. Detection was never the problem; placement was. This
+/// asks the same question of a real room, where it can be answered in seconds
+/// instead of by asking someone to sing.
+void probePlacement (const Room& room, double gainDb)
+{
+    constexpr int block = 64;
+    RoomPath path; path.build (room);
+
+    fk::FeedbackDetector det;
+    fk::FeedbackDetector::Params p;
+    p.floorDb = -95.0f; p.minFreq = 60.0f;
+    det.prepare (kSR); det.setParams (p);
+
+    fk::NotchBank<48> bank;
+    bank.prepare (kSR, block);
+    bank.initialCutDb = -6; bank.softCapDb = -12; bank.hardCapDb = -18;
+    bank.defaultQ = 12; bank.holdSeconds = 4.0;
+
+    const double G = std::pow (10.0, gainDb / 20.0);
+    std::vector<float> buf ((size_t) block);
+    std::vector<double> out ((size_t) block, 0.0);
+    double elapsed = 0.0;
+
+    int events = 0, refusedCovered = 0, refusedDark = 0, refusedLocked = 0, placedOk = 0;
+    double sumCut = 0.0, sumGap = 0.0;
+    int measured = 0;
+
+    for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+    {
+        bool dead = false;
+        for (int i = 0; i < block; ++i)
+        {
+            const double mic = noise (0.0006) + path.read();
+            if (! std::isfinite (mic) || std::abs (mic) > 50.0) { dead = true; break; }
+            buf[(size_t) i] = (float) mic;
+            path.push (G * out[(size_t) i]);
+        }
+        if (dead) break;
+
+        det.push (buf.data(), block);
+        fk::FeedbackDetector::Event ev;
+        while (det.popEvent (ev))
+        {
+            ++events;
+            // What is already on this frequency, before we act?
+            const double before = bank.cutAtDb (ev.freq, -1);
+            double gap = 1.0e9;
+            for (int s = 0; s < 48; ++s)
+                if (bank.getSlot (s).active)
+                    gap = std::min (gap, std::abs (bank.getSlot (s).freq - (double) ev.freq));
+            if (gap < 1.0e8) { sumCut += before; sumGap += gap; ++measured; }
+
+            const int slot = bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+            if (slot >= 0) ++placedOk;
+            else switch (bank.lastRefusal)
+            {
+                case fk::NotchBank<48>::Refusal::AlreadyCovered: ++refusedCovered; break;
+                case fk::NotchBank<48>::Refusal::RegionTooDark:  ++refusedDark;    break;
+                case fk::NotchBank<48>::Refusal::AllLocked:      ++refusedLocked;  break;
+                default: break;
+            }
+        }
+        bank.process (buf.data(), block, false);
+        for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];
+        elapsed += (double) block / kSR;
+        bank.release (elapsed);
+    }
+
+    // What the program is being put through, summed across every live filter.
+    // This is the number the complaint was actually about.
+    double sumEq = 0.0; int n = 0; int live = 0;
+    for (int i = 0; i < 48; ++i) if (bank.getSlot (i).active) ++live;
+    for (double f = 200.0; f <= 16000.0; f *= 1.03) { sumEq += bank.cutAtDb (f, -1); ++n; }
+
+    std::printf ("  %-18s %5d ev | placed %4d dark %4d | %2d filters, EQ %5.1f dB",
+                 room.name, events, placedOk, refusedDark, live, sumEq / n);
+    if (measured) std::printf (" | cut on catch %5.1f dB, gap %4.0f Hz", sumCut / measured, sumGap / measured);
+    std::printf ("\n");
+}
+
 /// Does the simulation obey the physics? Growth rate in dB/s should equal excess
 /// loop gain divided by loop delay (van Waterschoot & Moonen; RaneNote 158). If
 /// this does not hold, nothing else the simulator says is worth reading.
@@ -822,7 +907,7 @@ int main()
     std::printf ("%10s %14s %14s %10s %10s\n",
                  "loop delay", "MSG guard off", "MSG guard on", "ASG", "filters");
 
-    double bestAsg = -100.0;
+    double bestAsg = -100.0, ladderWorst = 1000.0;
     for (double firstMs : { 3.0, 5.6, 10.0, 20.0 })
     {
         const double off = findMsg (false, firstMs);
@@ -877,6 +962,7 @@ int main()
         const double on  = roomMsg (room, true);
         char det[32];
         std::snprintf (det, sizeof det, "%d/%d", lastFilters, lastEvents);
+        ladderWorst = std::min (ladderWorst, on - off);
         std::printf ("%-22s %7.0f %6.1fs %7.0f %8.1f %8.1f %8s  ring %.0f Hz\n",
                      room.name, room.volume(), room.rt60(), room.schroeder(),
                      off, on - off, det, lastRingHz);
@@ -910,6 +996,11 @@ int main()
         tuning = Tuning{};
     }
 
+    std::printf ("\nPlacement: does a filter land ON what was caught?\n");
+    for (const auto& room : { rungs[0], rungs[1], rungs[3], rungs[5] })
+        probePlacement (room, roomMsg (room, false) + 3.0);
+
+
     std::printf ("\nAbove threshold, explicitly - is the detector even seeing it?\n");
     for (const auto& room : { rungs[0], rungs[1], rungs[5] })
     {
@@ -922,6 +1013,8 @@ int main()
                  "2-6 dB; hearing-aid adaptive cancellation exceeds 10 dB. Under 3 dB and\n"
                  "the honest answer is acoustics and gain structure, not software.\n");
 
-    std::printf ("\n%s\n\n", bestAsg >= 3.0 ? "ASG is worth having." : "ASG IS TOO SMALL TO MATTER.");
+    std::printf ("\n%s\n\n", ladderWorst >= 3.0
+                 ? "ASG clears the floor in every room on the ladder."
+                 : "ASG IS TOO SMALL TO MATTER IN AT LEAST ONE ROOM.");
     return 0;
 }

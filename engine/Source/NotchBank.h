@@ -108,69 +108,35 @@ public:
     int trigger (double f, double nowSeconds, bool growing = true,
                  double levelDb = -1000.0) noexcept
     {
-        // A budget on how much cut may pile up in one region.
-        //
-        // Without it the guard will answer every ring it finds, and if the system
-        // is ringing everywhere it answers everywhere: measured live, 22 filters
-        // spanning 3.8-16 kHz, twelve at the cap, summing to -13.6 dB average
-        // across the top end and -28 dB at 6 kHz. Individually every one of those
-        // was a correct decision. Together they are a high-cut filter, and it
-        // sounded like one.
-        //
-        // Past the budget the answer is not another filter. A system ringing
-        // across its whole top end needs less gain, and no amount of EQ fixes that
-        // - it only trades howl for dullness. Refusing here makes that trade the
-        // user's to make rather than one the guard makes silently.
+        juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
 
-        // The budget limits STACKING, not depth: a lone ring must still be allowed
-        // its full cut, so the filter that would handle this frequency is excluded
-        // from its own budget check. Otherwise a notch blocks its own escalation,
-        // which T10 caught - it stopped at -12 dB instead of reaching the cap.
-        // ...but only while the problem is small. A ring at -70 dB is inaudible
-        // and not worth dulling a vocal to stop; one at -15 dB is screaming, and
-        // then dullness is plainly the better of two bad outcomes.
-        //
-        // Measured on 2026-09-04: a runaway reaching -12.9 dB across 6.6-12.3 kHz,
-        // and the guard answered it with 5 to 8 filters out of 48 and -3.5 dB of
-        // average cut. It was barely fighting, because a flat budget cannot tell an
-        // emergency from a quiet afternoon. The budget exists to stop the guard
-        // dulling the top end for no reason - not to stand back during a howl.
-        // The budget SCALES with how bad things are; it does not switch off.
-        //
-        // First version made it vanish above -50 dB, and a busy passage went
-        // straight to the ceiling: measured, 48 filters - the entire pool - and
-        // -10 to -14 dB across the top end, which is the muffling back. Escape
-        // improved by 6 dB and dullness worsened by 8; that is not a trade worth
-        // making. Between a nuisance and a howl the allowance grows smoothly, so
-        // the guard can fight hard without ever being handed the whole spectrum.
-        // Why a trigger was refused. Twice now I have reasoned about which of
-        // these fired and been wrong, from logs that recorded the outcome and not
-        // the cause - exactly the gap the detector had before it started saying
-        // which gate stopped a candidate.
+        // Why a trigger was refused. Reasoning about which check fired, from logs
+        // that recorded the outcome and not the cause, was wrong twice.
         lastRefusal = Refusal::None;
 
         // Already handled: another filter here would only stack depth on a
         // frequency that is under control, which is how the top end got dulled.
+        // Measured per frequency with the real filter response, not estimated - a
+        // linear falloff scored a filter 179 Hz away as 21.6 dB of coverage when
+        // the truth was 8, and refused to cover a ring carrying almost nothing.
+        //
+        // There WAS a regional version of this too: refuse if the surrounding
+        // half-octave was already dark, scaled by how loud the ring was. It is
+        // gone, measured out rather than argued out. Across four simulated rooms it
+        // declined 30 to 40 percent of triggers while the caught frequency itself
+        // carried 2.3 to 3.6 dB and the nearest filter sat 500 to 800 Hz away -
+        // which is exactly the rig's complaint, 3.1 dB at 300 to 500 Hz,
+        // reproduced. With it off: every trigger placed, event counts roughly
+        // halved because rings die instead of persisting, summed EQ the same or
+        // better in three rooms of four, and ASG unchanged within 0.4 dB in all
+        // four. It cost coverage and bought nothing.
         if (cutAtDb (f, existing) <= coveredDb)
         {
             lastRefusal = Refusal::AlreadyCovered;
             return -1;
         }
 
-        // Region already dark: adding more here makes a shelf rather than a notch.
-        // Scaled by urgency - a nuisance does not justify dullness, a howl does.
-        if (budgetDb < 0.0)
-        {
-            const double urgency = juce::jlimit (0.0, 1.0, (levelDb - budgetQuietDb)
-                                                           / (urgentDb - budgetQuietDb));
-            const double allowed = budgetDb + urgency * (budgetUrgentDb - budgetDb);
-            if (regionalCutDb (f, existing) <= allowed)
-            {
-                lastRefusal = Refusal::RegionTooDark;
-                return -1;
-            }
-        }
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
@@ -399,12 +365,8 @@ public:
     double retireDb       = -1.0;    // shallower than this -> drop the notch
     double minReleaseGap  = 0.5;     // min seconds between release steps
 
-    // Most cut allowed to accumulate in any one region of the spectrum. 0 = no
-    // limit. Bounds how dull the guard is permitted to make things.
-    double budgetDb       = -5.0;
 
-    // How the allowance grows between a nuisance and a howl. At quietDb and below
-    // the guard may stack budgetDb; at urgentDb and above, budgetUrgentDb.
+
     //
     // The range matters more than either end. It was -5 to -7, a two-decibel
     // spread, which meant two or three filters anywhere in the region blocked
@@ -417,15 +379,14 @@ public:
     // -9.3 dB across it - because level is what selects between them. Dullness
     // while singing and dullness during a howl are different questions and level
     // is what tells them apart.
+public:
     enum class Refusal { None = 0, AlreadyCovered = 1, RegionTooDark = 2, AllLocked = 3 };
     Refusal lastRefusal = Refusal::None;
 
     // A frequency already cut this deep does not need another filter on it.
     double coveredDb      = -15.0;
 
-    double budgetQuietDb  = -65.0;
-    double urgentDb       = -30.0;
-    double budgetUrgentDb = -16.0;
+
 
     double freqTrack      = 0.30;    // how fast a notch follows a drifting tone
 
@@ -445,6 +406,7 @@ private:
         just leaves rings uncovered. This runs on triggers, not per sample, so the
         trigonometry is affordable.
     */
+public:
     double cutAtDb (double f, int skip) const noexcept
     {
         if (f <= 0.0) return 0.0;
@@ -479,27 +441,6 @@ private:
             total += 20.0 * std::log10 (std::max (num / den, 1.0e-12));
         }
         return total;
-    }
-
-    /** The average cut across half an octave either side of f.
-
-        Two different questions were being asked of one number. "Is this exact
-        frequency already handled" decides whether another filter would be
-        redundant; "is this region already too dull" decides whether the guard is
-        about to turn itself into a shelf. The old estimate answered neither
-        properly: generous enough about coverage to leave rings uncovered, and the
-        only thing standing between the bank and a high-cut.
-    */
-    double regionalCutDb (double f, int skip) const noexcept
-    {
-        double total = 0.0;
-        int n = 0;
-        for (int k = -4; k <= 4; ++k)
-        {
-            total += cutAtDb (f * std::pow (2.0, k / 8.0), skip);
-            ++n;
-        }
-        return total / (double) n;
     }
 
     int findFree() const noexcept

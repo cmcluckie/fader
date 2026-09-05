@@ -17,7 +17,7 @@ public sealed record AudioSelection(
     float MaxHz = 16000f,
     float FloorDb = -70f,
     int Attack = 1,
-    float MaxCutDb = -24f,
+    float MaxCutDb = -18f,
     bool FloorAuto = true)
 {
     public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null, null);
