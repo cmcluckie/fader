@@ -941,6 +941,47 @@ int main()
     }
     tuning = Tuning{};
 
+    // ---- the actual room, measured -----------------------------------------
+    //
+    // 102 x 102 x 96 inches, drywall over a laminate floor, tape-measured. Mic at
+    // 60 in high, 23 in from the left wall, 32 in from the back; wedges at 50 in
+    // high, 14 in from the front wall and 16 in from each side.
+    //
+    // Near-cubic - ratios 1.062 : 1.062 : 1.000 - which is the worst geometry in
+    // the ladder, and 16.4 m3 is smaller than Rung 1's concrete cube. Schroeder
+    // frequency lands at 477 Hz, so the whole low-end problem sits in the modal
+    // region where the field is a few sparse resonances rather than a statistical
+    // one.
+    //
+    // The gate: does this predict the frequencies the rig actually rings at? Not
+    // by matching modes on paper - the room has 1899 of them below 1.6 kHz with a
+    // median gap of 0.6 Hz, so anything matches something and a null test says 19%
+    // of RANDOM frequency sets fit as well as the real ones. The loop is far more
+    // selective than that, because it needs gain and phase at once.
+    {
+        const double in = 0.0254;
+        Room r;
+        r.name = "MEASURED - the rig";
+        r.L = 102 * in; r.W = 102 * in; r.H = 96 * in;
+        r.alpha = 0.073;                       // drywall walls/ceiling, laminate floor
+        r.mic[0] = 23 * in; r.mic[1] = r.L - 32 * in; r.mic[2] = 60 * in;
+        r.spk[0] = 16 * in; r.spk[1] = 14 * in;        r.spk[2] = 50 * in;
+
+        std::printf ("\nTHE MEASURED ROOM\n");
+        std::printf ("  %.2f x %.2f x %.2f m, V %.1f m3, RT60 %.2f s, f_c %.0f Hz, mic-wedge %.2f m (%.2f ms)\n",
+                     r.L, r.W, r.H, r.volume(), r.rt60(), r.schroeder(),
+                     r.micDistance(), 1000.0 * r.micDistance() / 343.0);
+
+        const double off = roomMsg (r, false);
+        lastEvents = 0; lastRingHz = 0.0;
+        const double on = roomMsg (r, true);
+        std::printf ("  MSG bare %.1f dB, ASG %.1f dB, %d filters, last ring %.0f Hz\n",
+                     off, on - off, lastFilters, lastRingHz);
+        probePlacement (r, off + 3.0);
+        probeRoom (r, off + 3.0, false);
+        probeRoom (r, off + 3.0, true);
+    }
+
     // ---- the room ladder --------------------------------------------------
     std::printf ("\nThe room ladder - geometry, not invented paths\n");
     std::printf ("%-22s %7s %7s %8s %9s %8s %8s\n",
