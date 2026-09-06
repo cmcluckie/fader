@@ -1435,6 +1435,53 @@ int main()
                 nearest <= 60.0 && onTheRing <= -12.0, msg);
     }
 
+    // ---- T39: a sung note whose LOW harmonics are missing -------------------
+    // Measured on the rig 2026-09-06, singing: a D4 at about 290 Hz with harmonics
+    // 7 through 13 caught and notched, 22% of busy windows showing the comb, 20% of
+    // all catches below 1500 Hz. The harmonic guard had been fixed and this got
+    // through it anyway.
+    //
+    // The reason was mine. The comb test asked for a tooth below 1200 Hz before it
+    // would believe a series - which at 290 Hz means harmonic four or lower. When
+    // only the fifth and up are prominent peaks, the test fails and the whole
+    // series is fair game. An absolute frequency cannot be the rule: which one the
+    // series reaches depends on the note being sung.
+    //
+    // T31 could not catch this because its note carries harmonics 2 through 13, so
+    // the low teeth are always there.
+    {
+        constexpr double f0 = 290.0;
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f;
+        p.minFreq = 40.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double ph = 0.0;
+        int hits = 0; float first = 0.0f;
+
+        for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                ph += 2.0 * M_PI * (f0 * (1.0 + 0.004 * std::sin (2.0 * M_PI * 4.8 * t))) / kSR;
+                double v = 0.0;
+                // Harmonics 5 to 13 only - the lower ones rolled off, as a thin
+                // vocal through a wedge with a high pass on the channel really is.
+                for (int h = 5; h <= 13; ++h) v += (0.05 / std::sqrt ((double) h)) * std::sin (ph * h);
+                buf[(size_t) i] = (float) (v * std::min (1.0, t / 0.4) + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev)) { if (! hits) first = ev.freq; ++hits; }
+        }
+        std::snprintf (msg, sizeof msg, hits ? "NOTCHED %d times, first at %.0f Hz (partial %.1f)"
+                                             : "left alone", hits, first, first / f0);
+        report ("T39 a note with only upper harmonics is left alone", hits == 0, msg);
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }

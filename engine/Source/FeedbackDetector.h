@@ -646,7 +646,18 @@ private:
                     ++teeth;
                     // A voice has partials all the way down to its fundamental. A
                     // grid that only exists up here is a coincidence.
-                    if (other < f && other < 1200.0f) reachesDown = true;
+                    // Relative to the spacing, not an absolute frequency. This
+                    // asked for a tooth below 1200 Hz, which for a voice at 290 Hz
+                    // means harmonic four or lower - and when only the fifth and up
+                    // are prominent peaks the test fails and the whole series gets
+                    // notched. Measured on the rig 2026-09-06: a sung D4 with
+                    // harmonics 7 through 13 caught, 22% of busy windows showing
+                    // the comb, 20% of all catches below 1500 Hz.
+                    //
+                    // A series that reaches within six of its own fundamental is a
+                    // series. Which absolute frequency that lands on depends on the
+                    // note being sung, and the test should not.
+                    if (other < f && other <= 6.5f * d) reachesDown = true;
                 }
             }
             if (teeth >= 3 && reachesDown) return true;
