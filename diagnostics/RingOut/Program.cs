@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
-using Fader.Bridge.Osc;
+using Fader.Shared;
+using FeedbackFader;
 
 // Verifies the X32 RTA + GEQ paths against a live console, read-only.
 //

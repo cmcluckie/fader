@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- FaderBridge: the menu-bar app around the FaderPort ⇄ X32 bridge. The bridge
+       runs in-process here; Core is the same code the headless CLI runs. -->
+
+  <PropertyGroup>
+    <!-- WinExe suppresses a console window when launched from an .app bundle;
+         it is a no-op on macOS otherwise. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fader.Bridge.App</RootNamespace>
+    <!-- Also the avares:// authority the tray icon is loaded from. -->
+    <AssemblyName>FaderBridge</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- managed-midi (via the referenced bridge) marks IMidiAccess obsolete. -->
+    <NoWarn>$(NoWarn);CS0618</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.1" />
+    <!-- Control templates. Without a theme, templated controls render invisibly. -->
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reuse the real, tested bridge in-process rather than re-linking sources. -->
+    <ProjectReference Include="..\FaderBridge.Core\FaderBridge.Core.csproj" />
+    <ProjectReference Include="..\Fader.Shared\Fader.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+    <!-- config.json is provided by the referenced FaderBridge.Core project, which
+         already copies it to output; a second copy here collides on publish. -->
+  </ItemGroup>
+
+</Project>

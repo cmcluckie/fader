@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Feedback Fader: detection, the notch bank's host side, the engine
+       supervisor, capture and logging. Knows nothing about MIDI or control
+       surfaces - it never did, which is why this split was cheap. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FeedbackFader</RootNamespace>
+    <AssemblyName>FeedbackFader.Core</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Fader.Shared/Fader.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

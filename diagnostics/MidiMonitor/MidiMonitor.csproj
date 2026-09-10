@@ -21,10 +21,10 @@
   <ItemGroup>
     <!-- Link the bridge's real parser and note map rather than copying them, so
          this diagnostic validates the same code the bridge runs on. -->
-    <Compile Include="..\..\src\FaderBridge\Midi\MidiStreamParser.cs" Link="Midi\MidiStreamParser.cs" />
-    <Compile Include="..\..\src\FaderBridge\Midi\McuProtocol.cs" Link="Midi\McuProtocol.cs" />
-    <Compile Include="..\..\src\FaderBridge\Midi\MidiBackend.cs" Link="Midi\MidiBackend.cs" />
-    <Compile Include="..\..\src\FaderBridge\Bridge\FaderScaling.cs" Link="Bridge\FaderScaling.cs" />
+    <Compile Include="..\..\src\FaderBridge.Core\Midi\MidiStreamParser.cs" Link="Midi\MidiStreamParser.cs" />
+    <Compile Include="..\..\src\FaderBridge.Core\Midi\McuProtocol.cs" Link="Midi\McuProtocol.cs" />
+    <Compile Include="..\..\src\FaderBridge.Core\Midi\MidiBackend.cs" Link="Midi\MidiBackend.cs" />
+    <Compile Include="..\..\src\FaderBridge.Core\Bridge\FaderScaling.cs" Link="Bridge\FaderScaling.cs" />
   </ItemGroup>
 
 </Project>

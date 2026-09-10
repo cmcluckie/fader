@@ -1,17 +1,25 @@
-# Fader — X32 control + feedback suppression
+# Fader — two products for a live rig
 
-One platform for a live rig, run from a single macOS menu-bar app:
+One repo, two independent macOS menu-bar apps. They share a repo, an OSC codec
+and a drawn-control toolkit; they share no runtime state and neither needs the
+other installed.
 
-- **A FaderPort ↔ X32 control bridge** (the first half of this document) — maps a
-  PreSonus FaderPort 8 (USB MIDI, Mackie Control) to a Behringer X32 Rack (OSC
-  over UDP 10023). Bidirectional: the surface drives the console, and the console
-  drives the motors, LEDs and scribble strips back. Runs on **macOS and Windows**
-  (CoreMIDI or WinMM, selected at startup).
-- **A feedback-suppression engine** ([Feedback suppression](#feedback-suppression))
-  — a headless JUCE audio process the app supervises, notching microphone
+- **FaderBridge** (the first half of this document) — maps a PreSonus FaderPort 8
+  (USB MIDI, Mackie Control) to a Behringer X32 Rack (OSC over UDP 10023).
+  Bidirectional: the surface drives the console, and the console drives the
+  motors, LEDs and scribble strips back. Runs on **macOS and Windows** (CoreMIDI
+  or WinMM, selected at startup).
+- **Feedback Fader** ([Feedback suppression](#feedback-suppression)) — a
+  headless JUCE audio process the tray app supervises, notching microphone
   feedback, plus an X32 RTA-assisted ring-out for the room. macOS only.
 
-The two-part shape (why a separate audio process, not managed DSP) is recorded in
+They began as one binary. The split cost almost nothing because the seam was
+already there: the feedback code never referenced MIDI, and the feedback views
+never referenced the bridge. The single thing they had in common — which console
+to talk to — is now each product's own setting.
+
+The two-process shape of Feedback Fader (why a separate audio process, not
+managed DSP) is recorded in
 [docs/adr/0001](docs/adr/0001-feedback-engine-architecture.md).
 
 ## Prerequisites
@@ -26,8 +34,8 @@ restriction.
 
 ## Configure
 
-Edit `src/FaderBridge/config.json` — at minimum the console's IP, which you'll
-find on the X32 under **Setup → Network**:
+Edit `src/FaderBridge.Core/config.json` — at minimum the console's IP, which
+you'll find on the X32 under **Setup → Network**:
 
 ```json
 {
@@ -87,16 +95,21 @@ the code is platform-agnostic.
 
 ## Build
 
-All four projects build as a unit from `Fader.sln`:
+Everything builds as a unit from `Fader.slnx` — both products, both core
+libraries, the shared library, and the diagnostics:
 
 ```bash
-dotnet build Fader.sln
+dotnet build Fader.slnx
 ```
+
+Five projects under `src/`: `Fader.Shared` (the OSC codec and the drawn-control
+toolkit), then a Core library and an App per product. Only the two Apps produce
+a bundle.
 
 ## Run
 
 ```bash
-dotnet run --project src/FaderBridge
+dotnet run --project src/FaderBridge.Core
 ```
 
 Run from **Terminal in the GUI session, not over SSH** — CoreMIDI will not
@@ -116,20 +129,21 @@ enumerate devices without a logged-in user session.
 
 ## Menu-bar app (macOS)
 
-`src/FaderBridge.MenuBar` wraps the bridge in a menu-bar app. It references the
-real `FaderBridge` project and hosts `BridgeHost` in-process, so it runs exactly
+`src/FaderBridge.App` wraps the bridge in a menu-bar app. It references the real
+`FaderBridge.Core` project and hosts `BridgeHost` in-process, so it runs exactly
 the same code as the console app — the surface, banking, and OSC paths are
 unchanged. A menu-bar app is also a proper GUI login session, which is what
 CoreMIDI needs, so the "don't run over SSH" caveat stops applying.
 
 ```bash
-dotnet run --project src/FaderBridge.MenuBar   # run from source
-scripts/build-app.sh                           # -> dist/FaderBridge.app
+dotnet run --project src/FaderBridge.App   # run from source
+scripts/build-fader-bridge.sh              # -> dist/FaderBridge.app
 ```
 
 The menu shows whether the bridge is running, whether the X32 is replying (a
-`/info` probe every 5s), and the MIDI port in use, plus Start/Stop and Quit — and,
-if the engine is built, the feedback controls. It also **reconnects**: if the
+`/info` probe every 5s), and the MIDI port in use, plus Start/Stop and Quit.
+There is no window: the bridge has nothing to show that the console and the
+surface do not show better. It also **reconnects**: if the
 FaderPort is unplugged it waits and retries every 5s, reattaching when it
 returns. The bundle sets `LSUIElement`, so it lives only in the menu bar — no
 Dock icon. It reads `config.json` from `Contents/MacOS/` inside the bundle.
@@ -165,9 +179,14 @@ cmake --build build --config Release
 # -> engine/build/fk-engine_artefacts/Release/fk-engine
 ```
 
-`scripts/build-app.sh` copies that binary into `FaderBridge.app` so the tray app
-finds it; otherwise the app resolves it via `$FK_ENGINE_PATH` or the dev build
-path, and shows "Feedback: engine not built" if it can't.
+`scripts/build-feedback-fader.sh` copies that binary into `FeedbackFader.app` so
+the tray app finds it; otherwise the app resolves it via `$FK_ENGINE_PATH` or the
+dev build path, and the tray reads "Engine not built" if it can't.
+
+```bash
+dotnet run --project src/FeedbackFader.App   # run from source
+scripts/build-feedback-fader.sh              # -> dist/FeedbackFader.app
+```
 
 ### The signal path and the Console routing change
 
@@ -415,39 +434,66 @@ and `midiOutPrepareHeader`, so this works on Windows.
 ## Layout
 
 ```
-src/FaderBridge/                the bridge + feedback library
+src/Fader.Shared/               what both products use and neither owns
+  Osc/OscMessage.cs             hand-rolled OSC 1.0 codec, incl. bundles + blobs
+  Ui/Tokens.cs                  colours, type, spacing
+  Ui/Controls.cs                ArmSwitch, Led, and the panel-building helpers
+  Ui/HoldButton.cs              TapButton + hold-to-confirm
+  Ui/LevelMeter.cs              metering with ballistics
+
+src/FaderBridge.Core/           the bridge
   Program.cs                    startup, config load, graceful shutdown
+  BridgeConfig.cs               config.json
   Bridge/BridgeHost.cs          both directions, touch gating, banking, layers
   Bridge/FaderScaling.cs        MCU 14-bit <-> X32 float  (tune the taper here)
   Midi/McuProtocol.cs           note map, motor/LED/scribble/marquee construction
   Midi/FaderPortDevice.cs       MIDI in/out
-  Osc/OscMessage.cs             hand-rolled OSC 1.0 codec, incl. bundles + blobs
   Osc/X32Client.cs              UDP + /xremote keepalive
   Osc/X32Address.cs             channel/bus/main address construction
-  Osc/X32Rta.cs                 100-band RTA subscribe + decode
-  Osc/X32Geq.cs                 31-band GEQ addressing + par<->dB
   Osc/X32Headamp.cs             the headamp/source trap (§7)
-  Osc/RingOutSession.cs         RTA peak -> GEQ cut
+src/FaderBridge.App/            FaderBridge.app (Avalonia tray, no window)
+  BridgeController.cs           host the bridge in-process, report status
+  NowPlaying.cs                 the scribble-strip marquee
+  MediaKeys.cs                  transport -> Apple Music / Spotify
+
+src/FeedbackFader.Core/         Feedback Fader's host side
+  X32Rta.cs                     100-band RTA subscribe + decode
+  X32Geq.cs                     31-band GEQ addressing + par<->dB
+  RingOutSession.cs             RTA peak -> GEQ cut
+  X32ChannelMeters.cs           per-channel metering for the signal-path check
   Feedback/FkEngineClient.cs    loopback OSC to fk-engine
   Feedback/EngineSupervisor.cs  spawn / health-check / restart
   Feedback/FeedbackController.cs replay, persistence, logging
   Feedback/FkNotchStore.cs      locked notches (JSON)
-  Feedback/FkEventLog.cs        detections (CSV)
-src/FaderBridge.MenuBar/        the macOS menu-bar app (Avalonia tray)
+  Feedback/FkAudioStore.cs      device, channels, and the console address
+  Feedback/FkEventLog.cs        detections, EQ, and captures (CSV)
+  Feedback/NotchResponse.cs     the engine's filter maths, for display
+  Feedback/Correlator.cs        engine detection <-> RTA peak
+src/FeedbackFader.App/          FeedbackFader.app (Avalonia tray + window)
+  ShowView.cs                   the screen you leave open during the set
+  SetupView.cs                  the screen you open at soundcheck
+  GuardSpectrum.cs              what the guard is hearing, right now
+  SpectrumWindow.cs             the engine's spectra over the X32 RTA
+  Program.cs                    entry point + the headless render harnesses
+
 engine/                         the headless C++ audio engine (JUCE)
   Source/FeedbackDetector.h     spectral detector (ported verbatim)
   Source/NotchBank.h            biquad notch bank (ported verbatim)
   Source/AudioEngine.h          processBlock as a Core Audio callback
   Source/EngineMain.cpp         device + OSC wiring, headless
+  tests/test_detector.cpp       the detector against synthetic rooms
+  tests/test_loop.cpp           the closed-loop room simulator
+
 diagnostics/
-  BridgeSelfTest/  MidiMonitor/  OscPing/  FkPing/  RingOut/
+  bridge:   BridgeSelfTest/  MidiMonitor/  OscPing/
+  feedback: FeedbackSelfTest/  FkPing/  RingOut/  SpectrumScope/
 docs/
   adr/0001-...                  architecture decision record
   fk-osc-interface.md           the engine <-> app OSC contract
 ```
 
-The C# diagnostics reference the bridge's real source, so a clean diagnostic run
-means the bridge's own code is what passed. The engine's DSP headers are
+The C# diagnostics reference each product's real source, so a clean diagnostic
+run means that product's own code is what passed. The engine's DSP headers are
 byte-for-byte copies of the FeedbackKiller originals (same SHA).
 
 ## Tuning

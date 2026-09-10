@@ -13,7 +13,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\FaderBridge\FaderBridge.csproj" />
+    <ProjectReference Include="..\..\src\FaderBridge.Core\FaderBridge.Core.csproj" />
   </ItemGroup>
 
 </Project>

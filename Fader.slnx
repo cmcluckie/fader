@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/diagnostics/">
+    <Project Path="diagnostics/BridgeSelfTest/BridgeSelfTest.csproj" />
+    <Project Path="diagnostics/FeedbackSelfTest/FeedbackSelfTest.csproj" />
+    <Project Path="diagnostics/FkPing/FkPing.csproj" />
+    <Project Path="diagnostics/MidiMonitor/MidiMonitor.csproj" />
+    <Project Path="diagnostics/OscPing/OscPing.csproj" />
+    <Project Path="diagnostics/RingOut/RingOut.csproj" />
+    <Project Path="diagnostics/SpectrumScope/SpectrumScope.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Fader.Shared/Fader.Shared.csproj" />
+    <Project Path="src/FaderBridge.App/FaderBridge.App.csproj" />
+    <Project Path="src/FaderBridge.Core/FaderBridge.Core.csproj" />
+    <Project Path="src/FeedbackFader.App/FeedbackFader.App.csproj" />
+    <Project Path="src/FeedbackFader.Core/FeedbackFader.Core.csproj" />
+  </Folder>
+</Solution>

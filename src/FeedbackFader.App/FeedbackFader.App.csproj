@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Feedback Fader: the tray app and its two screens, Show and Setup. The DSP
+       itself is a separate process (engine/, C++/JUCE) supervised from Core. -->
+
+  <PropertyGroup>
+    <!-- WinExe suppresses a console window when launched from an .app bundle;
+         it is a no-op on macOS otherwise. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FeedbackFader.App</RootNamespace>
+    <!-- Also the avares:// authority the tray icon is loaded from. -->
+    <AssemblyName>FeedbackFader</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.1" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.1" />
+    <!-- Control templates. Without a theme, ComboBox/CheckBox/etc. render invisibly. -->
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.1" />
+    <!-- Only used by the hidden render harnesses (headless frame capture). -->
+    <PackageReference Include="Avalonia.Headless" Version="11.2.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FeedbackFader.Core\FeedbackFader.Core.csproj" />
+    <ProjectReference Include="..\Fader.Shared\Fader.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\**" />
+  </ItemGroup>
+
+</Project>

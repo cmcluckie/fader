@@ -6,10 +6,9 @@
     <RollForward>LatestMajor</RollForward>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>Fader.Diagnostics.RingOut</RootNamespace>
-    <AssemblyName>RingOut</AssemblyName>
+    <RootNamespace>Fader.Diagnostics.FeedbackSelfTest</RootNamespace>
+    <AssemblyName>FeedbackSelfTest</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <NoWarn>$(NoWarn);CS0618</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

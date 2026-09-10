@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Plumbing both products need and neither owns: the OSC codec, the X32 talkers
+       that are not specific to either job, and the drawn-control toolkit. Nothing
+       here knows what a FaderPort is or what feedback is. -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Fader.Shared</RootNamespace>
+    <AssemblyName>Fader.Shared</AssemblyName>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Both apps pin 11.2.1; the shared controls must not drag them forward. -->
+    <PackageReference Include="Avalonia" Version="11.2.1" />
+  </ItemGroup>
+
+</Project>

@@ -12,9 +12,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Link the bridge's real codec rather than copying it, so this diagnostic
-         exercises the same code the bridge runs on. -->
-    <Compile Include="..\..\src\FaderBridge\Osc\OscMessage.cs" Link="Osc\OscMessage.cs" />
+    <!-- Link the shared OSC codec rather than copying it, so this diagnostic
+         exercises the same code both apps run on. -->
+    <Compile Include="..\..\src\Fader.Shared\Osc\OscMessage.cs" Link="Osc\OscMessage.cs" />
   </ItemGroup>
 
 </Project>

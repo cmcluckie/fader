@@ -1,4 +1,4 @@
-using Fader.Bridge.Feedback;
+using FeedbackFader;
 
 // Smoke tests for the C# feedback side against the real engine:
 //   A. plumbing        - spawn via the supervisor, telemetry + a control round-trip

@@ -1,6 +1,5 @@
 using System.Text;
-using Fader.Bridge.Feedback;
-using Fader.Bridge.Osc;
+using FeedbackFader;
 
 // Phase 4 display: the engine's per-mic spectrum and the X32's RTA on one shared
 // log-frequency axis, with detections and engine/RTA correlations marked. The
