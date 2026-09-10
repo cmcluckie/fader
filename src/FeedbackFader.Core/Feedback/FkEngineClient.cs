@@ -80,6 +80,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     // ---- control (app -> engine) -------------------------------------------
     public void Subscribe(FkTelemetry mask)          => Send(new OscMessage("/fk/subscribe", (int) mask));
     public void Ping()                               => Send(new OscMessage("/fk/ping"));
+    public void Quit()                               => Send(new OscMessage("/fk/quit"));
     public void SetParam(string name, float value)   => Send(new OscMessage("/fk/param", name, value));
     public void PlaceNotch(int ch, float hz, float depthDb) => Send(new OscMessage("/fk/notch/place", ch, hz, depthDb));
     public void RemoveNotch(int ch, int slot)        => Send(new OscMessage("/fk/notch/remove", ch, slot));

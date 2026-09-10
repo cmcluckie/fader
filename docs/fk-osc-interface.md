@@ -22,9 +22,10 @@ which is a downsampled binary blob.
 | `/fk/clear` | `i i` | channel, includeLocked (0/1) |
 | `/fk/lockall` | `i` | channel — lock every currently active notch (end of a ring-out pass) |
 | `/fk/param` | `s f` | set one scalar: `maxCutDb`, `notchQ`, `releaseSeconds`, `prominenceDb`, `persistFrames`, `pitchTolerance`, `harmonicDb`, `floorDb` |
-| `/fk/audio` | `s i i i` | device name, sampleRate, bufferSize, (reserved) — select/confirm the Core Audio device + I/O pair |
+| `/fk/audio` | `s i i i` | device name, sampleRate, bufferSize, (reserved) — select/confirm the audio device + I/O pair (Core Audio on macOS; ASIO or WASAPI on Windows) |
 | `/fk/subscribe` | `i` | telemetry mask: bit0 events, bit1 notches, bit2 spectrum, bit3 status. Renew < 5 s or streams stop. |
 | `/fk/ping` | — | health check; engine answers `/fk/status` immediately |
+| `/fk/quit` | — | close the audio device and exit. The app sends this before any hard kill; it is the only clean stop on Windows, which has no SIGTERM. |
 
 ## Engine → app
 

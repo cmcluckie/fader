@@ -31,9 +31,19 @@ target_compile_definitions(fk-engine PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_STANDALONE_APPLICATION=1
-    # Core Audio only; no GUI event loop needed.
+    # No GUI event loop needed.
     JUCE_MODAL_LOOPS_PERMITTED=0
 )
+
+# Windows: ASIO for a low-latency insert (a Focusrite Scarlett's own driver),
+# with WASAPI still offered beside it. JUCE bundles the ASIO headers, so there
+# is nothing to download - but a binary built with them is bound by Steinberg's
+# licence (GPLv3, or their proprietary licence by signed agreement). See
+# _deps/juce-src/modules/juce_audio_devices/native/asio/LICENSE.txt before
+# distributing the engine to anyone else.
+if(WIN32)
+    target_compile_definitions(fk-engine PRIVATE JUCE_ASIO=1)
+endif()
 
 target_link_libraries(fk-engine
     PRIVATE
@@ -96,3 +106,12 @@ target_link_libraries(fk-loop
 #   cmake -B build -G "Unix Makefiles"   # or -G Xcode if full Xcode is installed
 #   cmake --build build --config Release
 # Binary: build/fk-engine_artefacts/Release/fk-engine
+
+# MSVC only defines M_PI when asked; the tests use it for their synthetic signals.
+if(MSVC)
+    foreach(t fk-tests fk-loop)
+        if(TARGET ${t})
+            target_compile_definitions(${t} PRIVATE _USE_MATH_DEFINES)
+        endif()
+    endforeach()
+endif()

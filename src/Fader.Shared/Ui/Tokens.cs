@@ -52,8 +52,10 @@ public static class Tokens
     // ---- type ---------------------------------------------------------------
     // Two roles: a tight grotesque for state/labels that must read at four feet,
     // and a mono for anything numeric so digits line up in columns.
-    public static readonly FontFamily Display = new("Avenir Next, Helvetica Neue, sans-serif");
-    public static readonly FontFamily Mono = new("SF Mono, Menlo, monospace");
+    // First match wins, so the macOS faces lead and Windows falls through to its
+    // own rather than to whatever the generic family resolves to there.
+    public static readonly FontFamily Display = new("Avenir Next, Helvetica Neue, Segoe UI, sans-serif");
+    public static readonly FontFamily Mono = new("SF Mono, Menlo, Cascadia Mono, Consolas, monospace");
 
     // ---- geometry -----------------------------------------------------------
     public static readonly CornerRadius RadiusLg = new(14);

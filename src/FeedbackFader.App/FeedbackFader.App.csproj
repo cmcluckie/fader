@@ -15,6 +15,9 @@
     <!-- Also the avares:// authority the tray icon is loaded from. -->
     <AssemblyName>FeedbackFader</AssemblyName>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- The Windows executable's own icon: taskbar, alt-tab, Explorer. Ignored
+         by the macOS apphost, which takes its icon from the bundle instead. -->
+    <ApplicationIcon>../../assets/FeedbackFader.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>

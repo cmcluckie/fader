@@ -6,8 +6,9 @@
 //
 // A console app has no Cocoa run loop, so we do NOT rely on the JUCE message
 // thread: OSC is delivered on its own socket-reader thread (RealtimeCallback),
-// telemetry runs on a plain std::thread, and audio runs on the Core Audio
-// thread. main() just keeps the process alive; the C# supervisor stops it.
+// telemetry runs on a plain std::thread, and audio runs on the driver's own
+// thread (Core Audio on macOS, ASIO or WASAPI on Windows). main() just keeps the
+// process alive; the C# supervisor stops it.
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_osc/juce_osc.h>
@@ -17,6 +18,9 @@
 #include <vector>
 #include <algorithm>
 #include "AudioEngine.h"
+
+// Cleared by SIGINT/SIGTERM or by /fk/quit; main() then stops the engine cleanly.
+namespace { std::atomic<bool> gRun { true }; }
 
 namespace fk
 {
@@ -38,8 +42,14 @@ public:
         setup.useDefaultInputChannels  = true;
         setup.useDefaultOutputChannels = true;
 
-        const auto err = devices.initialise (AudioEngine::maxChans, AudioEngine::maxChans,
-                                             nullptr, true, preferredDevice, &setup);
+        auto err = devices.initialise (AudioEngine::maxChans, AudioEngine::maxChans,
+                                       nullptr, true, preferredDevice, &setup);
+
+        // Given a setup, initialise() opens the name inside the first device type
+        // only - WASAPI on Windows - so an ASIO device needs a second go.
+        if (selectTypeFor (preferredDevice))
+            err = devices.setAudioDeviceSetup (setup, true);
+
         if (err.isNotEmpty())
             juce::Logger::writeToLog ("audio init: " + err + " (staying up; pick a device via /fk/audio)");
         devices.addAudioCallback (&engine);
@@ -90,6 +100,10 @@ private:
         else if (a == "/fk/subscribe"    && m.size() >= 1) subscribeMask.store (m[0].getInt32());
         else if (a == "/fk/listdevices")                   devicesDirty.store (true);
         else if (a == "/fk/ping")                          sendStatus();
+        // Close the device and exit. Windows has no SIGTERM to send a child
+        // process, and a hard kill skips closing the audio device - which some
+        // ASIO drivers do not recover from until the interface is replugged.
+        else if (a == "/fk/quit")                          gRun.store (false);
     }
 
     void applyParam (const juce::String& name, float v)
@@ -180,6 +194,30 @@ private:
         }
     }
 
+    // JUCE opens a named device inside the *current* device type only. macOS has
+    // one type, Core Audio, so that never mattered; Windows creates WASAPI first
+    // and ASIO last, so "Focusrite USB ASIO" would be sought as a WASAPI device
+    // and fail. Switch to whichever type lists the name. Returns true if it did.
+    bool selectTypeFor (const juce::String& deviceName)
+    {
+        if (deviceName.isEmpty()) return false;
+
+        for (auto* type : devices.getAvailableDeviceTypes())
+        {
+            type->scanForDevices();
+            if (! type->getDeviceNames (true).contains (deviceName)
+                 && ! type->getDeviceNames (false).contains (deviceName))
+                continue;
+
+            if (devices.getCurrentAudioDeviceType() == type->getTypeName())
+                return false;
+
+            devices.setCurrentAudioDeviceType (type->getTypeName(), true);
+            return true;
+        }
+        return false;
+    }
+
     void applyPendingReconfigure()
     {
         Desired d;
@@ -190,6 +228,7 @@ private:
         }
 
         devices.removeAudioCallback (&engine);
+        selectTypeFor (d.device);
 
         juce::AudioDeviceManager::AudioDeviceSetup setup;
         setup.outputDeviceName = d.device;
@@ -365,8 +404,6 @@ private:
 };
 
 } // namespace fk
-
-namespace { std::atomic<bool> gRun { true }; }
 
 int main (int argc, char* argv[])
 {

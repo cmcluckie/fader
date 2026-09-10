@@ -18,11 +18,11 @@ Writes:
     assets/<app>-mark.svg          the mark, monochrome master
     assets/<app>-icon.svg          the app icon, colour master
     assets/<App>.icns              macOS bundle icon
-    assets/FaderBridge.ico         Windows executable icon
+    assets/<App>.ico               Windows executable icon
     src/<App>.App/Assets/tray.png  menu-bar icon: black + alpha, a macOS
                                    template image, so macOS inverts it for a
                                    dark menu bar
-    src/FaderBridge.App/Assets/tray-color.png
+    src/<App>.App/Assets/tray-color.png
                                    the Windows notification area, where a
                                    template image would be invisible
 """
@@ -127,16 +127,18 @@ def main():
         write_icns(slug, f"{ASSETS}/{bundle}.icns")
         print(f"{bundle}: tray.png, {bundle}.icns, two svg masters")
 
-    # FaderBridge is the one that also runs on Windows.
-    png(mark_svg("faderbridge", TEAL, 0.55),
-        os.path.join(ROOT, "src", "FaderBridge.App", "Assets", "tray-color.png"), 44)
-    tmp = "/tmp/_ico.png"
-    png(icon_svg("faderbridge"), tmp, 256)
-    Image.open(tmp).convert("RGBA").save(
-        f"{ASSETS}/FaderBridge.ico", format="ICO",
-        sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
-    os.remove(tmp)
-    print("FaderBridge: tray-color.png, FaderBridge.ico")
+    # Both apps also run on Windows: a coloured tray icon, because a template
+    # image would vanish into a dark taskbar, and the .ico the .exe embeds.
+    for slug, (_, colour, project, bundle) in APPS.items():
+        png(mark_svg(slug, colour, 0.55),
+            os.path.join(ROOT, "src", project, "Assets", "tray-color.png"), 44)
+        tmp = f"/tmp/_ico_{slug}.png"
+        png(icon_svg(slug), tmp, 256)
+        Image.open(tmp).convert("RGBA").save(
+            f"{ASSETS}/{bundle}.ico", format="ICO",
+            sizes=[(s, s) for s in (16, 24, 32, 48, 64, 128, 256)])
+        os.remove(tmp)
+        print(f"{bundle}: tray-color.png, {bundle}.ico")
 
 
 if __name__ == "__main__":

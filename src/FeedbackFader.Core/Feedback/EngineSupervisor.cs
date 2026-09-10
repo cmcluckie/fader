@@ -173,11 +173,20 @@ public sealed class EngineSupervisor : IAsyncDisposable
         {
             if (!p.HasExited)
             {
-                // SIGTERM first (the engine shuts down cleanly on it), then SIGKILL.
-                try { using var k = Process.Start("/bin/kill", $"-TERM {p.Id}"); k?.WaitForExit(300); }
-                catch { /* fall through to Kill */ }
+                // Ask first, on every platform: on /fk/quit the engine closes the
+                // audio device and exits. Windows has no SIGTERM to fall back on,
+                // and a hard kill skips closing the device.
+                _client.Quit();
 
-                if (!p.WaitForExit(800))
+                // An engine too wedged to read OSC can still take a signal.
+                if (!p.WaitForExit(800) && !OperatingSystem.IsWindows())
+                {
+                    try { using var k = Process.Start("/bin/kill", $"-TERM {p.Id}"); k?.WaitForExit(300); }
+                    catch { /* fall through to Kill */ }
+                    p.WaitForExit(500);
+                }
+
+                if (!p.HasExited)
                 {
                     p.Kill();
                 }

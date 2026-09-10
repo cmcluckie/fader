@@ -11,7 +11,8 @@ other installed.
   or WinMM, selected at startup).
 - **Feedback Fader** ([Feedback suppression](#feedback-suppression)) — a
   headless JUCE audio process the tray app supervises, notching microphone
-  feedback, plus an X32 RTA-assisted ring-out for the room. macOS only.
+  feedback, plus an X32 RTA-assisted ring-out for the room. macOS, and Windows
+  with an ASIO interface ([Windows](#windows)).
 
 They began as one binary. The split cost almost nothing because the seam was
 already there: the feedback code never referenced MIDI, and the feedback views
@@ -165,11 +166,11 @@ The menu-bar icon is a **template image** — black plus alpha, flagged with
 `MacOSProperties.SetIsTemplateIcon` — so macOS inverts it for a dark menu bar and
 tints it while the menu is open, rather than the app guessing at the theme. The
 Windows notification area has no such notion, and a black-on-transparent icon
-would disappear into a dark taskbar, so FaderBridge ships a coloured twin
+would disappear into a dark taskbar, so each app ships a coloured twin
 (`tray-color.png`) and picks between them at startup.
 
-`assets/` holds the SVG masters, the two `.icns` bundle icons and the `.ico` the
-Windows executable embeds. Everything there is generated from geometry drawn on a
+`assets/` holds the SVG masters, the two `.icns` bundle icons and the two `.ico`
+files the Windows executables embed. Everything there is generated from geometry drawn on a
 44-unit grid — a 22 pt menu-bar icon at 2× — by `assets/make-icons.py`
 (`pip install cairosvg pillow`); edit the geometry in that script rather than the
 rasters, and re-run it to rebuild every size. The `.icns` is written directly, so
@@ -210,6 +211,47 @@ dev build path, and the tray reads "Engine not built" if it can't.
 dotnet run --project src/FeedbackFader.App   # run from source
 scripts/build-feedback-fader.sh              # -> dist/FeedbackFader.app
 ```
+
+### Windows
+
+Feedback Fader runs on Windows with any interface that has an ASIO driver — a
+Focusrite Scarlett 2i2 is the reference. Build it **on the Windows PC**: the
+C# app would cross-compile from a Mac, but the engine is C++ and needs
+Microsoft's compiler, so the script builds both in one place.
+
+Prerequisites: Visual Studio 2022 Build Tools with the *Desktop development
+with C++* workload, CMake 3.22+, the .NET 8 SDK, and Git. Then:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-feedback-fader-win.ps1
+# -> dist\FeedbackFader-win-x64\FeedbackFader.exe, fk-engine.exe beside it
+# -> dist\FeedbackFader-win-x64.zip
+```
+
+The script configures and builds the engine, runs the detector tests (pure DSP,
+so a compiler that changed a result fails the build rather than a gig), publishes
+the app self-contained — the PC it runs on needs no .NET — and puts
+`fk-engine.exe` beside `FeedbackFader.exe`, which is where the app looks first.
+Settings, notches and logs live in `Documents\FeedbackKiller`, as on the Mac.
+
+In Setup, pick the interface's **ASIO** entry — *Focusrite USB ASIO* for a
+Scarlett — not one of the WASAPI endpoints Windows also lists. ASIO is what
+honours the 64-sample buffer; WASAPI in shared mode adds tens of milliseconds to
+a vocal that is being monitored live. On a 2i2 the insert is simply: mic into
+input 1, the engine's return on output 1, and output 1 to the console channel or
+the wedge feed, so there is no Console-style routing change to make.
+
+Three things differ from the Mac build:
+
+- **ASIO licence.** The engine is compiled with JUCE's bundled Steinberg ASIO
+  headers, dual-licensed GPLv3 or Steinberg's proprietary licence. Building and
+  running it yourself is unaffected; read
+  `engine/build-win/_deps/juce-src/modules/juce_audio_devices/native/asio/LICENSE.txt`
+  before giving the binary to anyone else.
+- **Stopping the engine.** Windows has no SIGTERM, so the app sends `/fk/quit`
+  and the engine closes the audio device before exiting; a hard kill is only
+  the fallback for an engine that no longer answers.
+- **Unsigned.** SmartScreen warns on first launch: *More info → Run anyway*.
 
 ### The signal path and the Console routing change
 

@@ -109,19 +109,25 @@ public sealed class App : Application
             },
         };
 
+        // Two tray icons for the one mark, as FaderBridge has. macOS wants a
+        // template image - black plus alpha, inverted by the system for a dark
+        // menu bar and tinted while the menu is open; the Windows notification
+        // area has no such notion, so it gets the coloured twin instead.
+        var trayAsset = OperatingSystem.IsMacOS() ? "tray.png" : "tray-color.png";
+
         _tray = new TrayIcon
         {
             Icon = new WindowIcon(AssetLoader.Open(
-                new Uri("avares://FeedbackFader/Assets/tray.png"))),
+                new Uri($"avares://FeedbackFader/Assets/{trayAsset}"))),
             ToolTipText = "Feedback Fader",
             Menu = menu,
             IsVisible = true,
         };
 
-        // A macOS template image: black plus alpha, inverted by the system for a
-        // dark menu bar and tinted while the menu is open. Feedback Fader is
-        // macOS-only, so there is no second icon to pick between.
-        MacOSProperties.SetIsTemplateIcon(_tray, true);
+        if (OperatingSystem.IsMacOS())
+        {
+            MacOSProperties.SetIsTemplateIcon(_tray, true);
+        }
 
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
 
@@ -264,12 +270,15 @@ public sealed class App : Application
         var env = Environment.GetEnvironmentVariable("FK_ENGINE_PATH");
         if (!string.IsNullOrEmpty(env) && File.Exists(env)) return env;
 
-        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, "fk-engine") };
+        // A plain console binary: fk-engine on macOS, fk-engine.exe on Windows.
+        var exe = OperatingSystem.IsWindows() ? "fk-engine.exe" : "fk-engine";
+
+        var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, exe) };
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (var i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
         {
             candidates.Add(Path.Combine(dir.FullName, "engine", "build",
-                "fk-engine_artefacts", "Release", "fk-engine"));
+                "fk-engine_artefacts", "Release", exe));
         }
         return candidates.FirstOrDefault(File.Exists);
     }
