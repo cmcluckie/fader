@@ -1,2 +1,7 @@
 # Authored on Windows, runs on macOS - keep LF in the repo and on checkout there.
 * text=auto eol=lf
+
+# Icon art: never touched by eol normalisation.
+*.png  binary
+*.icns binary
+*.ico  binary

@@ -149,8 +149,31 @@ returns. The bundle sets `LSUIElement`, so it lives only in the menu bar — no
 Dock icon. It reads `config.json` from `Contents/MacOS/` inside the bundle.
 
 The app is **unsigned**: it runs when built locally, but Gatekeeper will block it
-if it is zipped, moved, or downloaded without code-signing. Launch-at-login and a
-theme-aware (light/dark) menu-bar icon are not yet done.
+if it is zipped, moved, or downloaded without code-signing. Launch-at-login is not
+yet done.
+
+## Icons
+
+Each product has its own mark, and the two are one family: a line that describes
+signal, with a fader cap on it. FaderBridge is two fader tracks tied by a span —
+a surface and a console, linked, each end carrying the other's move. Feedback
+Fader is a flat response bitten by one narrow notch, the cap sitting in the
+trough it just pulled down. Colour comes from `Tokens`: teal for the bridge,
+magenta for the catch, so the icons say the same thing the UI does.
+
+The menu-bar icon is a **template image** — black plus alpha, flagged with
+`MacOSProperties.SetIsTemplateIcon` — so macOS inverts it for a dark menu bar and
+tints it while the menu is open, rather than the app guessing at the theme. The
+Windows notification area has no such notion, and a black-on-transparent icon
+would disappear into a dark taskbar, so FaderBridge ships a coloured twin
+(`tray-color.png`) and picks between them at startup.
+
+`assets/` holds the SVG masters, the two `.icns` bundle icons and the `.ico` the
+Windows executable embeds. Everything there is generated from geometry drawn on a
+44-unit grid — a 22 pt menu-bar icon at 2× — by `assets/make-icons.py`
+(`pip install cairosvg pillow`); edit the geometry in that script rather than the
+rasters, and re-run it to rebuild every size. The `.icns` is written directly, so
+the script does not need `iconutil` and runs off a Mac too.
 
 ## Feedback suppression
 

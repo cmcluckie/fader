@@ -72,14 +72,26 @@ public sealed class App : Application
             },
         };
 
+        // Two menu-bar icons for the one mark. macOS wants a template image -
+        // black plus alpha, which the system inverts for a dark menu bar and
+        // tints when the menu is open; the Windows notification area has no
+        // such notion, so a black-on-transparent icon would vanish into a dark
+        // taskbar and it gets the coloured twin instead.
+        var trayAsset = OperatingSystem.IsMacOS() ? "tray.png" : "tray-color.png";
+
         _tray = new TrayIcon
         {
             Icon = new WindowIcon(AssetLoader.Open(
-                new Uri("avares://FaderBridge/Assets/tray.png"))),
+                new Uri($"avares://FaderBridge/Assets/{trayAsset}"))),
             ToolTipText = "FaderPort ⇄ X32",
             Menu = menu,
             IsVisible = true,
         };
+
+        if (OperatingSystem.IsMacOS())
+        {
+            MacOSProperties.SetIsTemplateIcon(_tray, true);
+        }
 
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
 

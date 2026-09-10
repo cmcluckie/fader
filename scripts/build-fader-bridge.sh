@@ -25,6 +25,7 @@ echo "==> Assembling bundle"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -R "$PUB"/* "$APP/Contents/MacOS/"
 chmod +x "$APP/Contents/MacOS/$EXE"
+cp "$ROOT/assets/FaderBridge.icns" "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,6 +40,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>CFBundleShortVersionString</key> <string>1.0</string>
   <key>CFBundleVersion</key>         <string>1</string>
+  <key>CFBundleIconFile</key>        <string>FaderBridge</string>
   <key>LSMinimumSystemVersion</key>  <string>11.0</string>
   <key>NSHighResolutionCapable</key> <true/>
   <!-- Menu-bar agent: no Dock icon, no app-switcher entry. -->

@@ -118,6 +118,11 @@ public sealed class App : Application
             IsVisible = true,
         };
 
+        // A macOS template image: black plus alpha, inverted by the system for a
+        // dark menu bar and tinted while the menu is open. Feedback Fader is
+        // macOS-only, so there is no second icon to pick between.
+        MacOSProperties.SetIsTemplateIcon(_tray, true);
+
         TrayIcon.SetIcons(this, new TrayIcons { _tray });
 
         // Come back as it was left: device, channels and notches are replayed by

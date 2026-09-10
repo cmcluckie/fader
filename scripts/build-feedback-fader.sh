@@ -29,6 +29,7 @@ echo "==> Assembling bundle"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp -R "$PUB"/* "$APP/Contents/MacOS/"
 chmod +x "$APP/Contents/MacOS/$EXE"
+cp "$ROOT/assets/FeedbackFader.icns" "$APP/Contents/Resources/"
 
 ENGINE="$ROOT/engine/build/fk-engine_artefacts/Release/fk-engine"
 if [ -x "$ENGINE" ]; then
@@ -51,6 +52,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>     <string>APPL</string>
   <key>CFBundleShortVersionString</key> <string>1.0</string>
   <key>CFBundleVersion</key>         <string>1</string>
+  <key>CFBundleIconFile</key>        <string>FeedbackFader</string>
   <key>LSMinimumSystemVersion</key>  <string>11.0</string>
   <key>NSHighResolutionCapable</key> <true/>
   <!-- The engine opens the audio interface; the request comes from this bundle. -->
