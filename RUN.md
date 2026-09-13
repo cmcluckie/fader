@@ -17,8 +17,9 @@ FaderPort's MIDI port name, and only because it differs between machines
 ## On the Mac
 
 1. Open **Terminal**.
-2. `git clone https://github.com/cmcluckie/fader ~/Code/fader && cd ~/Code/fader`
-   — or, if already cloned: `cd ~/Code/fader && git pull`
+2. `git clone -b wire-master-fader https://github.com/cmcluckie/fader ~/Code/fader && cd ~/Code/fader`
+   — or, if already cloned: `cd ~/Code/fader && git checkout wire-master-fader && git pull`
+   *(the current work is on the `wire-master-fader` branch, not the default one)*
 3. `dotnet run --project diagnostics/MidiMonitor`
    — copy the FaderPort's exact port name into `src/FaderBridge.Core/config.json` (`midiPortName`).
 4. `dotnet run --project src/FaderBridge.App`
