@@ -25,6 +25,7 @@ if ($LASTEXITCODE -ne 0) { throw "build failed" }
 $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
 if (-not $iscc) {
     $candidates = @(
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",   # winget per-user install
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
         "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
     )
