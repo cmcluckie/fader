@@ -35,12 +35,11 @@ restriction.
 
 ## Configure
 
-Edit `src/FaderBridge.Core/config.json` — at minimum the console's IP, which
-you'll find on the X32 under **Setup → Network**:
+Edit `src/FaderBridge.Core/config.json`:
 
 ```json
 {
-  "x32IpAddress": "192.168.1.100",
+  "x32IpAddress": "",
   "midiPortName": "PreSonus FP8",
   "stripCount": 8,
   "x32ChannelCount": 32,
@@ -49,6 +48,15 @@ you'll find on the X32 under **Setup → Network**:
   "resyncSeconds": 5.0
 }
 ```
+
+**Finding the console is automatic.** Both products use, in order: the last
+address that answered (remembered across runs, in per-user app data — not the
+repo), then `x32IpAddress` if set, then a broadcast search of the LAN the way
+X32-Edit finds a console. Whatever answers is remembered as the new "last", so a
+hand-typed address that works becomes the remembered one. Leave `x32IpAddress`
+blank to rely on memory + search, or set it to skip straight to a known console
+(you'll still find it on the X32 under **Setup → Network**). It only ever needs
+setting once, if at all.
 
 `resyncSeconds` re-pulls the whole bank periodically. The X32 does not reliably
 broadcast every parameter after a scene recall, so a push-only bridge goes

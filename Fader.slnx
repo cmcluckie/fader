@@ -7,6 +7,7 @@
     <Project Path="diagnostics/OscPing/OscPing.csproj" />
     <Project Path="diagnostics/RingOut/RingOut.csproj" />
     <Project Path="diagnostics/SpectrumScope/SpectrumScope.csproj" />
+    <Project Path="diagnostics/X32LocateTest/X32LocateTest.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Fader.Shared/Fader.Shared.csproj" />
@@ -14,5 +15,17 @@
     <Project Path="src/FaderBridge.Core/FaderBridge.Core.csproj" />
     <Project Path="src/FeedbackFader.App/FeedbackFader.App.csproj" />
     <Project Path="src/FeedbackFader.Core/FeedbackFader.Core.csproj" />
+  </Folder>
+  <!-- The C++/JUCE engine is a CMake project, not an MSBuild one, so it cannot
+       be a <Project> here. Listed as solution files for visibility and editing;
+       it is still built by scripts/build-feedback-fader-win.ps1 (see ADR 0001). -->
+  <Folder Name="/engine/">
+    <File Path="engine/CMakeLists.txt" />
+    <File Path="engine/Source/AudioEngine.h" />
+    <File Path="engine/Source/EngineMain.cpp" />
+    <File Path="engine/Source/FeedbackDetector.h" />
+    <File Path="engine/Source/NotchBank.h" />
+    <File Path="engine/tests/test_detector.cpp" />
+    <File Path="engine/tests/test_loop.cpp" />
   </Folder>
 </Solution>
