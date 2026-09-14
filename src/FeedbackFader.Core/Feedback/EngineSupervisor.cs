@@ -38,7 +38,19 @@ public sealed class EngineSupervisor : IAsyncDisposable
     }
 
     public FkEngineClient Client => _client;
+
+    /// <summary>True when the engine is running audio (telemetry reports it live).</summary>
     public bool EngineOk { get; private set; }
+
+    /// <summary>
+    /// True when the engine PROCESS is up, regardless of whether audio is running.
+    /// Lets the UI tell "engine crashed" apart from "engine fine, no interface
+    /// selected yet" - two states EngineOk alone collapses into one.
+    /// </summary>
+    public bool ProcessAlive
+    {
+        get { lock (_procLock) { return _proc is not null && !_proc.HasExited; } }
+    }
 
     public event Action<string>? Log;
     public event Action<bool>? EngineOkChanged;

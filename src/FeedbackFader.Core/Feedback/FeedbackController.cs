@@ -97,6 +97,9 @@ public sealed class FeedbackController : IAsyncDisposable
     }
 
     public bool EngineOk => _supervisor.EngineOk;
+
+    /// <summary>The engine process is up, even if no audio device is running yet.</summary>
+    public bool ProcessAlive => _supervisor.ProcessAlive;
     public string LogPath => _log.Path;
 
     public event Action<bool>? EngineOkChanged;

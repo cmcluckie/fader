@@ -193,7 +193,11 @@ public sealed class SetupView : UserControl
         {
             VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
             HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            Content = Ui.Stack(Orientation.Vertical, 18, pathCard, ringOut, _strips, filters),
+            // Channel strips FIRST, right under their ARM/CHANNEL/INPUT header -
+            // they are the main thing on this screen. The signal-path check and
+            // ring-out are occasional tools, so they sit below the mics, not
+            // wedged between the header and the rows it labels.
+            Content = Ui.Stack(Orientation.Vertical, 18, _strips, pathCard, ringOut, filters),
         });
         Content = root;
 

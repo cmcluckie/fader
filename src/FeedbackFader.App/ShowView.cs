@@ -191,7 +191,7 @@ public sealed class ShowView : UserControl
         _spectrum.SetFloor(_feedback.FloorDb);
     });
 
-    private void OnChannels() => Dispatcher.UIThread.Post(RebuildTiles);
+    private void OnChannels() => Dispatcher.UIThread.Post(() => { RebuildTiles(); RenderState(); });
     private void OnEngineOk(bool _) => Dispatcher.UIThread.Post(RenderState);
 
     private void OnSpectrum(FkSpectrum spec)
@@ -246,30 +246,56 @@ public sealed class ShowView : UserControl
 
     private void RenderState()
     {
-        var ok = _feedback.EngineOk;
         var bypassed = _feedback.IsBypassed;
 
-        // Three states, three unmistakable looks - never a sentence to parse.
-        var (text, colour, pulsing) = !ok
-            ? ("ENGINE DOWN", Tokens.Clip, false)
-            : bypassed
-                ? ("GUARD OFF", (IBrush) Tokens.InkDim, false)
-                : ("GUARD ON", Tokens.Accent, true);
+        // Five honest states, not two. "ENGINE DOWN" used to mean any of: the
+        // process crashed, no interface was picked, or no mic was armed - three
+        // very different fixes hidden behind one alarming word. Name each one, and
+        // say in the hint what to do about it.
+        string text, hint;
+        IBrush colour;
+        bool pulsing = false, lit = false;
+
+        if (!_feedback.ProcessAlive)
+        {
+            (text, hint, colour) = ("ENGINE DOWN", "the audio engine stopped", Tokens.Clip);
+        }
+        else if (!_feedback.EngineOk)
+        {
+            (text, hint, colour) = ("NO AUDIO INTERFACE", "pick your interface in Setup", Tokens.Clip);
+        }
+        else if (_feedback.EnabledInputs.Count == 0)
+        {
+            (text, hint, colour) = ("NO CHANNEL SELECTED", "arm a mic in Setup", Tokens.Clip);
+        }
+        else if (bypassed)
+        {
+            (text, hint, colour) = ("GUARD OFF", "tap to protect", (IBrush) Tokens.InkDim);
+        }
+        else
+        {
+            (text, hint, colour, pulsing, lit) = ("GUARD ON", "tap to bypass", Tokens.Accent, true, true);
+        }
+
+        // A live guard is the only "good" state; everything else is a to-do.
+        var good = lit;
 
         _guardText.Text = text;
         _guardText.Foreground = colour;
         _guardLed.Colour = colour;
         _guardLed.Pulsing = pulsing;
         _guardPill.BorderBrush = colour;
-        _guardPill.Background = !ok ? Tokens.ClipSoft : bypassed ? Tokens.Panel2 : Tokens.AccentSoft;
+        _guardPill.Background = !good && !bypassed ? Tokens.ClipSoft
+                              : bypassed ? Tokens.Panel2 : Tokens.AccentSoft;
 
-        // One vocabulary, everywhere. The button says the SAME words as the pill so
-        // the two can never appear to disagree; the small line says what a tap does.
-        // Lit teal = protecting, dark = not. State first, action second.
-        _bypass.IsLit = ok && !bypassed;
-        _bypass.Label = !ok ? "ENGINE DOWN" : bypassed ? "GUARD OFF" : "GUARD ON";
-        _bypass.Hint = bypassed ? "tap to protect" : "tap to bypass";
+        // One vocabulary, everywhere: the button says the SAME words as the pill,
+        // so the two can never appear to disagree; the small line says what to do.
+        _bypass.IsLit = lit;
+        _bypass.Label = text;
+        _bypass.Hint = hint;
         _bypass.InvalidateVisual();
+
+        var ok = _feedback.EngineOk;
 
         // Same vocabulary rule as the guard button: the state is the label, so it
         // can never be ambiguous whether it is recording. Lit = recording.
