@@ -33,6 +33,10 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+; Close a running copy (via Restart Manager) before replacing its files, so a
+; reinstall over a running instance does not fail on locked exes.
+CloseApplications=yes
+RestartApplications=no
 
 [Tasks]
 Name: "startup"; Description: "Start {#MyAppName} when I sign in"; Flags: unchecked
@@ -51,3 +55,10 @@ Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: st
 ; Offer to launch straight after install. It is a tray app, so no window opens -
 ; look for the menu-bar / notification-area icon.
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; The engine is a CHILD process the app spawns, so Restart Manager may not close
+; it with the app. Stop both before removing files, or uninstall leaves locked
+; exes behind ("some elements could not be removed"). App first, then engine.
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im {#MyAppExeName}"; Flags: runhidden; RunOnceId: "KillApp"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im fk-engine.exe"; Flags: runhidden; RunOnceId: "KillEngine"
