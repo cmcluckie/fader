@@ -16,6 +16,7 @@
 #include <thread>
 #include <csignal>
 #include <memory>
+#include <cstdio>
 #include <vector>
 #include <algorithm>
 #include "AudioEngine.h"
@@ -412,6 +413,22 @@ int main (int argc, char* argv[])
 
     std::signal (SIGINT,  [] (int) { gRun.store (false); });
     std::signal (SIGTERM, [] (int) { gRun.store (false); });
+
+    // Don't outlive the app. Windows does not kill child processes when their
+    // parent dies, and this loop otherwise runs forever - so a crashed or
+    // force-killed app used to leave an orphaned engine holding the audio
+    // device, which then blocked the next engine from opening it. When launched
+    // by the supervisor (FK_PARENT_WATCH set), the app keeps our stdin pipe open
+    // for its whole life; the pipe breaking (EOF) means the app is gone, so we
+    // stop. Standalone runs don't set the flag and are unaffected.
+    if (juce::SystemStats::getEnvironmentVariable ("FK_PARENT_WATCH", {}).isNotEmpty())
+    {
+        std::thread ([]
+        {
+            while (std::getchar() != EOF) { /* parent alive; it sends nothing */ }
+            gRun.store (false);
+        }).detach();
+    }
 
     const juce::String device = argc > 1 ? juce::String (argv[1]) : juce::String();  // "" = default
     const int          rate   = argc > 2 ? juce::String (argv[2]).getIntValue() : 48000;

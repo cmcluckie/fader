@@ -65,6 +65,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         _client.Error += m => Log?.Invoke($"[fk-osc] {m}");
         _client.Start(_cts.Token);
 
+        KillStrayEngines();   // clear any orphan left by a crash of an older build
         Spawn();
         _health = new Timer(_ => Health(), null, HealthInterval, HealthInterval);
     }
@@ -99,8 +100,13 @@ public sealed class EngineSupervisor : IAsyncDisposable
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
+                    // Held open for the engine's lifetime as a dead-man's switch:
+                    // if this app dies, the OS closes the pipe, the engine reads
+                    // EOF and exits, so it can never be orphaned. See EngineMain.
+                    RedirectStandardInput = true,
                     CreateNoWindow = true,
                 };
+                psi.Environment["FK_PARENT_WATCH"] = "1";
                 psi.ArgumentList.Add(_device);                 // "" = default Core Audio device
                 psi.ArgumentList.Add(_sampleRate.ToString());
                 psi.ArgumentList.Add(_bufferSize.ToString());
@@ -166,6 +172,30 @@ public sealed class EngineSupervisor : IAsyncDisposable
         {
             if (!_stopping) Spawn();
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Kill any fk-engine process still running before we spawn ours. Only this
+    /// one app should ever run, and it owns the single engine it manages, so any
+    /// engine already alive at startup is an orphan from a previous crash - and
+    /// an orphan holding the audio device would block the engine we are about to
+    /// start. The dead-man's-switch (FK_PARENT_WATCH) prevents new orphans; this
+    /// sweeps up ones left by builds that predate it.
+    /// </summary>
+    private void KillStrayEngines()
+    {
+        var name = Path.GetFileNameWithoutExtension(_binaryPath);
+        foreach (var p in Process.GetProcessesByName(name))
+        {
+            try
+            {
+                Log?.Invoke($"killing stray engine pid {p.Id}");
+                p.Kill();
+                p.WaitForExit(1000);
+            }
+            catch { /* gone already, or not ours to kill */ }
+            finally { p.Dispose(); }
+        }
     }
 
     private void KillProc()
