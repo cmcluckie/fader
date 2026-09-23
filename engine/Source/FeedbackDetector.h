@@ -33,6 +33,13 @@ public:
         int    persistFrames  = 6;      // stability window, ~64 ms at 512 hop / 48k
         float  stabilityHz    = 5.0f;   // peak may drift at most this many Hz across the window
         float  growthDb       = 3.0f;   // required rise expressed per 100 ms (loop gain > 1);
+        // Above the voice band the same bar costs latency for nothing. Measured on
+        // 4,478 rig catches, real rings grow at a median 20-22 dB/s, so a 30 dB/s
+        // bar sends more than half of them down the 340 ms sustain path. At 20 dB/s
+        // a clean 3 kHz ring fires in 69 ms instead of 341. It is NOT safe to use
+        // this in the voice band: at 2 dB/100 ms everywhere, T39 notched the fifth
+        // partial of a sung note at 1446 Hz.
+        float  growthDbFast   = 2.0f;   // per 100 ms, above voiceBandHz only
                                         // scaled to the real window so the threshold does
                                         // not silently change when the hop size does
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
@@ -760,7 +767,10 @@ private:
             // building rings qualified and steady ones were ignored until they were
             // already loud. Scale the requirement to the window's real duration.
             const float windowSec  = (float) (n * hopSize) / (float) sampleRate;
-            const float needGrowth = params.growthDb * (windowSec / 0.1f);
+            // Judged here because the bar itself depends on it.
+            const bool  inVoiceBand = s.freq < params.voiceBandHz || s.harmonic;
+            const float growthBar  = inVoiceBand ? params.growthDb : params.growthDbFast;
+            const float needGrowth = growthBar * (windowSec / 0.1f);
             // In the voice band, stability alone cannot tell a held note from a ring,
             // so look for ~300 ms and veto anything that wobbles. Above it, keep the
             // fast path: a voice's upper harmonics swing too many Hz to pass the
@@ -771,7 +781,7 @@ private:
             // window can never reject vibrato on its own: at the turning points of
             // the wobble the pitch is momentarily still, which is exactly when a
             // 32 ms look sees a rock-steady tone.
-            const bool  voiceBand = s.freq < params.voiceBandHz || s.harmonic;
+            const bool  voiceBand = inVoiceBand;
             const int   baseNeed  = voiceBand ? params.voiceFrames : params.persistFrames;
             const int   need   = baseNeed + (s.harmonic ? params.harmonicExtra : 0);
 

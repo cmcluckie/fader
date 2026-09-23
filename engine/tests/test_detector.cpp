@@ -1482,6 +1482,68 @@ int main()
         report ("T39 a note with only upper harmonics is left alone", hits == 0, msg);
     }
 
+    // ---- T40: how long it takes to fire, per frequency ---------------------
+    // The rig complaint was "why does it take so long to even react". Measured on
+    // the studio logs: 37 ms median above 2 kHz, 304-720 ms below it. That is not
+    // arithmetic, it is policy - anything under voiceBandHz must persist
+    // voiceFrames (~300 ms) to prove it is not a sung note, and an isolated room
+    // mode at 293 Hz serves the full sentence.
+    //
+    // This test does not judge; it reports, so any change to that policy is
+    // measured rather than argued.
+    {
+        // Start ABOVE the action threshold and grow gently: otherwise the climb
+        // into range dominates and every frequency reports the same figure, which
+        // is what the first version of this test measured.
+        // A real ring builds at excess loop gain over loop delay - tens of dB per
+        // second. At 6 dB/s the growth test never fires and everything falls through
+        // to the sustain path at a flat 341 ms, which is what the second version of
+        // this test measured: the same number at every frequency.
+        constexpr double growthDbPerSec = 30.0;
+        for (double f0 : { 150.0, 300.0, 600.0, 1200.0, 3000.0, 8000.0 })
+        {
+            fk::FeedbackDetector::Params p;
+            p.floorDb = -95.0f;
+            p.minFreq = 40.0f;                        // the rig's own band
+            fk::FeedbackDetector det; init (det, p);
+
+            constexpr int block = 64;
+            std::vector<float> buf ((size_t) block);
+            double ph = 0.0;
+            double firstMs = -1.0;
+            int firstPath = 0;
+            float firstLevel = 0.0f;
+
+            for (int b = 0; b < (int) (3.0 * kSR / block) && firstMs < 0.0; ++b)
+            {
+                for (int i = 0; i < block; ++i)
+                {
+                    const double t = (double) (b * block + i) / kSR;
+                    const double amp = std::min (0.3, 0.001 * std::pow (10.0, growthDbPerSec * t / 20.0));   // -60 dBFS up
+                    ph += 2.0 * M_PI * f0 / kSR;
+                    buf[(size_t) i] = (float) (amp * std::sin (ph) + noise (0.00008));
+                }
+                det.push (buf.data(), block);
+                fk::FeedbackDetector::Event ev;
+                while (det.popEvent (ev))
+                    if (firstMs < 0.0 && std::abs (ev.freq - f0) < 0.05 * f0)
+                    {
+                        firstMs = 1000.0 * (double) ((b + 1) * block) / kSR;
+                        firstPath = ev.path; firstLevel = ev.levelDb;
+                    }
+            }
+
+            char name[64], msg[96];
+            std::snprintf (name, sizeof name, "T40 latency at %.0f Hz", f0);
+            if (firstMs < 0.0) std::snprintf (msg, sizeof msg, "NEVER caught in 3 s");
+            else               std::snprintf (msg, sizeof msg, "caught after %4.0f ms via %s at %.0f dB",
+                                              firstMs,
+                                              firstPath == 1 ? "growth " : firstPath == 2 ? "sustain" : "escal. ",
+                                              firstLevel);
+            report (name, firstMs >= 0.0, msg);
+        }
+    }
+
     std::printf ("\n%s  (%d failed)\n\n", failures == 0 ? "ALL PASS" : "FAILURES", failures);
     return failures == 0 ? 0 : 1;
 }
