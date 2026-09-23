@@ -106,7 +106,7 @@ public:
         is the transport clock.
     */
     int trigger (double f, double nowSeconds, bool growing = true,
-                 double levelDb = -1000.0, double widthHz = 0.0) noexcept
+                 double levelDb = -1000.0, double widthHz = 0.0, bool wide = false) noexcept
     {
         juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
@@ -185,6 +185,18 @@ public:
         const double openDb = (offenderCount (f, nowSeconds) >= fastTrackStrikes)
                                   ? fastTrackCutDb : initialCutDb;
 
+        // A wide, flat feature is not one ring and does not deserve one filter.
+        // Answer it with a comb: a few narrow slots spread across it, together
+        // covering only combCoverage of its width. Feedback needs a winner, and a
+        // region cut into ridges has none - while narrow slots spaced apart cost
+        // far less tone than one cut the whole width of the hump.
+        // Only a PLATEAU gets a comb. Measured on the room ladder: combing
+        // ordinary catches cost room 4 six filters for nothing (ASG 6.1 -> 5.9 on
+        // 45 filters instead of 25). Those rooms ring as narrow modes, where one
+        // correctly sized filter is already the right answer.
+        if (wide && widthHz > combMinFraction * f && f > 0.0)
+            return openComb (f, widthHz, openDb, nowSeconds, slot);
+
         auto& s = slots[(size_t) slot];
         s = NotchSlot{};
         s.active   = true;
@@ -199,6 +211,52 @@ public:
 
         noteOffender (f, nowSeconds);              // one strike per fresh occurrence
         return slot;
+    }
+
+    /**
+        Cut a wide feature into ridges rather than flattening it.
+
+        combTeeth slots across the measured width, each one combCoverage/combTeeth
+        of that width, so the total glass removed is combCoverage of the hump. The
+        centre tooth is placed first and its index returned, so a re-trigger at the
+        reported frequency merges onto it and deepens the comb from the middle.
+    */
+    int openComb (double f, double widthHz, double openDb, double nowSeconds, int firstSlot) noexcept
+    {
+        const double toothBw = std::max (4.0, combCoverage * widthHz / combTeeth);
+        const int    centre  = combTeeth / 2;
+        int returned = -1;
+
+        for (int t = 0; t < combTeeth; ++t)
+        {
+            // Centre tooth first: it takes the slot already chosen by the caller,
+            // and is the one a re-trigger will find.
+            const int order = (t == 0) ? centre : (t <= centre ? centre - t : t - centre);
+            if (order < 0 || order >= combTeeth) continue;
+
+            const double centreHz = f - widthHz / 2.0 + widthHz * ((double) order + 0.5) / combTeeth;
+            if (centreHz <= 0.0) continue;
+
+            int slot = (t == 0) ? firstSlot : findFree();
+            if (slot < 0) slot = stealLru();
+            if (slot < 0) break;                      // pool exhausted: fewer teeth
+
+            auto& s = slots[(size_t) slot];
+            s = NotchSlot{};
+            s.active   = true;
+            s.freq     = centreHz;
+            s.originHz = centreHz;
+            s.q        = std::clamp (centreHz / toothBw, qMin, qMax);
+            s.targetDb = openDb;
+            s.currentDb= 0.0;
+            s.lastHitS = nowSeconds;
+            s.lastRelS = nowSeconds;
+            filters[(size_t) slot].reset();
+            if (t == 0) returned = slot;
+        }
+
+        noteOffender (f, nowSeconds);
+        return returned;
     }
 
     int placeManual (double f, double depthDb, double nowSeconds) noexcept
@@ -377,6 +435,11 @@ public:
     // sliding out and spawning a fresh shallow notch each time.
     double defaultQ       = 25.0;   // fallback when a width was not measured
     double qMin           = 2.0;    // widest a filter may open (f/2 wide)
+    // A feature this wide relative to its own centre is not a ring: nothing
+    // natural is that broad and that flat. It gets a comb, not a filter.
+    double combMinFraction = 0.25;  // width > a quarter of the centre frequency
+    int    combTeeth       = 5;
+    double combCoverage    = 0.20;  // total glass removed, as a fraction of width
     // Measured at the rig: a 10.6 kHz ring walked 9250 -> 10850 Hz within seconds,
     // and a 296 Hz filter (Q36) let it out - one guarded run in three failed at the
     // bypassed level. Up high the filter has to cover where the tone is GOING.

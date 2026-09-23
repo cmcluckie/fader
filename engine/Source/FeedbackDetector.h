@@ -68,6 +68,33 @@ public:
         // At 200 Hz this keeps 94% of the frequencies caught in a session that
         // sounded right and rejects 64% of those from one that did not.
         float  maxWidthHz     = 200.0f;
+        // ...unless it is FLAT. Nothing natural is both that wide and that even:
+        // a vowel's formant is rippled by the harmonics underneath it, a cymbal
+        // decays, a room's broad mode cluster just sits there. A plateau this
+        // smooth is a loop, and it was invisible before - too wide to become a
+        // suspect, so it produced no catch AND no rejection.
+        float  plateauMinHz   = 150.0f;  // a plateau must be at least this wide
+        float  plateauRipple  = 6.0f;    // peak-to-median across it, dB
+        // OFF by default (999 = never). The path works - it catches a synthetic
+        // plateau - but it also fires on a singer, and until it stops doing that
+        // it has no business on a stage. Set to ~10 to enable it; see T42.
+        float  plateauRiseDb  = 999.0f;  // above the band's own slow baseline
+        int    plateauFrames  = 12;      // ~64 ms: the "attack it at the ms level" bar
+        int    plateauBands   = 3;       // consecutive raised bands to count as wide
+        // Raised and flat is not enough: a vowel and a smooth hump are both raised
+        // and flat (T4 fired 53 times, T36 carved a hump 46 times). Feedback also
+        // CLIMBS - so the run must gain this much while it is being watched.
+        // Not how FAST it rises - a plateau in a big room can creep - but how
+        // STRAIGHT the rise is. Feedback is exponential, so in dB it is a straight
+        // line whatever its slope; music arrives in lumps. Fit a line over the
+        // window and judge the residual.
+        float  plateauGrowDb  = 3.0f;    // minimum total rise across the window
+        float  plateauStraight= 1.5f;    // RMS residual from that line, dB
+        // ...and it must not MOVE. A plateau is a fixed cluster of room modes; a
+        // singer's vibrato and vowel changes slide energy between bands every few
+        // frames. Requiring the run's own edges to hold still is what separates
+        // the two, and it is the term the first version was missing.
+        int    plateauStill   = 6;       // frames the run's edges must not slide
         // Only true silence, not "quiet". This was -55 dB, meant to stop the
         // detector chasing noise between songs, and it is the reason rings took so
         // long to find: a marked miss at 7 kHz was 33 dB prominent and climbing
@@ -122,6 +149,18 @@ public:
     /// Logging only what fired means every "it missed one" has to be
     /// reverse-engineered by simulation; this says which gate stopped it.
     enum class Reason { None = 0, Harmonic = 1, Unstable = 2, NoGrowth = 3, Vibrato = 4, Drifting = 5 };
+
+    /// Test hook: the last wide run the plateau path looked at, and every number
+    /// it was judged on. Guessing which term blocked a plateau cost three rounds
+    /// of rebuilding; the detector knows, so it says.
+    struct PlateauProbe
+    {
+        float loHz = 0.0f, hiHz = 0.0f;
+        float grew = 0.0f, slope = 0.0f, residual = 0.0f, ripple = 0.0f;
+        int   bands = 0, still = 0;
+        bool  fired = false;
+    };
+    const PlateauProbe& lastPlateau() const noexcept { return probe; }
 
     struct Reject
     {
@@ -337,7 +376,15 @@ private:
                 {
                     float wlo = 0.0f, whi = 0.0f;
                     peakWidth (freq, wlo, whi);
-                    if (whi - wlo > params.maxWidthHz) continue;
+                    const float span = whi - wlo;
+                    if (span > params.maxWidthHz)
+                    {
+                        // Wide is not automatically a formant. Let a FLAT one
+                        // through; a rippled one is a voice and is dropped as before.
+                        const bool plateau = span >= params.plateauMinHz
+                                          && rippleDb (wlo, whi) <= params.plateauRipple;
+                        if (! plateau) continue;
+                    }
                 }
 
                 if (peakCount < maxPeaks)
@@ -467,7 +514,162 @@ private:
         for (auto& s : suspects)
             if (s.active && s.missed > 2) s = Suspect{};
 
+        // Runs whether or not the input gate is open: the baseline must keep
+        // tracking a quiet room, or the first loud moment after silence reads as a
+        // plateau everywhere.
+        scanBands (rmsDb >= params.inputGateDb);
+
         hasPrevFrame = true;
+    }
+
+    /**
+        The second way of seeing: band energy against that band's own history.
+
+        Peak-picking cannot see a flat shelf - it has no local maximum, and the
+        median window that measures prominence sits inside the shelf, so there is
+        nothing to stand above. Measured: a 200-400 Hz plateau was invisible even
+        with the prominence bar dropped to 2 dB (T42).
+
+        So a plateau is found the other way round: each band is compared with a
+        slow baseline of itself, and a run of adjacent bands that rises together,
+        stays flat across the run, and holds for ~64 ms is reported as one wide
+        event. Its width then buys it a comb of narrow notches rather than one
+        wide cut.
+    */
+    void scanBands (bool gateOpen) noexcept
+    {
+        const float lo = juce::jmax (20.0f, params.minFreq);
+        const float hi = juce::jmin ((float) (numBins - 2) * binHz, params.maxFreq);
+        if (hi <= lo * 1.05f) return;
+
+        const float ratio = std::pow (hi / lo, 1.0f / (float) numBands);
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            const float f0 = lo * std::pow (ratio, (float) b);
+            const float f1 = f0 * ratio;
+            const int   i0 = juce::jlimit (1, numBins - 2, (int) (f0 / binHz));
+            const int   i1 = juce::jlimit (1, numBins - 2, (int) (f1 / binHz));
+
+            float peak = -140.0f;
+            for (int i = i0; i <= i1; ++i) peak = juce::jmax (peak, mag[(size_t) i]);
+            bandLevel[(size_t) b] = peak;
+
+            if (! bandsPrimed) { bandBaseline[(size_t) b] = peak; continue; }
+
+            // Creep up, drop fast: a classic floor tracker. Upward at 0.02 dB per
+            // frame (~4 dB/s) so a ring cannot quietly become its own baseline
+            // before it is reported, downward fast so the floor follows a room
+            // that goes quiet.
+            float& base = bandBaseline[(size_t) b];
+            base = peak > base ? base + 0.02f : juce::jmax (peak, base - 0.5f);
+        }
+
+        if (! bandsPrimed) { bandsPrimed = true; return; }
+        if (! gateOpen) { for (auto& f : bandHot) f = 0; return; }
+
+        for (int b = 0; b < numBands; ++b)
+        {
+            // Hysteresis: a band goes up at the threshold but does not come back
+            // down until it is clearly below it. Without this the run's edges
+            // flicker every frame, which reset both the stillness count and the
+            // straight-line fit before either could accumulate.
+            const float over = bandLevel[(size_t) b] - bandBaseline[(size_t) b];
+            const bool  up   = bandHot[(size_t) b] > 0 ? over >= params.plateauRiseDb - 3.0f
+                                                       : over >= params.plateauRiseDb;
+            if (! up) { bandHot[(size_t) b] = 0; continue; }
+            if (bandHot[(size_t) b] <= 0) bandEntry[(size_t) b] = bandLevel[(size_t) b];
+            ++bandHot[(size_t) b];
+        }
+
+        // The widest run of adjacent raised bands, and whether it has held still.
+        int wideLo = -1, wideHi = -1;
+        {
+            int b2 = 0;
+            while (b2 < numBands)
+            {
+                if (bandHot[(size_t) b2] <= 0) { ++b2; continue; }
+                int e2 = b2;
+                while (e2 + 1 < numBands && bandHot[(size_t) (e2 + 1)] > 0) ++e2;
+                if (wideLo < 0 || e2 - b2 > wideHi - wideLo) { wideLo = b2; wideHi = e2; }
+                b2 = e2 + 1;
+            }
+        }
+        // It may GROW outward - a plateau recruits neighbouring bands as it builds -
+        // but it may not slide or shrink. Vibrato does both, every few frames.
+        // History of the widest run's level, for the straightness fit.
+        if (wideLo >= 0)
+        {
+            float top = -140.0f;
+            for (int k = wideLo; k <= wideHi; ++k) top = juce::jmax (top, bandLevel[(size_t) k]);
+            runHist[(size_t) runPos] = top;
+            runPos = (runPos + 1) % (int) runHist.size();
+            runCount = juce::jmin (runCount + 1, (int) runHist.size());
+        }
+        else runCount = 0;
+
+        if (wideLo >= 0 && runLo >= 0 && wideLo <= runLo && wideHi >= runHi)
+        {
+            ++runStill; runLo = wideLo; runHi = wideHi;
+        }
+        else
+        {
+            // A new run is a new line to fit. Keeping the old history made the fit
+            // span the cliff from silence to signal and report a 29.7 dB residual
+            // on a perfectly straight rise.
+            runLo = wideLo; runHi = wideHi; runStill = 0; runCount = 0;
+        }
+
+        // Runs of adjacent bands that have all been up for long enough.
+        int b = 0;
+        while (b < numBands)
+        {
+            if (bandHot[(size_t) b] < params.plateauFrames) { ++b; continue; }
+            int e = b;
+            while (e + 1 < numBands && bandHot[(size_t) (e + 1)] >= params.plateauFrames) ++e;
+
+            const int   span   = e - b + 1;
+            const float loHz   = lo * std::pow (ratio, (float) b);
+            const float hiHz   = lo * std::pow (ratio, (float) (e + 1));
+
+            // How much the run has gained since it first went up. A ring keeps
+            // climbing; a held vowel arrives and stays put.
+            float grew = 1.0e9f;
+            for (int k = b; k <= e; ++k)
+                grew = juce::jmin (grew, bandLevel[(size_t) k] - bandEntry[(size_t) k]);
+
+            // ...and whether that climb is a straight line in dB.
+            float slope = 0.0f, residual = 1.0e9f;
+            straightness (slope, residual);
+
+            probe = PlateauProbe { loHz, hiHz, grew, slope, residual,
+                                   rippleDb (loHz, hiHz), span, runStill, false };
+
+            if (span >= params.plateauBands && hiHz - loHz >= params.plateauMinHz
+                && grew >= params.plateauGrowDb
+                && slope > 0.0f && residual <= params.plateauStraight
+                && runStill >= params.plateauStill && b >= runLo && e <= runHi
+                && rippleDb (loHz, hiHz) <= params.plateauRipple)
+            {
+                float top = -140.0f;
+                for (int k = b; k <= e; ++k) top = juce::jmax (top, bandLevel[(size_t) k]);
+
+                Event ev;
+                ev.freq      = std::sqrt (loHz * hiHz);      // geometric centre
+                ev.levelDb   = top;
+                ev.growing   = true;
+                ev.path      = 4;                            // plateau
+                ev.ageMs     = 1000.0f * (float) (bandHot[(size_t) b] * hopSize) / (float) sampleRate;
+                ev.widthLoHz = loHz;
+                ev.widthHiHz = hiHz;
+                pushEvent (ev);
+                probe.fired = true;
+
+                // Cool down, or it fires every frame for as long as the room hums.
+                for (int k = b; k <= e; ++k) bandHot[(size_t) k] = -40;
+            }
+            b = e + 1;
+        }
     }
 
     /**
@@ -953,6 +1155,34 @@ private:
         slot->windowPos  = 1;
     }
 
+    /**
+        How uneven the top of a feature is: peak minus median across its own span.
+
+        A sung vowel's formant carries the harmonic ripple of the voice under it,
+        so this is large. A broad feedback plateau is smooth, so it is small. That
+        difference is the only thing that makes a wide feature safe to act on.
+    */
+    float rippleDb (float loHz, float hiHz) noexcept
+    {
+        const int lo = juce::jmax (0, (int) (loHz / binHz));
+        const int hi = juce::jmin (numBins - 1, (int) (hiHz / binHz));
+        if (hi - lo < 3) return 1000.0f;                  // too few bins to judge
+
+        int count = 0;
+        float top = -1000.0f;
+        for (int i = lo; i <= hi && count < (int) medianScratch.size(); ++i)
+        {
+            medianScratch[(size_t) count++] = mag[(size_t) i];
+            top = juce::jmax (top, mag[(size_t) i]);
+        }
+        if (count == 0) return 1000.0f;
+
+        const int mid = count / 2;
+        std::nth_element (medianScratch.begin(), medianScratch.begin() + mid,
+                          medianScratch.begin() + count);
+        return top - medianScratch[(size_t) mid];
+    }
+
     float medianAround (int centre, int halfWidth) noexcept
     {
         const int lo = juce::jmax (0, centre - halfWidth);
@@ -1003,6 +1233,53 @@ public:
     int floorHalfWidthOverride = 0;   // test hook
 private:
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
+
+    // ---- the plateau path's state (see scanBands) ---------------------------
+    static constexpr int numBands = 48;             // ~1/6 octave over the band
+    std::array<float, (size_t) numBands> bandLevel {};
+    std::array<float, (size_t) numBands> bandBaseline {};
+    std::array<int,   (size_t) numBands> bandHot {};
+    std::array<float, (size_t) numBands> bandEntry {};   // level when it first went up
+    int runLo = -1, runHi = -1, runStill = 0;            // the widest run, and how long it has held
+    std::array<float, 32> runHist {};                    // its level over the last 32 frames
+    int runPos = 0, runCount = 0;
+    PlateauProbe probe {};
+
+    /**
+        Least-squares fit of the run's recent level against time, in dB.
+
+        Feedback grows exponentially, which is a straight line in dB at whatever
+        slope the excess loop gain dictates - so the slope is not the test, the
+        RESIDUAL is. Music climbs in lumps and fits a line badly.
+    */
+    void straightness (float& slope, float& residual) const noexcept
+    {
+        const int n = runCount;
+        if (n < 6) { slope = 0.0f; residual = 1.0e9f; return; }
+
+        float sx = 0.0f, sy = 0.0f, sxx = 0.0f, sxy = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const int idx = (runPos - n + i + (int) runHist.size()) % (int) runHist.size();
+            const float x = (float) i, y = runHist[(size_t) idx];
+            sx += x; sy += y; sxx += x * x; sxy += x * y;
+        }
+        const float denom = (float) n * sxx - sx * sx;
+        if (std::abs (denom) < 1.0e-6f) { slope = 0.0f; residual = 1.0e9f; return; }
+
+        slope = ((float) n * sxy - sx * sy) / denom;
+        const float intercept = (sy - slope * sx) / (float) n;
+
+        float sum = 0.0f;
+        for (int i = 0; i < n; ++i)
+        {
+            const int idx = (runPos - n + i + (int) runHist.size()) % (int) runHist.size();
+            const float err = runHist[(size_t) idx] - (slope * (float) i + intercept);
+            sum += err * err;
+        }
+        residual = std::sqrt (sum / (float) n);
+    }
+    bool bandsPrimed = false;
     std::array<std::atomic<float>, (size_t) numBins> publishedMag;
 
     std::array<float, maxPeaks> peakFreq {}, peakLevel {}, peakProm {};

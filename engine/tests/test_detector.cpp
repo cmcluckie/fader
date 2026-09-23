@@ -1482,6 +1482,97 @@ int main()
         report ("T39 a note with only upper harmonics is left alone", hits == 0, msg);
     }
 
+    // ---- T42: a wide FLAT plateau is caught, and answered with a comb ------
+    // FAILS, and the path it tests ships DISABLED. Kept because it is the spec for
+    // finishing it, and because the comb half already works.
+    //
+    // Where it stands: of the five terms, ripple, width, slope and the comb are
+    // right. The run TRACKING is not - the probe reports the run widening to
+    // 75-550 Hz for a 200-400 Hz plateau, and its "held still" count never gets
+    // past 3 frames, so the straight-line fit never accumulates enough history to
+    // judge. Fix the run's edges first (they should settle on the plateau, not
+    // creep outward into its skirts), then the fit becomes meaningful.
+    //
+    // With the path enabled as it stands it also fires once on T4's singer and
+    // once on T36's broad hump, which is why it is off.
+    // From the rig, 2026-09-22: a mound of energy roughly 40-300 Hz, flat-topped,
+    // building slowly, with the guard answering it with a single narrow notch at
+    // 293 Hz. Nothing natural is that wide AND that even - a vowel's formant
+    // carries the harmonic ripple of the voice beneath it - so a smooth plateau
+    // is a loop, and before this it was invisible: too wide to become a suspect,
+    // so it produced no catch and no rejection either.
+    {
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f;
+        p.minFreq = 40.0f;
+        p.plateauRiseDb = 10.0f;      // the path ships disabled; this test turns it on
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        float caught = 0.0f, widthLo = 0.0f, widthHi = 0.0f;
+        double ms = -1.0;
+
+        for (int b = 0; b < (int) (3.0 * kSR / block) && ms < 0.0; ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                const double amp = std::min (0.02, 0.002 * std::pow (10.0, 20.0 * t / 20.0));
+                double v = 0.0;
+                // 200-400 Hz filled in at 7 Hz spacing: closer than one 23.4 Hz
+                // bin, so the analyser sees a flat shelf rather than a comb.
+                for (int k = 0; k < 29; ++k)
+                {
+                    const double fk = 200.0 + 7.0 * k;
+                    v += amp * std::sin (2.0 * M_PI * fk * t + 1.7 * k);
+                }
+                buf[(size_t) i] = (float) (v + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+                if (ms < 0.0 && ev.freq > 180.0f && ev.freq < 420.0f)
+                {
+                    ms = 1000.0 * (double) ((b + 1) * block) / kSR;
+                    caught = ev.freq; widthLo = ev.widthLoHz; widthHi = ev.widthHiHz;
+                }
+        }
+
+        char msg[128];
+        if (ms < 0.0)
+        {
+            const auto& pr = det.lastPlateau();
+            std::snprintf (msg, sizeof msg,
+                           "NOT CAUGHT: %.0f-%.0f Hz, %d bands, grew %.1f, slope %.2f, resid %.1f, ripple %.1f, still %d",
+                           pr.loHz, pr.hiHz, pr.bands, pr.grew, pr.slope, pr.residual, pr.ripple, pr.still);
+        }
+        else          std::snprintf (msg, sizeof msg, "caught %.0f Hz after %.0f ms, %.0f Hz wide",
+                                     caught, ms, widthHi - widthLo);
+        report ("T42 a flat wide plateau is caught at all", ms >= 0.0, msg);
+
+        // ...and the bank answers it with ridges, not one big hole.
+        if (ms >= 0.0)
+        {
+            fk::NotchBank<24> bank;
+            bank.prepare (kSR, 64);
+            bank.trigger (caught, 0.0, true, -30.0, widthHi - widthLo, true);   // plateau
+
+            int teeth = 0; double lo = 1e9, hi = -1e9, narrowest = 1e9;
+            for (int i = 0; i < 24; ++i)
+            {
+                const auto& sl = bank.getSlot (i);
+                if (! sl.active) continue;
+                ++teeth; lo = std::min (lo, sl.freq); hi = std::max (hi, sl.freq);
+                narrowest = std::min (narrowest, sl.freq / sl.q);
+            }
+            char m2[128];
+            std::snprintf (m2, sizeof m2, "%d teeth spanning %.0f-%.0f Hz, each ~%.0f Hz wide",
+                           teeth, lo, hi, narrowest);
+            report ("T42 the bank answers a plateau with a comb", teeth >= 3 && (hi - lo) > 60.0, m2);
+        }
+    }
+
     // ---- T41: a LOW sung note is still left alone --------------------------
     // THIS TEST FAILS ON THE SHIPPING BUILD, and it is kept failing on purpose.
     //
