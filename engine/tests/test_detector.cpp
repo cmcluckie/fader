@@ -1482,6 +1482,67 @@ int main()
         report ("T39 a note with only upper harmonics is left alone", hits == 0, msg);
     }
 
+    // ---- T41: a LOW sung note is still left alone --------------------------
+    // THIS TEST FAILS ON THE SHIPPING BUILD, and it is kept failing on purpose.
+    //
+    // A sung 110 Hz note with ten harmonics and vibrato is notched on its own
+    // FUNDAMENTAL, via the slow-creep path at 347 ms. Every guard that should
+    // have stopped it is blind here:
+    //
+    //   - sitsOnAComb only looks DOWNWARD, so it can never flag a fundamental;
+    //     there is nothing below one.
+    //   - the vibrato veto cannot see the wobble: +-0.5% of 110 Hz is 0.55 Hz,
+    //     a fortieth of a 23.4 Hz bin.
+    //   - a family test looking UPWARD does not help either, because at 110 Hz
+    //     the partials are 4.7 bins apart and a 2048-point Hann window smears
+    //     them together: they never become prominent peaks, so the peak list
+    //     has no family in it to find. Tried, measured, reverted.
+    //
+    // The fix is resolution, not policy - a longer window for the low band, or a
+    // pitch detector (cepstrum/autocorrelation) that does not need resolved
+    // partials. Until then this is a known hole: a bass voice loses its
+    // fundamental to a notch about a third of a second in.
+    //
+    // A low-frequency fast path was also tried here (85 ms for a lone peak below
+    // 500 Hz). It cut low-end latency from 341 ms to 123 ms and improved the room
+    // ladder, but it widened this same hole from 1 notch to 10, so it is not in
+    // the tree.
+    {
+        constexpr double f0 = 110.0;
+        fk::FeedbackDetector::Params p;
+        p.floorDb = -95.0f;
+        p.minFreq = 40.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double ph = 0.0;
+        int hits = 0; float first = 0.0f; int firstPath = 0; float firstAge = 0.0f;
+
+        for (int b = 0; b < (int) (6.0 * kSR / block); ++b)
+        {
+            for (int i = 0; i < block; ++i)
+            {
+                const double t = (double) (b * block + i) / kSR;
+                ph += 2.0 * M_PI * (f0 * (1.0 + 0.005 * std::sin (2.0 * M_PI * 5.2 * t))) / kSR;
+                double v = 0.0;
+                for (int h = 1; h <= 10; ++h) v += (0.06 / std::sqrt ((double) h)) * std::sin (ph * h);
+                buf[(size_t) i] = (float) (v * std::min (1.0, t / 0.4) + noise (0.00008));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+            {
+                if (! hits) { first = ev.freq; firstPath = ev.path; firstAge = ev.ageMs; }
+                ++hits;
+            }
+        }
+        char msg[96];
+        std::snprintf (msg, sizeof msg, hits ? "NOTCHED %d times, first %.0f Hz via %s at %.0f ms" : "left alone",
+                       hits, first, firstPath == 1 ? "growth" : firstPath == 2 ? "sustain" : "escalation", firstAge);
+        report ("T41 a low sung note is left alone", hits == 0, msg);
+    }
+
     // ---- T40: how long it takes to fire, per frequency ---------------------
     // The rig complaint was "why does it take so long to even react". Measured on
     // the studio logs: 37 ms median above 2 kHz, 304-720 ms below it. That is not
