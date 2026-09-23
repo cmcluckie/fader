@@ -83,8 +83,14 @@ int main (int argc, char* argv[])
     const unsigned seed  = argc > 2 ? (unsigned) std::atoi (argv[2]) : 1u;
     // Diagnostic: silence the rings and leave only the singer, to separate "the
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
-    bool noRings = false;
-    for (int i = 1; i < argc; ++i) if (std::string (argv[i]) == "--no-rings") noRings = true;
+    bool noRings = false, plateauPath = false;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::string (argv[i]) == "--no-rings") noRings = true;
+        // The plateau path ships disabled. This turns it on so its worth can be
+        // scored against the same rings rather than argued from one fixture.
+        if (std::string (argv[i]) == "--plateau") plateauPath = true;
+    }
     std::mt19937 rng (seed);
 
     auto uni = [&rng] (double a, double b) {
@@ -94,6 +100,7 @@ int main (int argc, char* argv[])
     fk::FeedbackDetector::Params p;
     p.floorDb = -95.0f;
     p.minFreq = 40.0f;
+    if (plateauPath) p.plateauRiseDb = 10.0f;
     fk::FeedbackDetector det;
     det.prepare (kSR);
     det.setParams (p);
@@ -177,7 +184,7 @@ int main (int argc, char* argv[])
         notes.push_back ({ u, u + uni (1.5, 4.0), std::pow (10.0, uni (std::log10 (95.0), std::log10 (520.0))),
                            uni (4.2, 6.4), uni (0.003, 0.02) });
 
-    std::printf ("fk-fuzz - %.1f minutes, seed %u%s\n", minutes, seed, noRings ? "  [RINGS SILENCED]" : "");
+    std::printf ("fk-fuzz - %.1f minutes, seed %u%s\n", minutes, seed, noRings ? "  [RINGS SILENCED]" : plateauPath ? "  [PLATEAU PATH ON]" : "");
     std::printf ("  %zu rings (%zu spikes, %zu plateaus), %zu modes, %zu sung notes\n\n",
                  rings.size(),
                  (size_t) std::count_if (rings.begin(), rings.end(), [] (const Ring& r) { return ! r.plateau; }),

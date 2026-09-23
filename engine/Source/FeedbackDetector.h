@@ -79,7 +79,7 @@ public:
         // plateau - but it also fires on a singer, and until it stops doing that
         // it has no business on a stage. Set to ~10 to enable it; see T42.
         float  plateauRiseDb  = 999.0f;  // above the band's own slow baseline
-        int    plateauFrames  = 12;      // ~64 ms: the "attack it at the ms level" bar
+        int    plateauFrames  = 40;      // ~210 ms of continuous elevation
         int    plateauBands   = 3;       // consecutive raised bands to count as wide
         // Raised and flat is not enough: a vowel and a smooth hump are both raised
         // and flat (T4 fired 53 times, T36 carved a hump 46 times). Feedback also
@@ -89,12 +89,14 @@ public:
         // line whatever its slope; music arrives in lumps. Fit a line over the
         // window and judge the residual.
         float  plateauGrowDb  = 3.0f;    // minimum total rise across the window
-        float  plateauStraight= 1.5f;    // RMS residual from that line, dB
+        // A plateau is several modes at once, and modes beat: its level wobbles
+        // several dB while rising perfectly straight. 1.5 dB was a bar only a pure
+        // tone could clear - measured 8.2 dB on a textbook synthetic plateau.
+        float  plateauStraight= 6.0f;    // RMS residual from that line, dB
         // ...and it must not MOVE. A plateau is a fixed cluster of room modes; a
         // singer's vibrato and vowel changes slide energy between bands every few
         // frames. Requiring the run's own edges to hold still is what separates
         // the two, and it is the term the first version was missing.
-        int    plateauStill   = 6;       // frames the run's edges must not slide
         // Only true silence, not "quiet". This was -55 dB, meant to stop the
         // detector chasing noise between songs, and it is the reason rings took so
         // long to find: a marked miss at 7 kHz was 33 dB prominent and climbing
@@ -565,6 +567,10 @@ private:
             base = peak > base ? base + 0.02f : juce::jmax (peak, base - 0.5f);
         }
 
+        for (int b = 0; b < numBands; ++b) bandHist[(size_t) b][(size_t) histPos] = bandLevel[(size_t) b];
+        histPos = (histPos + 1) % histLen;
+        histCount = juce::jmin (histCount + 1, histLen);
+
         if (! bandsPrimed) { bandsPrimed = true; return; }
         if (! gateOpen) { for (auto& f : bandHot) f = 0; return; }
 
@@ -580,44 +586,6 @@ private:
             if (! up) { bandHot[(size_t) b] = 0; continue; }
             if (bandHot[(size_t) b] <= 0) bandEntry[(size_t) b] = bandLevel[(size_t) b];
             ++bandHot[(size_t) b];
-        }
-
-        // The widest run of adjacent raised bands, and whether it has held still.
-        int wideLo = -1, wideHi = -1;
-        {
-            int b2 = 0;
-            while (b2 < numBands)
-            {
-                if (bandHot[(size_t) b2] <= 0) { ++b2; continue; }
-                int e2 = b2;
-                while (e2 + 1 < numBands && bandHot[(size_t) (e2 + 1)] > 0) ++e2;
-                if (wideLo < 0 || e2 - b2 > wideHi - wideLo) { wideLo = b2; wideHi = e2; }
-                b2 = e2 + 1;
-            }
-        }
-        // It may GROW outward - a plateau recruits neighbouring bands as it builds -
-        // but it may not slide or shrink. Vibrato does both, every few frames.
-        // History of the widest run's level, for the straightness fit.
-        if (wideLo >= 0)
-        {
-            float top = -140.0f;
-            for (int k = wideLo; k <= wideHi; ++k) top = juce::jmax (top, bandLevel[(size_t) k]);
-            runHist[(size_t) runPos] = top;
-            runPos = (runPos + 1) % (int) runHist.size();
-            runCount = juce::jmin (runCount + 1, (int) runHist.size());
-        }
-        else runCount = 0;
-
-        if (wideLo >= 0 && runLo >= 0 && wideLo <= runLo && wideHi >= runHi)
-        {
-            ++runStill; runLo = wideLo; runHi = wideHi;
-        }
-        else
-        {
-            // A new run is a new line to fit. Keeping the old history made the fit
-            // span the cliff from silence to signal and report a 29.7 dB residual
-            // on a perfectly straight rise.
-            runLo = wideLo; runHi = wideHi; runStill = 0; runCount = 0;
         }
 
         // Runs of adjacent bands that have all been up for long enough.
@@ -640,15 +608,14 @@ private:
 
             // ...and whether that climb is a straight line in dB.
             float slope = 0.0f, residual = 1.0e9f;
-            straightness (slope, residual);
+            straightness (b, e, slope, residual);
 
             probe = PlateauProbe { loHz, hiHz, grew, slope, residual,
-                                   rippleDb (loHz, hiHz), span, runStill, false };
+                                   rippleDb (loHz, hiHz), span, bandHot[(size_t) b], false };
 
             if (span >= params.plateauBands && hiHz - loHz >= params.plateauMinHz
                 && grew >= params.plateauGrowDb
                 && slope > 0.0f && residual <= params.plateauStraight
-                && runStill >= params.plateauStill && b >= runLo && e <= runHi
                 && rippleDb (loHz, hiHz) <= params.plateauRipple)
             {
                 float top = -140.0f;
@@ -1240,9 +1207,14 @@ private:
     std::array<float, (size_t) numBands> bandBaseline {};
     std::array<int,   (size_t) numBands> bandHot {};
     std::array<float, (size_t) numBands> bandEntry {};   // level when it first went up
-    int runLo = -1, runHi = -1, runStill = 0;            // the widest run, and how long it has held
-    std::array<float, 32> runHist {};                    // its level over the last 32 frames
-    int runPos = 0, runCount = 0;
+    // Per-band level history. The first version tracked the RUN frame to frame and
+    // fitted a line to its top level, but the run's own edges wobble as bands cross
+    // the threshold, which reset the fit before it could accumulate: the probe
+    // reported "still 3" and a residual of 1e9 on a perfectly straight rise. Bands
+    // do not wobble, so the history lives here instead.
+    static constexpr int histLen = 32;
+    std::array<std::array<float, (size_t) histLen>, (size_t) numBands> bandHist {};
+    int histPos = 0, histCount = 0;
     PlateauProbe probe {};
 
     /**
@@ -1252,16 +1224,18 @@ private:
         slope the excess loop gain dictates - so the slope is not the test, the
         RESIDUAL is. Music climbs in lumps and fits a line badly.
     */
-    void straightness (float& slope, float& residual) const noexcept
+    void straightness (int lo, int hi, float& slope, float& residual) const noexcept
     {
-        const int n = runCount;
-        if (n < 6) { slope = 0.0f; residual = 1.0e9f; return; }
+        const int n = juce::jmin (histCount, histLen);
+        if (n < 8) { slope = 0.0f; residual = 1.0e9f; return; }
 
         float sx = 0.0f, sy = 0.0f, sxx = 0.0f, sxy = 0.0f;
         for (int i = 0; i < n; ++i)
         {
-            const int idx = (runPos - n + i + (int) runHist.size()) % (int) runHist.size();
-            const float x = (float) i, y = runHist[(size_t) idx];
+            const int idx = (histPos - n + i + histLen) % histLen;
+            float y = -140.0f;
+            for (int k = lo; k <= hi; ++k) y = juce::jmax (y, bandHist[(size_t) k][(size_t) idx]);
+            const float x = (float) i;
             sx += x; sy += y; sxx += x * x; sxy += x * y;
         }
         const float denom = (float) n * sxx - sx * sx;
@@ -1273,8 +1247,10 @@ private:
         float sum = 0.0f;
         for (int i = 0; i < n; ++i)
         {
-            const int idx = (runPos - n + i + (int) runHist.size()) % (int) runHist.size();
-            const float err = runHist[(size_t) idx] - (slope * (float) i + intercept);
+            const int idx = (histPos - n + i + histLen) % histLen;
+            float y = -140.0f;
+            for (int k = lo; k <= hi; ++k) y = juce::jmax (y, bandHist[(size_t) k][(size_t) idx]);
+            const float err = y - (slope * (float) i + intercept);
             sum += err * err;
         }
         residual = std::sqrt (sum / (float) n);
