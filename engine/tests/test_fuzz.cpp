@@ -88,12 +88,22 @@ int main (int argc, char* argv[])
     // Diagnostic: silence the rings and leave only the singer, to separate "the
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
     bool noRings = false, plateauPath = false;
+    double duty = 1.0, periodMs = 12.0, deepDb = -18.0;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
         // The plateau path ships disabled. This turns it on so its worth can be
         // scored against the same rings rather than argued from one fixture.
         if (std::string (argv[i]) == "--plateau") plateauPath = true;
+        // Pulsed suppression: apply each filter's full depth only for a slice of
+        // the time. The loop integrates what it is given, so it sees duty x depth;
+        // the ear, which fills in brief narrowband dips, may not. This measures
+        // the loop half of that bet - the ear half needs a listening test.
+        if (std::string (argv[i]) == "--duty" && i + 1 < argc) duty = std::atof (argv[i + 1]) / 100.0;
+        if (std::string (argv[i]) == "--period" && i + 1 < argc) periodMs = std::atof (argv[i + 1]);
+        // How deep a filter may go. Pulsing at 20% duty only buys a fifth of its
+        // depth, so a fair comparison lets the pulsed case go deeper to match.
+        if (std::string (argv[i]) == "--deep" && i + 1 < argc) deepDb = -std::abs (std::atof (argv[i + 1]));
     }
     std::mt19937 rng (seed);
 
@@ -112,8 +122,8 @@ int main (int argc, char* argv[])
     fk::NotchBank<48> bank;
     bank.prepare (kSR, kBlock);
     bank.defaultQ    = 12.0;
-    bank.softCapDb   = -18.0;
-    bank.hardCapDb   = -24.0;
+    bank.softCapDb   = deepDb;
+    bank.hardCapDb   = deepDb * 1.35;
     bank.initialCutDb = -6.0;
 
     std::vector<Ring> rings;
@@ -189,6 +199,10 @@ int main (int argc, char* argv[])
                            uni (4.2, 6.4), uni (0.003, 0.02) });
 
     std::printf ("fk-fuzz - %.1f minutes, seed %u%s\n", minutes, seed, noRings ? "  [RINGS SILENCED]" : plateauPath ? "  [PLATEAU PATH ON]" : "");
+    if (duty < 1.0)
+        std::printf ("  pulsed: %.0f%% duty on a %.0f ms cycle (%.1f ms on, %.0f Hz modulation), cap %.0f dB"
+                     " -> %.1f dB effective\n",
+                     duty * 100.0, periodMs, duty * periodMs, 1000.0 / periodMs, deepDb, deepDb * duty);
     std::printf ("  %zu rings (%zu spikes, %zu plateaus), %zu modes, %zu sung notes\n\n",
                  rings.size(),
                  (size_t) std::count_if (rings.begin(), rings.end(), [] (const Ring& r) { return ! r.plateau; }),
@@ -312,10 +326,17 @@ int main (int argc, char* argv[])
 
         // close the loop: the notch subtracts from the excess gain
         const double dt = (double) kBlock / kSR;
+
+        // Where we are in the pulse cycle. A filter is either at full depth or out
+        // of the way; nothing in between, because a slow fade is just a shallower
+        // filter with extra steps.
+        const double phase = std::fmod (now * 1000.0, periodMs) / periodMs;
+        const bool   pulseOn = duty >= 1.0 || phase < duty;
+
         for (auto& mo : modes)
         {
             if (! mo.live) continue;
-            const double cut = bank.cutAtDb (mo.freq, -1);          // negative where a filter sits
+            const double cut = pulseOn ? bank.cutAtDb (mo.freq, -1) : 0.0;
             const double rate = (mo.excessDb + cut) / mo.tau;       // dB per second
             mo.levelDb = juce::jlimit (-100.0, 0.0, mo.levelDb + rate * dt);
             if (! mo.audible && mo.levelDb > -60.0) { mo.audible = true; mo.audibleAt = now; }
@@ -330,7 +351,8 @@ int main (int argc, char* argv[])
         {
             double sum = 0.0; int n = 0;
             for (double f = 200.0; f <= 16000.0; f *= 1.05) { sum += bank.cutAtDb (f, -1); ++n; }
-            damageSum += sum / n; ++damageN;
+            damageSum += (sum / n) * juce::jmin (1.0, duty);        // time-averaged, as the loop sees it
+            ++damageN;
         }
     }
 
