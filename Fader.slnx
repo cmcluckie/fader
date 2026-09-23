@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/diagnostics/">
+    <Project Path="diagnostics/AutoRingOut/AutoRingOut.csproj" />
     <Project Path="diagnostics/BridgeSelfTest/BridgeSelfTest.csproj" />
     <Project Path="diagnostics/FeedbackSelfTest/FeedbackSelfTest.csproj" />
     <Project Path="diagnostics/FkPing/FkPing.csproj" />

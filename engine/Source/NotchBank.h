@@ -106,7 +106,7 @@ public:
         is the transport clock.
     */
     int trigger (double f, double nowSeconds, bool growing = true,
-                 double levelDb = -1000.0) noexcept
+                 double levelDb = -1000.0, double widthHz = 0.0) noexcept
     {
         juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
@@ -163,7 +163,7 @@ public:
                 // own filter - which, with 48 of them, it can have.
                 // Measured from the anchor, not the current centre: a leash that
                 // grows as the notch moves is a slower ratchet, not a limit.
-                const double leash = std::max (10.0, s.originHz / (2.0 * defaultQ));
+                const double leash = std::max (10.0, s.originHz / (2.0 * s.q));
                 s.freq = std::clamp (s.freq + (f - s.freq) * freqTrack,
                                      s.originHz - leash, s.originHz + leash);
 
@@ -190,7 +190,7 @@ public:
         s.active   = true;
         s.freq     = f;
         s.originHz = f;
-        s.q        = defaultQ;
+        s.q        = qForWidth (f, widthHz);
         s.targetDb = openDb;
         s.currentDb= 0.0;
         s.lastHitS = nowSeconds;
@@ -337,6 +337,10 @@ public:
         {
             const auto& s = slots[(size_t) i];
             if (! s.active) continue;
+            // Each filter now has its own width, so the window that decides "is this
+            // the same tone" is that filter's, not one global figure.
+            const double own = std::max (10.0, s.freq / (2.0 * s.q));
+            if (std::abs (s.freq - f) > own && std::abs (s.freq - f) > window) continue;
             // Must be near the filter AND reachable from its anchor. Merging onto a
             // tone the notch is leashed away from would deepen a filter that cannot
             // move to cover it - the exact failure this window exists to prevent.
@@ -347,12 +351,36 @@ public:
         return best;
     }
 
+    /**
+        The filter's width, taken from the ring's OWN measured width rather than one
+        Q for the whole spectrum.
+
+        Measured on 20,190 catches at a studio: rings are ~70-140 Hz wide wherever
+        they are, so a single Q is wrong at both ends. At Q12 a filter is 13 Hz wide
+        at 150 Hz - a fifth of the ring, which is why low-end feedback survived - and
+        370 Hz wide at 4 kHz, carving four times the ring out of the voice, which is
+        where "muffled" came from.
+
+        Q = f / width. Clamped: too narrow and a wandering tone slides out between
+        re-triggers, too wide and it is the old tone damage by another name.
+    */
+    double qForWidth (double f, double widthHz) const noexcept
+    {
+        if (widthHz <= 0.0 || f <= 0.0) return defaultQ;
+        return std::clamp (f / widthHz, qMin, qMax);
+    }
+
     // ---- depth policy (spec §5, §10) ----------------------------------------
     // Q is wider than the spec's 30-60 because the rig disagreed with the spec:
     // the room's worst mode wanders ~500 Hz, which a Q40 notch (240 Hz wide) cannot
     // hold. Q25 spans ~390 Hz, so one filter keeps its grip instead of the tone
     // sliding out and spawning a fresh shallow notch each time.
-    double defaultQ       = 25.0;
+    double defaultQ       = 25.0;   // fallback when a width was not measured
+    double qMin           = 2.0;    // widest a filter may open (f/2 wide)
+    // Measured at the rig: a 10.6 kHz ring walked 9250 -> 10850 Hz within seconds,
+    // and a 296 Hz filter (Q36) let it out - one guarded run in three failed at the
+    // bypassed level. Up high the filter has to cover where the tone is GOING.
+    double qMax           = 20.0;   // 533 Hz at 10.6 kHz: still 40% narrower than Q12
     double initialCutDb   = -12.0;   // first strike
     double fastTrackCutDb = -18.0;   // first strike on a known repeat offender
     double stepDb         = -6.0;    // deepen per re-trigger (negative)

@@ -445,7 +445,8 @@ Run runLoop (double gainDb, bool guard, double firstMs, double seconds = 6.0)
 
             fk::FeedbackDetector::Event ev;
             while (det.popEvent (ev))
-                bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+                bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz));   // mirrors AudioEngine
 
             bank.process (buf.data(), block, false);
         }
@@ -637,7 +638,8 @@ double roomMsg (const Room& room, bool guard, double lo = -60.0, double hi = 30.
                 while (det.popEvent (ev))
                 {
                     ++lastEvents; lastRingHz = ev.freq;
-                    bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+                    bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz));   // mirrors AudioEngine
                 }
                 bank.process (buf.data(), block, false);
             }
@@ -697,7 +699,8 @@ void probeRoom (const Room& room, double gainDb, bool guard)
             while (det.popEvent (ev))
             {
                 if (events++ == 0) { firstHz = ev.freq; firstAtDb = ev.levelDb; }
-                bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+                bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz));   // mirrors AudioEngine
             }
             bank.process (buf.data(), block, false);
         }
@@ -781,7 +784,8 @@ void probePlacement (const Room& room, double gainDb)
                     gap = std::min (gap, std::abs (bank.getSlot (s).freq - (double) ev.freq));
             if (gap < 1.0e8) { sumCut += before; sumGap += gap; ++measured; }
 
-            const int slot = bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+            const int slot = bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz));   // mirrors AudioEngine
             if (slot >= 0) ++placedOk;
             else switch (bank.lastRefusal)
             {
@@ -907,7 +911,8 @@ Run runRoomAt (const Room& room, double gainDb, bool guard)
         {
             det.push (buf.data(), block);
             fk::FeedbackDetector::Event ev;
-            while (det.popEvent (ev)) bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb);
+            while (det.popEvent (ev)) bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz));   // mirrors AudioEngine
             bank.process (buf.data(), block, false);
         }
         for (int i = 0; i < block; ++i) out[(size_t) i] = (double) buf[(size_t) i];

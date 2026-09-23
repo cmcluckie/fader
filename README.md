@@ -422,6 +422,41 @@ path works — everything the bridge sends *to* the surface:
   `0x14` is accepted, offsets and 7-character cells are correct
 - **button LEDs** light via note-on echo
 
+**Measured in a real room (2026-09-22, a studio: vocal mic, monitors in the room,
+X32 main fader as the gain control).** The first rig session that produced
+numbers rather than impressions. `diagnostics/AutoRingOut` drove the console's
+main fader in 1 dB steps and watched the console's own RTA, alternating bypassed
+and guarded runs.
+
+- **The detector is not firing on the voice.** Singing with the monitors live
+  produced 1,022 catches/min; singing with the loop opened (monitors muted,
+  everything else identical) produced **5 catches in 80 s — 4/min, median
+  −67 dB**. 99.6% of catches need the loop to exist, so they are feedback, not
+  false alarms on the voice. That suspicion had stood for weeks; it is dead.
+- **ASG is real, and it depends on what you call a ring.** By ear: bypassed
+  sustained at −9 dB, guarded at −4 dB → **≈5 dB**. By the RTA criterion (a peak
+  ≥25 dB above its neighbours held 1.2 s): bypassed rang at −21/−21/−20 dB,
+  guarded at −14/−14/−14 → **7 dB**, three runs each, ±1 dB.
+- **−18 dB beats −24 dB on the rig**, confirming Rule 2 off the simulator:
+  identical loudest escape (−18.0 vs −17.2 dB) and identical detection latency
+  (37 ms median), for 1.8 dB less pull across 1–4 kHz.
+- **Rings are 70–141 Hz wide wherever they sit** (20,190 catches). One fixed Q is
+  therefore wrong at both ends — at Q12 a filter is 13 Hz wide at 150 Hz and
+  370 Hz wide at 4 kHz. This is what `qForWidth` now fixes.
+- **A high ring walks.** One 10.6 kHz ring was caught at 9250, 9600, 9950, 10150,
+  10300, 10450, 10550, 10750 and 10850 Hz within seconds, so up there a filter
+  must cover where the tone is going, not only where it is. A 296 Hz filter
+  (Q36) let it out in one guarded run of three; 533 Hz (Q20) is the setting the
+  room ladder then agreed with.
+
+**Not verified, from that same session.** The RTA ring criterion **missed
+feedback the operator could hear**: with a like-for-like level gate the guarded
+runs never rang up to −2 dB, implying ASG ≥ 19 dB, while the room was audibly
+ringing. Treat that bound as wrong until the console's RTA source is confirmed
+to be metering the signal in the loop. The studio's dimensions were never
+measured, so the simulator has not been run against it; RT60 per octave is still
+unmeasured anywhere; and the music false-alarm test (Rule 5) was not run.
+
 **Not verified — still needs hardware.** The self-test ran against a *mock*
 console and a *fake* surface, which proves the logic is right given the protocol
 assumptions but cannot prove the assumptions match the devices. Outstanding:
