@@ -34,6 +34,7 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <functional>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
 
@@ -79,6 +80,35 @@ struct Ring
 };
 
 double dbToGain (double db) { return std::pow (10.0, db / 20.0); }
+
+/// The ear's own bandwidth at f (Glasberg & Moore). A notch much narrower than
+/// this is largely filled in by the auditory filter, whatever its depth - which
+/// is why "dB of cut" is the wrong unit for harm and ERB-widths are the right one.
+double erbHz (double f) { return 24.7 * (0.00437 * f + 1.0); }
+
+/// How much a dB removed HERE matters. Hearing peaks around 2.5-3 kHz, and so
+/// does the intelligibility of a voice; the same cut at 200 Hz or 12 kHz costs
+/// a fraction as much. A smooth bump rather than a band table, so nothing jumps
+/// at a boundary.
+double importance (double f)
+{
+    const double oct = std::log2 (f / 2500.0) / 1.6;
+    return 1.0 / (1.0 + oct * oct);
+}
+
+/// Harm: depth x (how many ear-bandwidths wide it is) x how much that place
+/// matters, integrated across the spectrum. Units are dB-ERB, and unlike an
+/// average of dB it does not reward hiding a wide cut where it is cheap.
+double harmOf (const std::function<double (double)>& cutAt)
+{
+    double harm = 0.0;
+    for (double f = 100.0; f <= 16000.0; f *= 1.02)       // ~35 points per octave
+    {
+        const double width = f * 0.02;                     // this step's own width
+        harm += std::abs (cutAt (f)) * (width / erbHz (f)) * importance (f);
+    }
+    return harm;
+}
 }
 
 int main (int argc, char* argv[])
@@ -88,7 +118,7 @@ int main (int argc, char* argv[])
     // Diagnostic: silence the rings and leave only the singer, to separate "the
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
     bool noRings = false, plateauPath = false;
-    double duty = 1.0, periodMs = 12.0, deepDb = -18.0;
+    double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
@@ -104,6 +134,7 @@ int main (int argc, char* argv[])
         // How deep a filter may go. Pulsing at 20% duty only buys a fifth of its
         // depth, so a fair comparison lets the pulsed case go deeper to match.
         if (std::string (argv[i]) == "--deep" && i + 1 < argc) deepDb = -std::abs (std::atof (argv[i + 1]));
+        if (std::string (argv[i]) == "--budget" && i + 1 < argc) budget = std::atof (argv[i + 1]);
     }
     std::mt19937 rng (seed);
 
@@ -122,6 +153,7 @@ int main (int argc, char* argv[])
     fk::NotchBank<48> bank;
     bank.prepare (kSR, kBlock);
     bank.defaultQ    = 12.0;
+    bank.harmBudget  = budget;
     bank.softCapDb   = deepDb;
     bank.hardCapDb   = deepDb * 1.35;
     bank.initialCutDb = -6.0;
@@ -216,7 +248,7 @@ int main (int argc, char* argv[])
     int falseAlarms = 0, voiceEvents = 0, runaways = 0, deadEvents = 0;
     struct VoiceHit { float freq, f0, levelDb; int path; float widthHz; };
     std::vector<VoiceHit> voiceLog;
-    double damageSum = 0.0; int damageN = 0;
+    double damageSum = 0.0, harmSum = 0.0; int damageN = 0;
 
     for (long b = 0; b < totalBlocks; ++b)
     {
@@ -352,6 +384,8 @@ int main (int argc, char* argv[])
             double sum = 0.0; int n = 0;
             for (double f = 200.0; f <= 16000.0; f *= 1.05) { sum += bank.cutAtDb (f, -1); ++n; }
             damageSum += (sum / n) * juce::jmin (1.0, duty);        // time-averaged, as the loop sees it
+            harmSum += harmOf ([&bank] (double f) { return bank.cutAtDb (f, -1); })
+                     * juce::jmin (1.0, duty);
             ++damageN;
         }
     }
@@ -410,6 +444,7 @@ int main (int argc, char* argv[])
     std::printf ("  catches on a ring already finished  : %d\n", deadEvents);
     std::printf ("  catches on nothing at all           : %d\n", falseAlarms);
     std::printf ("  average cut, 200 Hz-16 kHz          : %.2f dB\n", damageN ? damageSum / damageN : 0.0);
+    std::printf ("  HARM (dB-ERB, ear-weighted)         : %.2f\n", damageN ? harmSum / damageN : 0.0);
 
     if (! voiceLog.empty())
     {

@@ -137,6 +137,15 @@ public:
             return -1;
         }
 
+        // Harm budget, if one is set: spend where it is cheap, refuse where it is
+        // not. A dB cap treats a notch at 300 Hz and one at 8 kHz as equal cost,
+        // and they differ by more than ten times.
+        if (harmBudget > 0.0 && harmNow() >= harmBudget)
+        {
+            lastRefusal = Refusal::RegionTooDark;
+            return -1;
+        }
+
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
@@ -409,6 +418,34 @@ public:
         return best;
     }
 
+    /// The ear's bandwidth at f (Glasberg & Moore). A notch much narrower than
+    /// this is largely filled in by the auditory filter whatever its depth.
+    static double erbHz (double f) noexcept { return 24.7 * (0.00437 * f + 1.0); }
+
+    /// How much a dB removed HERE matters: hearing and intelligibility both peak
+    /// near 2.5 kHz, so the same cut costs a fraction as much at 200 Hz or 12 kHz.
+    static double importance (double f) noexcept
+    {
+        const double oct = std::log2 (f / 2500.0) / 1.6;
+        return 1.0 / (1.0 + oct * oct);
+    }
+
+    /**
+        What the current filter set costs the listener, in ear-weighted dB-ERB.
+
+        Depth alone is the wrong unit: a 100 Hz notch spans 1.4 ear-bandwidths at
+        300 Hz and 0.12 at 8 kHz, so the same filter is expensive in one place and
+        nearly free in the other. This is the number a budget should be set in,
+        because it is the one the listener actually pays.
+    */
+    double harmNow() const noexcept
+    {
+        double harm = 0.0;
+        for (double f = 100.0; f <= 16000.0; f *= 1.02)
+            harm += std::abs (cutAtDb (f, -1)) * ((f * 0.02) / erbHz (f)) * importance (f);
+        return harm;
+    }
+
     /**
         The filter's width, taken from the ring's OWN measured width rather than one
         Q for the whole spectrum.
@@ -440,6 +477,7 @@ public:
     double combMinFraction = 0.25;  // width > a quarter of the centre frequency
     int    combTeeth       = 5;
     double combCoverage    = 0.20;  // total glass removed, as a fraction of width
+    double harmBudget      = 0.0;   // ear-weighted dB-ERB; 0 = no budget
     // Measured at the rig: a 10.6 kHz ring walked 9250 -> 10850 Hz within seconds,
     // and a 296 Hz filter (Q36) let it out - one guarded run in three failed at the
     // bypassed level. Up high the filter has to cover where the tone is GOING.
