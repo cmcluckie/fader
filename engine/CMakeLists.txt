@@ -81,6 +81,28 @@ target_link_libraries(fk-fuzz
     PUBLIC  juce::juce_recommended_config_flags)
 
 # ---------------------------------------------------------------------------
+# fk-render. Voice + physics-generated feedback through the guard, written out
+# as WAVs you can listen to, plus how much of the SINGER survived - measured in
+# the units the ear charges in.
+#
+#   cmake --build build --target fk-render
+#   ./build/fk-render_artefacts/Release/fk-render --out /tmp/take --budget 30 --duty 20
+# ---------------------------------------------------------------------------
+juce_add_console_app(fk-render PRODUCT_NAME "fk-render")
+
+target_sources(fk-render PRIVATE tests/test_render.cpp)
+
+target_compile_definitions(fk-render PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+target_link_libraries(fk-render
+    PRIVATE juce::juce_dsp juce::juce_audio_formats
+    PUBLIC  juce::juce_recommended_config_flags)
+
+# ---------------------------------------------------------------------------
 # Detector tests. Synthetic signals through the real FeedbackDetector - no audio
 # device, no rig. Every gap in this detector so far was found in a loud room by
 # ear; these make the same questions cheap and repeatable.
@@ -133,7 +155,7 @@ target_link_libraries(fk-loop
 
 # MSVC only defines M_PI when asked; the tests use it for their synthetic signals.
 if(MSVC)
-    foreach(t fk-tests fk-loop fk-fuzz)
+    foreach(t fk-tests fk-loop fk-fuzz fk-render)
         if(TARGET ${t})
             target_compile_definitions(${t} PRIVATE _USE_MATH_DEFINES)
         endif()
