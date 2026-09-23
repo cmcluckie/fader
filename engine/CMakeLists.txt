@@ -57,6 +57,30 @@ target_link_libraries(fk-engine
 )
 
 # ---------------------------------------------------------------------------
+# fk-fuzz. A random feedback generator built from the loop equations, and a
+# score. Draws modes, not shapes: below Schroeder a draw lands one isolated mode
+# (a fast spike), above it the same draw lands several inside one bandwidth (a
+# slow plateau). The loop closes through the notch bank, so a filter that lands
+# makes the ring decay and one that misses does not.
+#
+#   cmake --build build --target fk-fuzz
+#   ./build/fk-fuzz_artefacts/Release/fk-fuzz 10 1      # 10 minutes, seed 1
+# ---------------------------------------------------------------------------
+juce_add_console_app(fk-fuzz PRODUCT_NAME "fk-fuzz")
+
+target_sources(fk-fuzz PRIVATE tests/test_fuzz.cpp)
+
+target_compile_definitions(fk-fuzz PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+target_link_libraries(fk-fuzz
+    PRIVATE juce::juce_dsp
+    PUBLIC  juce::juce_recommended_config_flags)
+
+# ---------------------------------------------------------------------------
 # Detector tests. Synthetic signals through the real FeedbackDetector - no audio
 # device, no rig. Every gap in this detector so far was found in a loud room by
 # ear; these make the same questions cheap and repeatable.
@@ -109,7 +133,7 @@ target_link_libraries(fk-loop
 
 # MSVC only defines M_PI when asked; the tests use it for their synthetic signals.
 if(MSVC)
-    foreach(t fk-tests fk-loop)
+    foreach(t fk-tests fk-loop fk-fuzz)
         if(TARGET ${t})
             target_compile_definitions(${t} PRIVATE _USE_MATH_DEFINES)
         endif()
