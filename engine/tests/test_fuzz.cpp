@@ -33,6 +33,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <algorithm>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
 
@@ -54,6 +55,9 @@ struct Mode
     double bornAt   = 0.0;
     double peakDb   = -120.0;
     bool   caught   = false;
+    double caughtLevel = -120.0;   // how loud it already was when first detected
+    double killedAt = 0.0;         // when it fell 10 dB back off its own peak
+    bool   killed   = false;
     bool   ranAway  = false;
     bool   audible  = false;
     double audibleAt= 0.0;
@@ -262,7 +266,7 @@ int main (int argc, char* argv[])
                 if (! mo.live) continue;
                 if (std::abs (mo.freq - ev.freq) > juce::jmax (25.0, 0.03 * mo.freq)) continue;
                 mine = true;
-                if (! mo.caught) { mo.caught = true; mo.caughtAt = now; }
+                if (! mo.caught) { mo.caught = true; mo.caughtAt = now; mo.caughtLevel = mo.levelDb; }
             }
             if (! mine)
             {
@@ -315,6 +319,11 @@ int main (int argc, char* argv[])
             const double rate = (mo.excessDb + cut) / mo.tau;       // dB per second
             mo.levelDb = juce::jlimit (-100.0, 0.0, mo.levelDb + rate * dt);
             if (! mo.audible && mo.levelDb > -60.0) { mo.audible = true; mo.audibleAt = now; }
+            // KILLED: driven 10 dB back down off its own peak, which only happens
+            // if a filter actually landed on it. "Caught" merely means something
+            // was reported; this means the loop was beaten.
+            if (! mo.killed && mo.peakDb > -70.0 && mo.levelDb < mo.peakDb - 10.0)
+            { mo.killed = true; mo.killedAt = now; }
         }
 
         if ((b % 750) == 0)                                          // ~ once a second
@@ -326,7 +335,16 @@ int main (int argc, char* argv[])
     }
 
     // ---- score -------------------------------------------------------------
-    struct Tally { int n = 0, caught = 0; double lat = 0.0, peak = 0.0; };
+    // "caught"  = a detection landed within 3% of the mode, ever.
+    // "killed"   = its level was driven 10 dB back off its own peak.
+    // "latency"  = from crossing -60 dB (audible) to that first detection.
+    // "at catch" = how loud it already was when first detected.
+    struct Tally
+    {
+        int n = 0, caught = 0, killed = 0, ranAway = 0;
+        std::vector<double> lat;
+        double peak = 0.0, atCatch = 0.0;
+    };
     Tally spike, plate;
     for (const auto& mo : modes)
     {
@@ -336,22 +354,33 @@ int main (int argc, char* argv[])
         Tally& tl = r.plateau ? plate : spike;
         ++tl.n;
         tl.peak += mo.peakDb;
+        if (mo.ranAway) ++tl.ranAway;
+        if (mo.killed)  ++tl.killed;
         if (mo.caught)
         {
             ++tl.caught;
+            tl.atCatch += mo.caughtLevel;
             const double from = mo.audible ? mo.audibleAt : mo.bornAt;
-            tl.lat += juce::jmax (0.0, (mo.caughtAt - from)) * 1000.0;
+            tl.lat.push_back (juce::jmax (0.0, (mo.caughtAt - from)) * 1000.0);
         }
     }
 
-    auto row = [] (const char* name, const Tally& tl) {
-        std::printf ("  %-9s %4d rings   caught %3d (%3.0f%%)   latency %6.0f ms   mean peak %6.1f dB\n",
-                     name, tl.n, tl.caught,
+    auto row = [] (const char* name, Tally& tl) {
+        std::sort (tl.lat.begin(), tl.lat.end());
+        const double med = tl.lat.empty() ? 0.0 : tl.lat[tl.lat.size() / 2];
+        const double p90 = tl.lat.empty() ? 0.0 : tl.lat[(size_t) (tl.lat.size() * 0.9)];
+        std::printf ("  %-8s %4d  caught %3.0f%%  killed %3.0f%%  ran away %3.0f%%  "
+                     "latency med %5.0f / p90 %6.0f ms  at catch %6.1f  peak %6.1f dB\n",
+                     name, tl.n,
                      tl.n ? 100.0 * tl.caught / tl.n : 0.0,
-                     tl.caught ? tl.lat / tl.caught : 0.0,
+                     tl.n ? 100.0 * tl.killed / tl.n : 0.0,
+                     tl.n ? 100.0 * tl.ranAway / tl.n : 0.0,
+                     med, p90,
+                     tl.caught ? tl.atCatch / tl.caught : 0.0,
                      tl.n ? tl.peak / tl.n : 0.0);
     };
-    std::printf ("SCORE\n");
+    std::printf ("SCORE   caught = detected at all; killed = driven 10 dB off its peak\n");
+    std::printf ("        latency = from crossing -60 dB to that first detection\n\n");
     row ("spikes", spike);
     row ("plateaus", plate);
     std::printf ("\n  modes that ran away (past -3 dBFS)  : %d of %zu\n", runaways, modes.size());
