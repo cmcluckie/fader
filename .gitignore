@@ -9,6 +9,6 @@ dist/
 .idea/
 .DS_Store
 
-# feedback engine
-engine/build/
+# feedback engine - any CMake build tree (build/, build-win/, build-mac/, …)
+engine/build*/
 docs/FeedbackKiller.zip
