@@ -118,7 +118,7 @@ int main (int argc, char* argv[])
     // Diagnostic: silence the rings and leave only the singer, to separate "the
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
     bool noRings = false, plateauPath = false;
-    double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0;
+    double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0, stagger = 1.0;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
@@ -135,6 +135,7 @@ int main (int argc, char* argv[])
         // depth, so a fair comparison lets the pulsed case go deeper to match.
         if (std::string (argv[i]) == "--deep" && i + 1 < argc) deepDb = -std::abs (std::atof (argv[i + 1]));
         if (std::string (argv[i]) == "--budget" && i + 1 < argc) budget = std::atof (argv[i + 1]);
+        if (std::string (argv[i]) == "--sync") stagger = 0.0;      // all filters pulse together
     }
     std::mt19937 rng (seed);
 
@@ -154,6 +155,12 @@ int main (int argc, char* argv[])
     bank.prepare (kSR, kBlock);
     bank.defaultQ    = 12.0;
     bank.harmBudget  = budget;
+    // Pulsing lives in the BANK now, not in this harness. The loop model reads
+    // effectiveCutAtDb, so what is scored here is the code that will run on the
+    // rig - the same lesson as the pre-roll and the missing width argument.
+    bank.dutyCycle   = duty;
+    bank.pulseHz     = 1000.0 / periodMs;
+    bank.pulseStagger = stagger;
     bank.softCapDb   = deepDb;
     bank.hardCapDb   = deepDb * 1.35;
     bank.initialCutDb = -6.0;
@@ -359,16 +366,10 @@ int main (int argc, char* argv[])
         // close the loop: the notch subtracts from the excess gain
         const double dt = (double) kBlock / kSR;
 
-        // Where we are in the pulse cycle. A filter is either at full depth or out
-        // of the way; nothing in between, because a slow fade is just a shallower
-        // filter with extra steps.
-        const double phase = std::fmod (now * 1000.0, periodMs) / periodMs;
-        const bool   pulseOn = duty >= 1.0 || phase < duty;
-
         for (auto& mo : modes)
         {
             if (! mo.live) continue;
-            const double cut = pulseOn ? bank.cutAtDb (mo.freq, -1) : 0.0;
+            const double cut = bank.effectiveCutAtDb (mo.freq);
             const double rate = (mo.excessDb + cut) / mo.tau;       // dB per second
             mo.levelDb = juce::jlimit (-100.0, 0.0, mo.levelDb + rate * dt);
             if (! mo.audible && mo.levelDb > -60.0) { mo.audible = true; mo.audibleAt = now; }
@@ -384,8 +385,7 @@ int main (int argc, char* argv[])
             double sum = 0.0; int n = 0;
             for (double f = 200.0; f <= 16000.0; f *= 1.05) { sum += bank.cutAtDb (f, -1); ++n; }
             damageSum += (sum / n) * juce::jmin (1.0, duty);        // time-averaged, as the loop sees it
-            harmSum += harmOf ([&bank] (double f) { return bank.cutAtDb (f, -1); })
-                     * juce::jmin (1.0, duty);
+            harmSum += bank.harmNow();          // the bank's own figure, duty included
             ++damageN;
         }
     }

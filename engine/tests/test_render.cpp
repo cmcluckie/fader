@@ -274,6 +274,10 @@ int main (int argc, char* argv[])
     bank.prepare (kSR, kBlock);
     bank.defaultQ = 12.0; bank.softCapDb = -18.0; bank.hardCapDb = -24.0;
     bank.initialCutDb = -6.0; bank.harmBudget = budget;
+    // Pulsing lives in the bank, so the audio written out and the loop model see
+    // the SAME suppression. The first version gated only the loop maths while
+    // filtering the audio continuously, which flattered pulsing badly.
+    bank.dutyCycle = duty; bank.pulseHz = 1000.0 / periodMs;
 
     auto ringsAt = [&] (double t, std::vector<Mode>& ms, int i) {
         double v = 0.0;
@@ -318,12 +322,10 @@ int main (int argc, char* argv[])
         for (int i = 0; i < kBlock; ++i) guarded[pos + (size_t) i] = block[i];
 
         // the loop closes: each mode grows by what is left of its excess gain
-        const double phase = std::fmod (t * 1000.0, periodMs) / periodMs;
-        const bool   on    = duty >= 1.0 || phase < duty;
         for (auto& m : modes)
         {
             if (t < (&m == &modes[0] ? startSpike : startPlate)) continue;
-            const double cut = on ? bank.cutAtDb (m.f, -1) : 0.0;
+            const double cut = bank.effectiveCutAtDb (m.f);
             m.level = juce::jlimit (-100.0, 0.0, m.level + ((m.excess + cut) / m.tau) * kBlock / kSR);
         }
     }

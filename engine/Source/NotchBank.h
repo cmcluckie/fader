@@ -56,6 +56,7 @@ struct NotchSlot
     double q        = 40.0;
     double targetDb = 0.0;     // negative
     double currentDb= 0.0;     // smoothed toward targetDb
+    double pulsePhase = 0.0;   // where this filter sits in the pulse cycle, 0..1
     double lastHitS = 0.0;     // transport seconds of last (re)trigger
     double lastRelS = 0.0;     // transport seconds of last release step
 };
@@ -212,6 +213,10 @@ public:
         s.freq     = f;
         s.originHz = f;
         s.q        = qForWidth (f, widthHz);
+        // Golden-ratio stagger: consecutive slots land as far apart in the cycle
+        // as possible, so thirty filters pulsing is a steady low total cut rather
+        // than thirty of them flickering in unison - which is audible flutter.
+        s.pulsePhase = std::fmod (pulseStagger * 0.6180339887 * (double) slot, 1.0);
         s.targetDb = openDb;
         s.currentDb= 0.0;
         s.lastHitS = nowSeconds;
@@ -256,6 +261,7 @@ public:
             s.freq     = centreHz;
             s.originHz = centreHz;
             s.q        = std::clamp (centreHz / toothBw, qMin, qMax);
+            s.pulsePhase = std::fmod (pulseStagger * 0.6180339887 * (double) slot, 1.0);
             s.targetDb = openDb;
             s.currentDb= 0.0;
             s.lastHitS = nowSeconds;
@@ -361,6 +367,8 @@ public:
     /** Smooth gains, refresh coefficients, filter in place. */
     void process (float* data, int numSamples, bool bypassAudio) noexcept
     {
+        pulseSamples += (int64_t) numSamples;
+
         for (size_t i = 0; i < slots.size(); ++i)
         {
             auto& s = slots[i];
@@ -370,8 +378,9 @@ public:
             const double coeff = (target < s.currentDb) ? attackCoeff : releaseCoeff;
             s.currentDb += (target - s.currentDb) * coeff;
 
-            if (std::abs (s.currentDb) < 0.01) filters[i].setBypass();
-            else                               filters[i].setPeaking (fs, s.freq, qForDepth (s.q, s.currentDb), s.currentDb);
+            const double applied = s.currentDb * pulseGain (s);
+            if (std::abs (applied) < 0.01) filters[i].setBypass();
+            else                           filters[i].setPeaking (fs, s.freq, qForDepth (s.q, applied), applied);
         }
 
         if (bypassAudio) return;
@@ -384,6 +393,53 @@ public:
                     x = filters[i].process (x);
             data[n] = x;
         }
+    }
+
+    /**
+        Where this filter is in its pulse cycle, 0 (out of the way) to 1 (full depth).
+
+        The loop integrates whatever it is given, so a filter at 20% duty costs the
+        ring a fifth of its depth. The EAR does not integrate the same way: loudness
+        is averaged over 30-200 ms and a brief narrowband dip is partly filled in by
+        the bands either side. That asymmetry is the whole reason to pulse.
+
+        The rate matters as much as the duty. 4-20 Hz is the most audible modulation
+        there is - that is where flutter lives - so the default cycle is 12 ms, and
+        the edges are raised cosines because hard-switching a biquad's gain splatters
+        sidebands that sound like clicks.
+    */
+    double pulseGain (const NotchSlot& s) const noexcept
+    {
+        if (dutyCycle >= 1.0) return 1.0;
+        if (dutyCycle <= 0.0) return 0.0;
+
+        const double t  = (double) pulseSamples / fs;
+        double ph = std::fmod (t * pulseHz + s.pulsePhase, 1.0);
+        if (ph < 0.0) ph += 1.0;
+        if (ph >= dutyCycle) return 0.0;
+
+        const double edge = std::clamp (pulseEdgeMs * 0.001 * pulseHz, 0.02, dutyCycle * 0.49);
+        const double x = std::min (std::min (1.0, ph / edge), std::min (1.0, (dutyCycle - ph) / edge));
+        return 0.5 - 0.5 * std::cos (juce::MathConstants<double>::pi * x);
+    }
+
+    /// What is being cut at f RIGHT NOW, pulse included. cutAtDb reports what each
+    /// filter does when it is on; this reports what the ring actually meets.
+    double effectiveCutAtDb (double f) const noexcept
+    {
+        if (dutyCycle >= 1.0) return cutAtDb (f, -1);
+
+        double total = 0.0;
+        for (int i = 0; i < MaxNotches; ++i)
+        {
+            const auto& s = slots[(size_t) i];
+            if (! s.active || s.targetDb > -0.1) continue;
+            const double g = pulseGain (s);
+            if (g <= 0.0) continue;
+            // One filter at a time against an empty bank: its own contribution.
+            total += cutOfSlot (i, f) * g;
+        }
+        return total;
     }
 
     NotchSlot  getSlot (int i) const noexcept { return slots[(size_t) i]; }
@@ -443,7 +499,8 @@ public:
         double harm = 0.0;
         for (double f = 100.0; f <= 16000.0; f *= 1.02)
             harm += std::abs (cutAtDb (f, -1)) * ((f * 0.02) / erbHz (f)) * importance (f);
-        return harm;
+        // A pulsed filter is only there for part of the time, and the ear averages.
+        return harm * std::min (1.0, dutyCycle);
     }
 
     /**
@@ -478,6 +535,15 @@ public:
     int    combTeeth       = 5;
     double combCoverage    = 0.20;  // total glass removed, as a fraction of width
     double harmBudget      = 0.0;   // ear-weighted dB-ERB; 0 = no budget
+    // Pulsed suppression. 1.0 = continuous, which is what ships until the ear
+    // half of the bet has been tested in a room.
+    double dutyCycle       = 1.0;
+    double pulseHz         = 83.0;  // 12 ms: clear of the 4-20 Hz flutter band
+    double pulseEdgeMs     = 1.5;   // raised-cosine edge, long enough not to click
+    // How far apart in the cycle consecutive filters sit. 1 = maximally spread,
+    // which is quietest for the ear; 0 = all together, which is louder but lets
+    // overlapping skirts reinforce on the same ring. The trade is measurable.
+    double pulseStagger    = 1.0;
     // Measured at the rig: a 10.6 kHz ring walked 9250 -> 10850 Hz within seconds,
     // and a 296 Hz filter (Q36) let it out - one guarded run in three failed at the
     // bypassed level. Up high the filter has to cover where the tone is GOING.
@@ -543,33 +609,46 @@ public:
         const double cosW = std::cos (w), cos2W = std::cos (2.0 * w);
         const double sinW = std::sin (w), sin2W = std::sin (2.0 * w);
 
+        juce::ignoreUnused (cosW, cos2W, sinW, sin2W);
         double total = 0.0;
         for (int i = 0; i < MaxNotches; ++i)
         {
             if (i == skip) continue;        // the filter that will handle f itself
-            const auto& s = slots[(size_t) i];
-            // targetDb, not currentDb: the smoothed value lags by the attack time,
-            // so a budget read from it lets a burst of triggers all pass the check
-            // before any of them has taken effect.
-            if (! s.active || s.targetDb > -0.1) continue;
-
-            const double q  = qForDepth (s.q, s.targetDb);
-            const double A  = std::pow (10.0, s.targetDb / 40.0);
-            const double w0 = 2.0 * juce::MathConstants<double>::pi * s.freq / fs;
-            const double a  = std::sin (w0) / (2.0 * q);
-            const double c0 = std::cos (w0);
-
-            auto mag = [&] (double k0, double k1, double k2)
-            {
-                const double re = k0 + k1 * cosW + k2 * cos2W;
-                const double im = -(k1 * sinW + k2 * sin2W);
-                return std::sqrt (re * re + im * im);
-            };
-            const double num = mag (1.0 + a * A, -2.0 * c0, 1.0 - a * A);
-            const double den = mag (1.0 + a / A, -2.0 * c0, 1.0 - a / A);
-            total += 20.0 * std::log10 (std::max (num / den, 1.0e-12));
+            total += cutOfSlot (i, f);
         }
         return total;
+    }
+
+    /// One filter's own contribution at f, in dB (negative). The exact RBJ peaking
+    /// magnitude, not an approximation: a linear falloff once scored a filter
+    /// 179 Hz away as 21.6 dB of coverage when the truth was 8.
+    double cutOfSlot (int i, double f) const noexcept
+    {
+        const auto& s = slots[(size_t) i];
+        // targetDb, not currentDb: the smoothed value lags by the attack time, so a
+        // budget read from it lets a burst of triggers all pass the check before any
+        // of them has taken effect.
+        if (! s.active || s.targetDb > -0.1 || f <= 0.0) return 0.0;
+
+        const double w = 2.0 * juce::MathConstants<double>::pi * f / fs;
+        const double cosW = std::cos (w), cos2W = std::cos (2.0 * w);
+        const double sinW = std::sin (w), sin2W = std::sin (2.0 * w);
+
+        const double q  = qForDepth (s.q, s.targetDb);
+        const double A  = std::pow (10.0, s.targetDb / 40.0);
+        const double w0 = 2.0 * juce::MathConstants<double>::pi * s.freq / fs;
+        const double a  = std::sin (w0) / (2.0 * q);
+        const double c0 = std::cos (w0);
+
+        auto mag = [&] (double k0, double k1, double k2)
+        {
+            const double re = k0 + k1 * cosW + k2 * cos2W;
+            const double im = -(k1 * sinW + k2 * sin2W);
+            return std::sqrt (re * re + im * im);
+        };
+        const double num = mag (1.0 + a * A, -2.0 * c0, 1.0 - a * A);
+        const double den = mag (1.0 + a / A, -2.0 * c0, 1.0 - a / A);
+        return 20.0 * std::log10 (std::max (num / den, 1.0e-12));
     }
 
     int findFree() const noexcept
@@ -640,6 +719,7 @@ public:
     double fs = 48000.0;
     double attackCoeff = 0.23;    // toward a deeper cut - fast
     double releaseCoeff = 0.03;   // back toward flat - slow
+    int64_t pulseSamples = 0;     // the pulse clock, advanced by process()
 };
 
 } // namespace fk
