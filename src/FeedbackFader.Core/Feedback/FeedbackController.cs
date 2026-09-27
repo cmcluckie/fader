@@ -37,6 +37,7 @@ public sealed class FeedbackController : IAsyncDisposable
     private readonly SortedDictionary<int, string> _outChannels = new();
 
     private float _minHz = 200f, _maxHz = 16000f, _floorDb = -88f, _maxCutDb = -24f;
+    private float _harmBudget;      // 0 = no ceiling, which is how it shipped
     private int _attack = 1;
     private bool _floorAuto = true;
     private double _floorEstimate = -88;
@@ -72,6 +73,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _maxHz = audio.MaxHz > 0 ? audio.MaxHz : 16000f;
         _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -88f;
         _maxCutDb = audio.MaxCutDb < 0 ? audio.MaxCutDb : -24f;
+        _harmBudget = Math.Max(0f, audio.HarmBudget);
         _attack = Math.Clamp(audio.Attack, 0, 2);
         _floorAuto = audio.FloorAuto;
         _consoleAddress = audio.ConsoleAddress;
@@ -241,6 +243,25 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         _maxCutDb = Math.Clamp(db, -36f, -9f);
         _supervisor.Client.SetParam("maxCutDb", _maxCutDb);
+        SaveAudio();
+    }
+
+    /// <summary>
+    /// How much the filter set may cost the listener, in ear-weighted dB-ERB.
+    /// 0 means no ceiling.
+    ///
+    /// Depth in dB was never the right unit: the ear charges for spectral AREA,
+    /// and a 100 Hz notch spans 1.4 ear-bandwidths at 300 Hz but 0.12 at 8 kHz.
+    /// Measured on 135 s of singing with a ring building at 20 dB/s, a budget of
+    /// 30 killed the ring as completely as no budget at all while removing 30
+    /// units of voice instead of 209.
+    /// </summary>
+    public float HarmBudget => _harmBudget;
+
+    public void SetHarmBudget(float budget)
+    {
+        _harmBudget = Math.Clamp(budget, 0f, 400f);
+        _supervisor.Client.SetParam("harmBudget", _harmBudget);
         SaveAudio();
     }
     public event Action? DevicesChanged;
@@ -418,7 +439,7 @@ public sealed class FeedbackController : IAsyncDisposable
         }
         _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
             Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz, FloorAuto: _floorAuto,
-            FloorDb: _floorDb, Attack: _attack, MaxCutDb: _maxCutDb,
+            FloorDb: _floorDb, Attack: _attack, MaxCutDb: _maxCutDb, HarmBudget: _harmBudget,
             ConsoleAddress: _consoleAddress));
     }
 
@@ -544,7 +565,7 @@ public sealed class FeedbackController : IAsyncDisposable
             settings = new
             {
                 minHz = _minHz, maxHz = _maxHz, floorDb = _floorDb, floorAuto = _floorAuto,
-                attack = _attack, maxCutDb = _maxCutDb,
+                attack = _attack, maxCutDb = _maxCutDb, harmBudget = _harmBudget,
             },
             // what the detector had already decided, for comparison with the ear
             recent_detections = _recentDetections.ToArray(),
@@ -741,6 +762,7 @@ public sealed class FeedbackController : IAsyncDisposable
             PushAttack();
             _supervisor.Client.SetParam("floorDb", _floorDb);
             _supervisor.Client.SetParam("maxCutDb", _maxCutDb);
+            _supervisor.Client.SetParam("harmBudget", _harmBudget);
             if (IsBypassed) _supervisor.Client.SetBypass(true);   // a fresh engine starts un-bypassed
 
             // Replay locked notches, mapping their physical channel to its slot.

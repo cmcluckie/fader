@@ -19,6 +19,8 @@ public sealed record AudioSelection(
     int Attack = 1,
     float MaxCutDb = -18f,
     bool FloorAuto = true,
+    // Ear-weighted dB-ERB the guard may spend on the listener. 0 = no ceiling.
+    float HarmBudget = 0f,
     // The mixing console, for the RTA overlay and the signal-path check.
     //
     // This used to come from the bridge's config.json, which was the last thing

@@ -68,6 +68,10 @@ public:
     void setTestTone (float hz) noexcept     { testTone.store (hz); }
 
     void setMaxCutDb (float v) noexcept      { maxCutDb.store (v); }
+    /// Ear-weighted dB-ERB the filter set may cost the listener. 0 = no ceiling,
+    /// which is what shipped while "max cut in dB" was the only control - and dB
+    /// of cut is not what the ear charges for. See NotchBank::harmNow.
+    void setHarmBudget (float v) noexcept    { harmBudget.store (v); }
     void setInitialCutDb (float v) noexcept  { initialCut.store (v); }
     void setNotchQ (float v) noexcept        { notchQ.store (v); }
     void setReleaseSeconds (float v) noexcept{ releaseSeconds.store (v); }
@@ -185,6 +189,7 @@ public:
             // the number on the dial.
             bank.softCapDb   = softCap + 6.0f;
             bank.hardCapDb   = softCap;
+            bank.harmBudget  = harmBudget.load();
             bank.holdSeconds = (double) releaseSeconds.load();
 
             // Bypass means STOP, not "carry on but do not apply it".
@@ -371,6 +376,7 @@ private:
     // A wider filter is also markedly more forgiving of being placed a few hundred
     // Hz off, which is the other bug being fixed alongside this.
     std::atomic<float> maxCutDb { -18.0f }, notchQ { 12.0f }, releaseSeconds { 10.0f };
+    std::atomic<float> harmBudget { 0.0f };    // 0 = no ceiling
     bool wasBypassed = false, wasWatching = false;
     std::atomic<bool>  analysis { false };     // off unless asked for
     std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };

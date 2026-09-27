@@ -120,6 +120,7 @@ private:
         else if (name == "stabilityHz")    engine.setStabilityHz (v);
         else if (name == "growthDb")       engine.setGrowthDb (v);
         else if (name == "inputGate")      engine.setInputGate (v);
+        else if (name == "harmBudget")     engine.setHarmBudget (v);
     }
 
     // Device/channel changes are marshalled to the telemetry thread;

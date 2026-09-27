@@ -30,6 +30,7 @@ public sealed class SetupView : UserControl
     private readonly Button _floorAuto = Ui.Small("", Tokens.Accent);
     private readonly ComboBox _attack = new() { MinWidth = 130 };
     private readonly ComboBox _maxCut = new() { MinWidth = 130 };
+    private readonly ComboBox _budget = new() { MinWidth = 190 };
     private readonly TextBox _console = new() { MinWidth = 150, Watermark = "192.168.1.100" };
     private bool _syncingEdge;
 
@@ -40,6 +41,23 @@ public sealed class SetupView : UserControl
         ("Light — −18 dB", -18f),
         ("Normal — −24 dB", -24f),
         ("Deep — −30 dB", -30f),
+    };
+
+    // How much of the singer the guard may spend, in ear-weighted dB-ERB: depth x
+    // width-in-ear-bandwidths x how much that frequency matters. Depth alone was
+    // never the unit - the same 100 Hz notch costs 1.4 ear-bandwidths at 300 Hz
+    // and 0.12 at 8 kHz.
+    //
+    // Measured on 135 s of singing with a ring building at 20 dB/s (the rate the
+    // rig produced): no ceiling removed 209 units of voice, a ceiling of 30
+    // removed 30 - and killed the ring just as completely.
+    private static readonly (string Label, float Budget)[] Budgets =
+    {
+        ("Protect the voice — 15", 15f),
+        ("Recommended — 30",       30f),
+        ("Balanced — 60",          60f),
+        ("Loose — 120",           120f),
+        ("No limit (old default)",  0f),
     };
 
     // Somewhere to start without guessing. A vocal wedge rings above ~1 kHz, so
@@ -164,6 +182,15 @@ public sealed class SetupView : UserControl
             _feedback.SetMaxCut(Cuts[_maxCut.SelectedIndex].Db);
         };
 
+        _budget.ItemsSource = Budgets.Select(b => b.Label).ToArray();
+        _budget.SelectedIndex = Array.FindIndex(Budgets, b => Math.Abs(b.Budget - _feedback.HarmBudget) < 0.5f)
+                                is var bi && bi >= 0 ? bi : Budgets.Length - 1;
+        _budget.SelectionChanged += (_, _) =>
+        {
+            if (_syncingEdge || _budget.SelectedIndex < 0) return;
+            _feedback.SetHarmBudget(Budgets[_budget.SelectedIndex].Budget);
+        };
+
         var bandHead = Ui.Stack(Orientation.Horizontal, 12,
             Ui.Caption("Listen band"), _bandLabel);
         var bandBox = Ui.Stack(Orientation.Vertical, 8,
@@ -172,7 +199,8 @@ public sealed class SetupView : UserControl
             Ui.Stack(Orientation.Horizontal, 16,
                 Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Low edge"), _lowEdge),
                 Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Attack"), _attack),
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Max cut"), _maxCut)),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Max cut"), _maxCut),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Voice budget"), _budget)),
             Ui.Text("It cuts what lands inside the box: between the teal handles and above the dashed line. Drag any of the three.",
                     12.5, Tokens.InkFaint));
         bandBox.Margin = new Thickness(0, 0, 0, 16);
