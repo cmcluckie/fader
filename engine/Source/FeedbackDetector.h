@@ -73,6 +73,10 @@ public:
         // decays, a room's broad mode cluster just sits there. A plateau this
         // smooth is a loop, and it was invisible before - too wide to become a
         // suspect, so it produced no catch AND no rejection.
+        // Below this, peaks are found in the 8192-point analysis instead of the
+        // 2048-point one. 1 kHz: a voice's partials are 4.7 bins apart at 110 Hz
+        // in the short window and 19 in the long one.
+        float  crossoverHz    = 1000.0f;
         float  plateauMinHz   = 150.0f;  // a plateau must be at least this wide
         float  plateauRipple  = 6.0f;    // peak-to-median across it, dB
         // OFF by default (999 = never). The path works - it catches a synthetic
@@ -164,6 +168,19 @@ public:
     };
     const PlateauProbe& lastPlateau() const noexcept { return probe; }
 
+    /// Test hook: what the frame saw at the bottom of the spectrum. Guessing why
+    /// a fundamental was not recognised has cost two rounds already.
+    struct VoiceProbe
+    {
+        int   peaks = 0;          // peaks in the frame
+        float lowestHz = 0.0f;    // the lowest of them
+        bool  family = false;     // ...and whether it carried partials above it
+        float partial2 = 0.0f;    // the nearest peak to 2x, if any
+        float partial3 = 0.0f;
+        bool  lowUsed = false;    // was the long window in play?
+    };
+    const VoiceProbe& lastVoice() const noexcept { return vprobe; }
+
     struct Reject
     {
         float freq    = 0.0f;
@@ -203,13 +220,30 @@ public:
     static constexpr int maxPeaks    = 96;
     static constexpr int eventQueueSize = 16;
 
-    FeedbackDetector() : fft (fftOrder),
-                         window ((size_t) fftSize, juce::dsp::WindowingFunction<float>::hann) {}
+    // ---- the low-band analyser ----------------------------------------------
+    // 2048 points gives 23.4 Hz bins everywhere, and down low that is blindness:
+    // at 110 Hz a voice's partials sit 4.7 bins apart and a Hann window smears
+    // them into each other, so nothing can tell a bass fundamental from a lone
+    // ring (T41). Everything below crossoverHz is analysed again at 8192 points -
+    // 5.9 Hz bins - where those partials resolve cleanly.
+    //
+    // It costs four times the FFT work in the low band. The engine was using 0.3%
+    // of one core, so that is not a consideration; being unable to see is.
+    static constexpr int loFftOrder = 13;
+    static constexpr int loFftSize  = 1 << loFftOrder;
+    static constexpr int loNumBins  = loFftSize / 2;
+
+    FeedbackDetector() : fft (fftOrder), loFft (loFftOrder),
+                         window ((size_t) fftSize, juce::dsp::WindowingFunction<float>::hann),
+                         loWindow ((size_t) loFftSize, juce::dsp::WindowingFunction<float>::hann) {}
 
     void prepare (double sampleRateIn)
     {
         sampleRate = sampleRateIn;
         binHz      = (float) (sampleRate / fftSize);
+        loBinHz    = (float) (sampleRate / loFftSize);
+        magLo.fill (-120.0f);
+        loValid = false;
         ring.fill (0.0f);
         writePos = 0;
         sinceHop = 0;
@@ -239,7 +273,10 @@ public:
         for (int n = 0; n < numSamples; ++n)
         {
             ring[(size_t) writePos] = data[n];
-            if (samplesSeen < fftSize) ++samplesSeen;
+            // Count up to the LONGEST window, not the shortest: the low analyser
+            // needs loFftSize samples before it can run, and capping at fftSize
+            // meant it never ran at all.
+            if (samplesSeen < loFftSize) ++samplesSeen;
             writePos = (writePos + 1) & (ringSize - 1);
 
             if (++sinceHop >= hopSize)
@@ -273,6 +310,8 @@ private:
     {
         bool   active      = false;
         bool   harmonic    = false;   // looked harmonically-related when first seen
+        bool   hasFamily   = false;   // carries partials above it: a fundamental
+        int    voiceFrames = 0;       // frames in which it looked like part of a voice
         float  freq        = 0.0f;
         float  lastLevel   = 0.0f;
         int    frames      = 0;
@@ -348,6 +387,9 @@ private:
             publishedMag[(size_t) i].store (db, std::memory_order_relaxed);
         }
 
+        computeLowSpectrum();
+        collectLowPeaks();
+
         for (auto& s : suspects) if (s.active) ++s.missed;
         peakCount = 0;
 
@@ -355,6 +397,15 @@ private:
         if (rmsDb >= params.inputGateDb)
         {
             const int floorHalfWidth = floorHalfWidthOverride > 0 ? floorHalfWidthOverride : 20;
+
+            // TRACKING stays on the short window. The long one is 171 ms, longer
+            // than a vibrato cycle at 5.4 Hz, so it averages the wobble away: a
+            // singer's partial stops looking like it is moving and starts looking
+            // like a rock-steady tone. Better frequency resolution, worse time
+            // resolution - and stability is a question about time.
+            //
+            // The long window answers the question it is actually good at, which
+            // is whether a harmonic family is present. See collectLowPeaks.
             const int firstBin = juce::jmax (2, (int) (params.minFreq / binHz));
             const int lastBin  = juce::jmin (numBins - 3, (int) (params.maxFreq / binHz));
 
@@ -426,6 +477,32 @@ private:
         }
 
         if (peakCount > maxSeenPeaks) maxSeenPeaks = peakCount;
+
+        // What did the bottom of the spectrum look like this frame?
+        {
+            vprobe = VoiceProbe{};
+            vprobe.peaks   = peakCount;
+            vprobe.lowUsed = loValid && params.minFreq < params.crossoverHz;
+            int lowest = -1;
+            for (int i = 0; i < peakCount; ++i)
+                if (lowest < 0 || peakFreq[(size_t) i] < peakFreq[(size_t) lowest]) lowest = i;
+            if (lowest >= 0)
+            {
+                vprobe.lowestHz = peakFreq[(size_t) lowest];
+                vprobe.family   = hasPartialsAbove (lowest);
+                for (int mult = 2; mult <= 3; ++mult)
+                {
+                    const float want = vprobe.lowestHz * (float) mult;
+                    float best = 0.0f, err = 1.0e9f;
+                    for (int k = 0; k < peakCount; ++k)
+                    {
+                        const float d = std::abs (peakFreq[(size_t) k] - want);
+                        if (d < err) { err = d; best = peakFreq[(size_t) k]; }
+                    }
+                    (mult == 2 ? vprobe.partial2 : vprobe.partial3) = best;
+                }
+            }
+        }
 
         // §4.4 harmonic guard, judged between PEAKS.
         //
@@ -510,7 +587,7 @@ private:
             if (harmonic && peakProm[(size_t) i] < params.prominenceDb + params.harmonicPromDb)
                 continue;
 
-            track (peakFreq[(size_t) i], peakLevel[(size_t) i], harmonic);
+            track (peakFreq[(size_t) i], peakLevel[(size_t) i], harmonic, hasPartialsAbove (i));
         }
 
         for (auto& s : suspects)
@@ -646,6 +723,15 @@ private:
         advanced, minus the advance its centre frequency predicts, is the offset
         from that centre.
     */
+    /// Sub-bin interpolation without phase history, for the long analysis.
+    static float parabolicIn (const float* arr, int k, float bw) noexcept
+    {
+        const float ym1 = arr[k - 1], y0 = arr[k], yp1 = arr[k + 1];
+        const float denom = (ym1 - 2.0f * y0 + yp1);
+        const float delta = (std::abs (denom) > 1.0e-6f) ? 0.5f * (ym1 - yp1) / denom : 0.0f;
+        return ((float) k + juce::jlimit (-0.5f, 0.5f, delta)) * bw;
+    }
+
     float refineFrequency (int k, float levelDb) noexcept
     {
         // parabolic on magnitudes - the fallback, and the sanity check
@@ -785,6 +871,40 @@ private:
     /// an error in the estimate does not multiply with the partial number. Two
     /// other teeth are required, which random peaks rarely supply and a voice
     /// always does.
+    /**
+        Does this peak carry a harmonic family ABOVE it?
+
+        sitsOnAComb looks downward, so it can never flag a fundamental - there is
+        nothing below one - and the vibrato veto cannot help either: +-0.5% of
+        110 Hz is 0.55 Hz, a fortieth of a short-window bin. That is how a sung
+        110 Hz note lost its own fundamental to a notch (T41).
+
+        This was written once before and reverted, because at 23.4 Hz bins a low
+        voice's partials smear together and never reach the peak list at all. With
+        the long window below the crossover they are 19 bins apart and resolve.
+    */
+    bool hasPartialsAbove (int i) const noexcept
+    {
+        const float f = peakFreq[(size_t) i];
+        if (f <= 0.0f) return false;
+
+        int found = 0;
+        for (int mult = 2; mult <= 4; ++mult)
+        {
+            const float want = f * (float) mult;
+            const float tol  = juce::jmax (0.03f * want, 2.0f * loBinHz);
+            bool hit = false;
+            for (int k = 0; k < peakCount && ! hit; ++k)
+                if (k != i && std::abs (peakFreq[(size_t) k] - want) <= tol) hit = true;
+            // ...and in the long window, where a low voice's partials actually
+            // resolve. Either list will do; a partial is a partial.
+            for (int k = 0; k < loPeakCount && ! hit; ++k)
+                if (std::abs (loPeakFreq[(size_t) k] - want) <= tol) hit = true;
+            if (hit) ++found;
+        }
+        return found >= 2;          // two of the first three partials is a voice
+    }
+
     bool sitsOnAComb (int i) const noexcept
     {
         const float f = peakFreq[(size_t) i];
@@ -850,8 +970,39 @@ private:
     /// starts and reports every peak as zero wide. Nor does the walk require the
     /// spectrum to descend monotonically - with real noise on the skirts it does
     /// not, and insisting on it truncates at the first ripple.
+    /// Width in whichever analysis actually resolves this peak. A 70 Hz ring is
+    /// three bins in the short window and twelve in the long one, and measuring it
+    /// in the short one is how every low ring came back as "70 Hz wide" - the
+    /// resolution floor, not the ring.
+    void peakWidthIn (const float* arr, int nBins, float bw, float f,
+                      float& loHz, float& hiHz) const noexcept
+    {
+        loHz = hiHz = f;
+        const int centre = (int) std::round (f / bw);
+        if (centre < 2 || centre >= nBins - 2) return;
+
+        constexpr float dropDb = 20.0f;
+        const int maxSpan = juce::jmax (8, (int) (1500.0f / bw));
+
+        const float peak = arr[centre];
+        int lo = centre;
+        while (lo > 1 && centre - lo < maxSpan && peak - arr[lo - 1] < dropDb) --lo;
+        int hi = centre;
+        while (hi < nBins - 2 && hi - centre < maxSpan && peak - arr[hi + 1] < dropDb) ++hi;
+
+        loHz = (float) lo * bw;
+        hiHz = (float) hi * bw;
+    }
+
     void peakWidth (float f, float& loHz, float& hiHz) const noexcept
     {
+        // Below the crossover the long window is the honest one.
+        if (loValid && f < params.crossoverHz)
+        {
+            peakWidthIn (magLo.data(), loNumBins, loBinHz, f, loHz, hiHz);
+            return;
+        }
+
         loHz = hiHz = f;
         const int centre = (int) std::round (f / binHz);
         if (centre < 2 || centre >= numBins - 2) return;
@@ -874,7 +1025,7 @@ private:
         return (float) s.frames * (float) hopSize / (float) sampleRate * 1000.0f;
     }
 
-    void track (float freq, float levelDb, bool harmonic) noexcept
+    void track (float freq, float levelDb, bool harmonic, bool family) noexcept
     {
         // Associate with an existing candidate (a wider window than the stability
         // test - the peak may wander a little before it locks).
@@ -887,6 +1038,8 @@ private:
             s.frames   += 1;
             s.lastLevel = levelDb;
             s.harmonic  = harmonic;   // re-judged every frame, never sticky
+            s.hasFamily = family;
+            if (harmonic || family) ++s.voiceFrames;
             s.freq      = 0.8f * s.freq + 0.2f * freq;
 
             s.wFreq[(size_t) s.windowPos]  = freq;
@@ -968,8 +1121,15 @@ private:
                 // grows too slowly to trip the growth gate, but it sits dead
                 // still for hundreds of ms, which nothing musical does. Held
                 // notes arrive with harmonics, so the guard covers those.
+                // Judged over the suspect's LIFE, not this frame. A voice partial
+                // looks harmonic most of the time and occasionally does not - one
+                // such frame was all the slow path needed, which is how T41's
+                // leak moved from the fundamental to its ninth partial. A ring
+                // never looks harmonic at all, so the bar is low.
+                const bool everVoice = s.voiceFrames * 4 >= s.frames;
+
                 bool sustainWander = false;
-                if (! fire && ! s.harmonic)
+                if (! fire && ! s.harmonic && ! s.hasFamily && ! everVoice)
                 {
                     const int sustainN = juce::jlimit (
                         1, windowSize - 1,
@@ -1114,6 +1274,7 @@ private:
         *slot = Suspect{};
         slot->active     = true;
         slot->harmonic   = harmonic;
+        slot->hasFamily  = family;
         slot->freq       = freq;
         slot->lastLevel  = levelDb;
         slot->frames     = 1;
@@ -1150,6 +1311,74 @@ private:
         return top - medianScratch[(size_t) mid];
     }
 
+    /// The low band again, at four times the frequency resolution. Same ring, a
+    /// longer window: 8192 points is 171 ms of audio, which is long enough to
+    /// separate partials 110 Hz apart and short enough that a ring building at
+    /// 20 dB/s only moves 3 dB across it.
+    void computeLowSpectrum() noexcept
+    {
+        loValid = false;
+        if (samplesSeen < loFftSize) return;
+
+        int r = (writePos - loFftSize) & (ringSize - 1);
+        for (int i = 0; i < loFftSize; ++i)
+        {
+            loScratch[(size_t) i] = ring[(size_t) r];
+            r = (r + 1) & (ringSize - 1);
+        }
+        std::fill (loScratch.begin() + loFftSize, loScratch.end(), 0.0f);
+        loWindow.multiplyWithWindowingTable (loScratch.data(), (size_t) loFftSize);
+        loFft.performFrequencyOnlyForwardTransform (loScratch.data());
+
+        constexpr float norm = 2.0f / loFftSize;
+        const int top = juce::jmin (loNumBins, (int) (params.crossoverHz * 1.5f / loBinHz) + 4);
+        for (int i = 0; i < top; ++i)
+            magLo[(size_t) i] = juce::Decibels::gainToDecibels (loScratch[(size_t) i] * norm, -120.0f);
+        loValid = true;
+    }
+
+    /// Peaks in the long window, below the crossover. These never become suspects
+    /// and are never tracked - they exist so the comb and family tests can see a
+    /// voice's partials where the short window smears them together.
+    void collectLowPeaks() noexcept
+    {
+        loPeakCount = 0;
+        if (! loValid) return;
+
+        const int first = juce::jmax (2, (int) (params.minFreq / loBinHz));
+        const int last  = juce::jmin (loNumBins - 3, (int) (params.crossoverHz / loBinHz));
+
+        for (int i = first; i <= last && loPeakCount < maxLoPeaks; ++i)
+        {
+            const float here = magLo[(size_t) i];
+            if (here < params.floorDb) continue;
+            if (here <= magLo[(size_t) (i - 1)] || here <= magLo[(size_t) (i + 1)]) continue;
+            if (here - medianAroundIn (magLo.data(), loNumBins, loBinHz, i, 300.0f) < params.prominenceDb)
+                continue;
+            loPeakFreq[(size_t) loPeakCount++] = parabolicIn (magLo.data(), i, loBinHz);
+        }
+    }
+
+    /// Local median of whichever spectrum a peak came from, over a window given
+    /// in Hz rather than bins - the two analysers have different bin widths, and
+    /// a fixed bin count would mean a 470 Hz window in one and 117 Hz in the other.
+    float medianAroundIn (const float* arr, int nBins, float bw, int centre, float halfHz) noexcept
+    {
+        const int half = juce::jmax (3, (int) (halfHz / bw));
+        const int lo = juce::jmax (0, centre - half);
+        const int hi = juce::jmin (nBins - 1, centre + half);
+        int count = 0;
+        const int guard = juce::jmax (2, (int) (35.0f / bw));     // skip the peak itself
+        for (int i = lo; i <= hi && count < (int) medianScratch.size(); ++i)
+            if (std::abs (i - centre) > guard) medianScratch[(size_t) count++] = arr[i];
+
+        if (count == 0) return -120.0f;
+        const int mid = count / 2;
+        std::nth_element (medianScratch.begin(), medianScratch.begin() + mid,
+                          medianScratch.begin() + count);
+        return medianScratch[(size_t) mid];
+    }
+
     float medianAround (int centre, int halfWidth) noexcept
     {
         const int lo = juce::jmax (0, centre - halfWidth);
@@ -1181,13 +1410,24 @@ private:
         eventWrite = next;
     }
 
-    static constexpr int ringSize = fftSize * 2;   // power of two
+    // Must hold the LONGEST window, not the shortest: the low analyser reads
+    // loFftSize samples back.
+    static constexpr int ringSize = loFftSize * 2;   // power of two
 
     juce::dsp::FFT fft;
+    juce::dsp::FFT loFft;
     juce::dsp::WindowingFunction<float> window;
+    juce::dsp::WindowingFunction<float> loWindow;
 
     std::array<float, (size_t) ringSize>   ring {};
     std::array<float, (size_t) fftSize * 2> scratch {};
+    std::array<float, (size_t) loFftSize * 2> loScratch {};
+    std::array<float, (size_t) loNumBins>     magLo {};
+    static constexpr int maxLoPeaks = 48;
+    std::array<float, (size_t) maxLoPeaks> loPeakFreq {};
+    int   loPeakCount = 0;
+    float loBinHz = 5.9f;
+    bool  loValid = false;
     std::array<float, (size_t) numBins>    mag {};
     std::array<float, (size_t) numBins>    reA {}, imA {}, reB {}, imB {};
     std::array<float, (size_t) numBins>*   curRe  = &reA;
@@ -1216,6 +1456,7 @@ private:
     std::array<std::array<float, (size_t) histLen>, (size_t) numBands> bandHist {};
     int histPos = 0, histCount = 0;
     PlateauProbe probe {};
+    VoiceProbe   vprobe {};
 
     /**
         Least-squares fit of the run's recent level against time, in dB.

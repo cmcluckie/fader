@@ -1628,9 +1628,16 @@ int main()
                 ++hits;
             }
         }
-        char msg[96];
-        std::snprintf (msg, sizeof msg, hits ? "NOTCHED %d times, first %.0f Hz via %s at %.0f ms" : "left alone",
-                       hits, first, firstPath == 1 ? "growth" : firstPath == 2 ? "sustain" : "escalation", firstAge);
+        char msg[220];
+        const auto& vp = det.lastVoice();
+        if (hits)
+            std::snprintf (msg, sizeof msg,
+                           "NOTCHED %d, first %.0f Hz via %s | %d peaks, lowest %.0f, family %s (2x->%.0f, 3x->%.0f), long window %s",
+                           hits, first, firstPath == 1 ? "growth" : firstPath == 2 ? "sustain" : "escalation",
+                           vp.peaks, vp.lowestHz, vp.family ? "YES" : "no", vp.partial2, vp.partial3,
+                           vp.lowUsed ? "on" : "OFF");
+        else std::snprintf (msg, sizeof msg, "left alone");
+        juce::ignoreUnused (firstAge);
         report ("T41 a low sung note is left alone", hits == 0, msg);
     }
 
