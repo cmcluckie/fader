@@ -119,6 +119,7 @@ int main (int argc, char* argv[])
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
     bool noRings = false, plateauPath = false;
     double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0, stagger = 1.0;
+    bool realloc_ = true;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
@@ -135,6 +136,7 @@ int main (int argc, char* argv[])
         // depth, so a fair comparison lets the pulsed case go deeper to match.
         if (std::string (argv[i]) == "--deep" && i + 1 < argc) deepDb = -std::abs (std::atof (argv[i + 1]));
         if (std::string (argv[i]) == "--budget" && i + 1 < argc) budget = std::atof (argv[i + 1]);
+        if (std::string (argv[i]) == "--no-realloc") realloc_ = false;
         if (std::string (argv[i]) == "--sync") stagger = 0.0;      // all filters pulse together
     }
     std::mt19937 rng (seed);
@@ -161,6 +163,7 @@ int main (int argc, char* argv[])
     bank.dutyCycle   = duty;
     bank.pulseHz     = 1000.0 / periodMs;
     bank.pulseStagger = stagger;
+    bank.budgetReallocates = realloc_;
     bank.softCapDb   = deepDb;
     bank.hardCapDb   = deepDb * 1.35;
     bank.initialCutDb = -6.0;

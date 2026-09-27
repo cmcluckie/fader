@@ -138,15 +138,6 @@ public:
             return -1;
         }
 
-        // Harm budget, if one is set: spend where it is cheap, refuse where it is
-        // not. A dB cap treats a notch at 300 Hz and one at 8 kHz as equal cost,
-        // and they differ by more than ten times.
-        if (harmBudget > 0.0 && harmNow() >= harmBudget)
-        {
-            lastRefusal = Refusal::RegionTooDark;
-            return -1;
-        }
-
         if (existing >= 0)
         {
             auto& s = slots[(size_t) existing];
@@ -186,6 +177,27 @@ public:
                 s.targetDb = std::max (floorDb, s.targetDb + stepDb);
             }
             return existing;
+        }
+
+        // The budget applies to NEW filters only. A re-trigger on a filter that
+        // already exists is a ring still knocking on a door we already built -
+        // proven value, and refusing it was the bug: measured at the rig, budget 30
+        // refused 890 of 901 catches because deepening counted against the ceiling
+        // too, which left the guard switched off after its first eleven filters.
+        //
+        // And when the budget IS full, take the money back rather than refusing.
+        // The stalest filter - one nothing has re-triggered for holdSeconds - is
+        // by definition the least useful thing the budget is being spent on.
+        if (harmBudget > 0.0 && harmNow() >= harmBudget)
+        {
+            const int stale = budgetReallocates ? stalestBefore (nowSeconds - holdSeconds) : -1;
+            if (stale < 0)
+            {
+                lastRefusal = Refusal::RegionTooDark;   // every filter is still earning its keep
+                return -1;
+            }
+            slots[(size_t) stale] = NotchSlot{};
+            filters[(size_t) stale].reset();
         }
 
         int slot = findFree();
@@ -535,6 +547,7 @@ public:
     int    combTeeth       = 5;
     double combCoverage    = 0.20;  // total glass removed, as a fraction of width
     double harmBudget      = 0.0;   // ear-weighted dB-ERB; 0 = no budget
+    bool   budgetReallocates = true;  // full budget: retire the stalest, or refuse?
     // Pulsed suppression. 1.0 = continuous, which is what ships until the ear
     // half of the bet has been tested in a room.
     double dutyCycle       = 1.0;
@@ -658,6 +671,22 @@ public:
     }
 
     /** Evict the least-recently-hit unlocked notch. -1 if all are locked. */
+    /// The least-recently-hit unlocked filter, provided nothing has re-triggered
+    /// it since `before`. -1 if every filter is still being knocked on.
+    int stalestBefore (double before) const noexcept
+    {
+        int    victim = -1;
+        double oldest = 1.0e18;
+        for (int i = 0; i < MaxNotches; ++i)
+        {
+            const auto& s = slots[(size_t) i];
+            if (! s.active || s.locked || s.manual) continue;
+            if (s.lastHitS > before) continue;                // still earning its keep
+            if (s.lastHitS < oldest) { oldest = s.lastHitS; victim = i; }
+        }
+        return victim;
+    }
+
     int stealLru() noexcept
     {
         int    victim = -1;
