@@ -55,6 +55,40 @@ public:
     /// comparable sets of measurements rather than one set and a silence. Never
     /// triggers the bank - see the bypass branch in process().
     void setAnalysis (bool b) noexcept       { analysis.store (b); }
+
+    /**
+        Flight recorder: the guarded channel's audio, before and after the notches.
+
+        The operator cannot sing and audit at the same time - asking "did the low
+        end hollow out?" of someone mid-phrase is asking them to be the instrument
+        and the instrument-watcher at once. So the engine keeps the evidence and
+        the listening happens afterwards, off the clock.
+
+        Audio-thread side is a lock-free write into a preallocated ring; the file
+        is written by the telemetry thread. Nothing here allocates or blocks.
+    */
+    void setRecording (bool b) noexcept
+    {
+        if (! b) { recording.store (false); return; }
+        recWrite.store (0); recRead.store (0);
+        recording.store (true);
+    }
+
+    /// Telemetry thread: take whatever has accumulated. Returns samples written
+    /// into dst (interleaved pre, post), never more than dstCapacity.
+    int drainRecording (float* dst, int dstCapacity) noexcept
+    {
+        const int w = recWrite.load (std::memory_order_acquire);
+        int       r = recRead.load (std::memory_order_relaxed);
+        int n = 0;
+        while (r != w && n + 1 < dstCapacity)
+        {
+            dst[n++] = recRing[(size_t) r];
+            r = (r + 1) & (recRingSize - 1);
+        }
+        recRead.store (r, std::memory_order_release);
+        return n;
+    }
     bool isBypassed() const noexcept         { return bypassed.load(); }
 
     /// <summary>
@@ -175,6 +209,12 @@ public:
             float*       out = outputs[rank];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
+            // Keep the pre-notch signal for the recorder: `out` is about to become
+            // the post-notch one, and the difference between them is the whole
+            // question - what the guard removed, and what it let through.
+            const bool rec = recording.load() && ch == 0 && numSamples <= maxRecBlock;
+            if (rec) juce::FloatVectorOperations::copy (recPre.data(), out, numSamples);
+
             auto& det  = detectors[(size_t) ch];
             auto& bank = banks[(size_t) ch];
             det.setParams (p);
@@ -265,6 +305,8 @@ public:
 
                 bank.process (out, numSamples, false);
             }
+
+            if (rec) pushRecording (recPre.data(), out, numSamples);
         }
 
         // Diagnostic override, applied last so it replaces whatever the slot wrote.
@@ -379,6 +421,30 @@ private:
     std::atomic<float> harmBudget { 0.0f };    // 0 = no ceiling
     bool wasBypassed = false, wasWatching = false;
     std::atomic<bool>  analysis { false };     // off unless asked for
+    std::atomic<bool>  recording { false };
+
+    // ~11 s of stereo at 48k. The telemetry thread drains 20 times a second, so
+    // this only has to survive a scheduling hiccup, not a long one.
+    static constexpr int recRingSize  = 1 << 20;
+    static constexpr int maxRecBlock  = 2048;
+    std::array<float, (size_t) recRingSize> recRing {};
+    std::array<float, (size_t) maxRecBlock> recPre {};
+    std::atomic<int> recWrite { 0 }, recRead { 0 };
+
+    void pushRecording (const float* pre, const float* post, int n) noexcept
+    {
+        int w = recWrite.load (std::memory_order_relaxed);
+        const int r = recRead.load (std::memory_order_acquire);
+        for (int i = 0; i < n; ++i)
+        {
+            const int next = (w + 2) & (recRingSize - 1);
+            if (next == r) break;              // reader fell behind: drop, never block
+            recRing[(size_t) w] = pre[i];
+            recRing[(size_t) ((w + 1) & (recRingSize - 1))] = post[i];
+            w = next;
+        }
+        recWrite.store (w, std::memory_order_release);
+    }
     std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
     std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
     std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };

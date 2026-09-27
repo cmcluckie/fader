@@ -470,9 +470,28 @@ public sealed class FeedbackController : IAsyncDisposable
         CaptureEnabled = on;
         _log.SetCapture(on);
         _supervisor.Client.SetAnalysis(on);
-        Log?.Invoke(on ? $"capture on: {Path.GetFileName(_log.CapturePath)}" : "capture off");
+
+        // Record the audio too, pre-notch and post-notch. Asking the singer
+        // whether the low end hollowed out is asking them to perform and audit at
+        // the same time; this keeps the evidence so the listening can happen
+        // afterwards. ~17 MB a minute.
+        if (on)
+        {
+            RecordingPath = Path.Combine(_dataDir, "logs",
+                $"audio-{DateTime.Now:yyyyMMdd-HHmmss}.wav");
+            _supervisor.Client.SetRecord(RecordingPath);
+        }
+        else
+        {
+            _supervisor.Client.SetRecord("");
+        }
+
+        Log?.Invoke(on ? $"capture on: {Path.GetFileName(_log.CapturePath)} + audio" : "capture off");
         CaptureChanged?.Invoke(on);
     }
+
+    /// <summary>Where the last (or current) flight recording is being written.</summary>
+    public string? RecordingPath { get; private set; }
 
     public event Action<bool>? CaptureChanged;
 

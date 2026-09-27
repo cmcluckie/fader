@@ -11,6 +11,7 @@
 // process alive; the C# supervisor stops it.
 
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_osc/juce_osc.h>
 #include <atomic>
 #include <thread>
@@ -72,6 +73,8 @@ public:
     {
         keepRunning.store (false);
         if (telemetry.joinable()) telemetry.join();
+        engine.setRecording (false);
+        writer.reset();                      // flushes and closes the WAV
         receiver.removeListener (this);
         receiver.disconnect();
         devices.removeAudioCallback (&engine);
@@ -104,6 +107,14 @@ private:
         // process, and a hard kill skips closing the audio device - which some
         // ASIO drivers do not recover from until the interface is replugged.
         else if (a == "/fk/quit")                          gRun.store (false);
+        // Flight recorder. A path starts it, an empty string stops it. Opening the
+        // file happens on the telemetry thread, never here.
+        else if (a == "/fk/record"       && m.size() >= 1 && m[0].isString())
+        {
+            const juce::ScopedLock sl (reconfigLock);
+            _recordPath = m[0].getString();
+            _recordDirty = true;
+        }
     }
 
     void applyParam (const juce::String& name, float v)
@@ -170,6 +181,7 @@ private:
         int tick = 0;
         while (keepRunning.load())
         {
+            serviceRecorder();
             applyPendingReconfigure();
             if (devicesDirty.exchange (false)) { sendDevices(); sendChannels(); }
 
@@ -217,6 +229,66 @@ private:
             return true;
         }
         return false;
+    }
+
+    /**
+        Open, feed and close the recorder's file. Runs on the telemetry thread at
+        ~20 Hz; the audio thread only ever writes into a lock-free ring.
+
+        Two channels: pre-notch and post-notch, so the difference between them is
+        exactly what the guard did. 24-bit, because the quiet end of this is where
+        the interesting failures live.
+    */
+    void serviceRecorder()
+    {
+        juce::String wanted;
+        bool dirty = false;
+        {
+            const juce::ScopedLock sl (reconfigLock);
+            wanted = _recordPath; dirty = _recordDirty; _recordDirty = false;
+        }
+
+        if (dirty)
+        {
+            if (writer != nullptr) { writer.reset(); engine.setRecording (false); }
+
+            if (wanted.isNotEmpty())
+            {
+                juce::File f (wanted);
+                f.getParentDirectory().createDirectory();
+                f.deleteFile();
+                if (auto* stream = f.createOutputStream().release())
+                {
+                    juce::WavAudioFormat wav;
+                    const double sr = devices.getCurrentAudioDevice() != nullptr
+                                    ? devices.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0;
+                    writer.reset (wav.createWriterFor (stream, sr, 2, 24, {}, 0));
+                    if (writer != nullptr)
+                    {
+                        engine.setRecording (true);
+                        juce::Logger::writeToLog ("recording to " + f.getFullPathName());
+                    }
+                    else delete stream;
+                }
+            }
+        }
+
+        if (writer == nullptr) return;
+
+        // Drain whatever the audio thread has produced since the last pass.
+        static constexpr int chunk = 1 << 14;
+        float interleaved[chunk];
+        const int got = engine.drainRecording (interleaved, chunk);
+        if (got < 2) return;
+
+        const int frames = got / 2;
+        float* chans[2] = { recL.data(), recR.data() };
+        for (int i = 0; i < frames; ++i)
+        {
+            recL[(size_t) i] = interleaved[2 * i];
+            recR[(size_t) i] = interleaved[2 * i + 1];
+        }
+        writer->writeFromFloatArrays (chans, 2, frames);
     }
 
     void applyPendingReconfigure()
@@ -400,6 +472,11 @@ private:
     std::atomic<int>         subscribeMask { 0xF };
     std::atomic<bool>        devicesDirty { true };   // send the device list once at start
     juce::CriticalSection    reconfigLock;
+    juce::String             _recordPath;
+    bool                     _recordDirty = false;
+    std::unique_ptr<juce::AudioFormatWriter> writer;
+    std::vector<float>       recL = std::vector<float> (1 << 13);
+    std::vector<float>       recR = std::vector<float> (1 << 13);
     Desired                  _desired;
     bool                     _dirty = false;
 };

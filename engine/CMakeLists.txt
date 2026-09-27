@@ -48,6 +48,7 @@ endif()
 target_link_libraries(fk-engine
     PRIVATE
         juce::juce_audio_devices   # AudioDeviceManager, Core Audio
+        juce::juce_audio_formats   # the flight recorder's WAV writer
         juce::juce_dsp             # FFT + windowing used by FeedbackDetector
         juce::juce_osc             # loopback control/telemetry
     PUBLIC

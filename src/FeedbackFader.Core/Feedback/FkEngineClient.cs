@@ -103,6 +103,8 @@ public sealed class FkEngineClient : IAsyncDisposable
     public void SetBypass(bool on)                   => Send(new OscMessage("/fk/bypass", on ? 1 : 0));
     /// <summary>Keep detecting while bypassed, so guard-off can be measured too.</summary>
     public void SetAnalysis(bool on)                 => Send(new OscMessage("/fk/analysis", on ? 1 : 0));
+    /// <summary>Flight recorder: a path starts it, an empty string stops it.</summary>
+    public void SetRecord(string path)               => Send(new OscMessage("/fk/record", path));
     /// <summary>
     /// Replace what every armed slot writes to its return: 0 = normal audio,
     /// negative = hard silence, positive = a sine at that frequency. The only
