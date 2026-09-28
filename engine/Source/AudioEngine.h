@@ -165,6 +165,14 @@ public:
         return n;
     }
 
+    /// What the operator should be shown: did we conclude we are out of the loop
+    /// recently, whether or not the filters that proved it are still alive.
+    bool notInLoopRecently() const noexcept
+    {
+        for (const auto& b : banks) if (b.notInLoopRecently (elapsed)) return true;
+        return false;
+    }
+
     /**
         Seed every channel's offender memory from a profile learned in earlier
         sessions. Message thread only, before audio starts: this writes the

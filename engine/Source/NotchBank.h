@@ -117,6 +117,45 @@ public:
         juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
 
+        // Futility accounting happens BEFORE any refusal, deliberately.
+        //
+        // It lived inside the re-trigger branch first, and could therefore never
+        // fire: a deeply cut frequency is refused as AlreadyCovered several lines
+        // below and returns early, so the one signal that says "we are cutting
+        // this hard and it is STILL getting louder" was thrown away exactly when
+        // it was true. The closed-loop gate caught it - the guard sat in a
+        // disconnected loop, parked a filter 15 dB past the dial, and noticed
+        // nothing at all.
+        //
+        // Every trigger is evidence, whatever we decide to do about it.
+        if (existing >= 0 && levelDb > -900.0)
+        {
+            auto& e = slots[(size_t) existing];
+            const bool louder = levelDb > e.lastLevelDb + 1.0;
+            if (cutAtDb (f, -1) <= futileCutDb && louder && e.lastLevelDb > -900.0)
+                ++e.futileHits;
+            else if (! louder && e.futileHits > 0)
+                --e.futileHits;
+            e.lastLevelDb = levelDb;
+
+            if (e.futileHits >= futileHitsBeforeGivingUp)
+            {
+                e.ineffective = true;
+                // Latch the CONCLUSION separately from the filter that reached
+                // it. The verdict is about the wiring, and wiring does not stop
+                // being wrong because one ring happened to stop: the filters
+                // that proved it bleed out within seconds, taking the flag with
+                // them, and the operator looks up at a clean display while the
+                // room is still howling. Measured in the disconnected gate -
+                // slots hit 18 futile hits against a threshold of 6, and the
+                // instantaneous count read zero by the end of the run.
+                lastIneffectiveS = nowSeconds;
+                ++ineffectiveEver;
+            }
+            else if (e.futileHits == 0) e.ineffective = false;
+
+        }
+
         // Why a trigger was refused. Reasoning about which check fired, from logs
         // that recorded the outcome and not the cause, was wrong twice.
         lastRefusal = Refusal::None;
@@ -221,36 +260,38 @@ public:
                 // bite. A run of them means stop digging, come back to the dial,
                 // and tell somebody, because the fix is a routing cable and not
                 // another 6 dB.
-                if (levelDb > -900.0)
-                {
-                    const bool atMax  = s.targetDb <= emergencyCapDb + 3.0;
-                    const bool louder = levelDb > s.lastLevelDb + 1.0;
-                    if (atMax && louder && s.lastLevelDb > -900.0) ++s.futileHits;
-                    else if (! louder && s.futileHits > 0)         --s.futileHits;
-                    s.lastLevelDb = levelDb;
-
-                    if (s.futileHits >= futileHitsBeforeGivingUp && ! s.ineffective)
-                    {
-                        s.ineffective = true;
-                        ++ineffectiveEver;
-                    }
-                }
-
-                // Once we have concluded we are not in the loop, the depth is
-                // doing nothing but harm. Hold at the operator's dial - not
-                // shallower, because if the routing comes back we want a filter
-                // already there - and stop escalating.
-                if (s.ineffective)
-                {
-                    s.targetDb = std::max (s.targetDb, hardCapDb);
-                    s.lastHitS = nowSeconds;
-                    return existing;
-                }
-
                 const bool emergency = s.capHits >= capHitsBeforeEmergency;
-                const double floorDb = emergency
-                                     ? emergencyCapDb
-                                     : ((growing && s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb);
+
+                // Not in the loop: hold at the operator's dial. Not shallower -
+                // if the routing comes back we want a filter already there - and
+                // no deeper, because past the dial it is pure tone damage spent
+                // on a fight we are not part of. Everything else about the filter
+                // carries on as normal: it still tracks, still holds, still
+                // releases. Only the DEPTH is capped.
+                // The verdict binds the whole BANK, not just the filter that
+                // reached it. If our output is not in the loop then it is not in
+                // the loop for any frequency, and letting thirty-three other
+                // slots carry on escalating past the operator's dial spends the
+                // same tone for the same nothing. The disconnected gate caught
+                // exactly that: one filter correctly parked at the dial while
+                // another sat at -33 dB.
+                // Two different questions, and conflating them disarmed the
+                // guard for half a minute after any verdict, right or wrong:
+                //
+                //   what the OPERATOR is shown - latched for 30 s, because a
+                //     wiring fault does not heal when one ring goes quiet
+                //     (notInLoopRecently, used for telemetry only);
+                //
+                //   what the guard is ALLOWED TO DO - governed by evidence that
+                //     is live RIGHT NOW. The moment a ring responds to a cut the
+                //     verdict is wrong, and depth has to come back instantly,
+                //     because that is the case where we are about to need it.
+                const bool outOfLoop = s.ineffective || ineffectiveNow() > 0;
+                const double floorDb = outOfLoop
+                                     ? hardCapDb
+                                     : (emergency
+                                          ? emergencyCapDb
+                                          : ((growing && s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb));
 
                 // A trigger may only ever DEEPEN. Clamping with max() alone would
                 // yank a filter sitting at emergency depth straight back to the
@@ -262,6 +303,22 @@ public:
                 // emergency self-limiting: it costs depth for as long as the ring
                 // keeps knocking, and not one bleed step longer.
                 s.targetDb = std::min (s.targetDb, std::max (floorDb, s.targetDb + stepDb));
+
+                // The one case where a trigger may make a filter SHALLOWER.
+                //
+                // The never-shallow rule above exists to stop a filter and its
+                // ring oscillating: shallow, it grows, deepen, it stops, shallow
+                // again. That cannot happen here, because a filter that is not in
+                // the loop does not affect its ring at all - which is exactly what
+                // "ineffective" means and how it was diagnosed. So there is no
+                // feedback path to oscillate through, and holding 45 dB of cut we
+                // have proven does nothing is the worst of both: full tone damage,
+                // no protection, and the operator's dial ignored.
+                //
+                // Coming up is smoothed by releaseCoeff like every other change,
+                // so this is a swell over ~130 ms rather than a step.
+                if (outOfLoop) s.targetDb = std::max (s.targetDb, hardCapDb);
+
                 noteDepth (s.freq, s.targetDb, nowSeconds);
 
                 // Emergency depth is paid for by emergency NARROWNESS. Harm goes
@@ -454,6 +511,9 @@ public:
 
             s.targetDb += bleedDbPerSec * dt;                        // toward 0
             s.lastRelS  = nowSeconds;
+            // A filter on its way out is not losing a fight; clear the verdict
+            // so the next ring here starts with an open mind.
+            s.ineffective = false; s.futileHits = 0; s.lastLevelDb = -1000.0;
             if (s.targetDb >= retireDb) { s.active = false; s.targetDb = 0.0; }
         }
     }
@@ -725,7 +785,11 @@ public:
     double emergencyCapDb = -45.0;
     int    capHitsBeforeEmergency = 3;   // ~3 re-triggers at the cap, tens of ms
     int    calmHitsToForget = 8;         // calm re-triggers before growth is forgotten
-    int    futileHitsBeforeGivingUp = 6; // louder-at-max-cut before we stop digging
+    int    futileHitsBeforeGivingUp = 6; // louder-while-deeply-cut before we stop digging
+    // 20 dB is past any excess gain a real room path carries, so a ring
+    // that keeps climbing through it is not being fought - it is being
+    // missed, and the signal going round is not the one we are filtering.
+    double futileCutDb = -20.0;
     double reopenMarginDb = 6.0;         // reopen this much shallower than last time
     double emergencyQ     = 80.0;        // 118 Hz at 9.4 kHz, still 40x a room mode
 
@@ -758,6 +822,14 @@ public:
     /// guard's output is very likely not the signal reaching the speakers, and
     /// the fix is routing, not more suppression.
     int ineffectiveEver = 0;
+    double lastIneffectiveS = -1.0e9;
+    /// True if we concluded we are not in the loop within the last `seconds`.
+    /// This is what an operator should be shown: a wiring fault does not heal
+    /// because the ring that revealed it went quiet.
+    bool notInLoopRecently (double nowSeconds, double seconds = 30.0) const noexcept
+    {
+        return ineffectiveEver > 0 && (nowSeconds - lastIneffectiveS) < seconds;
+    }
     int ineffectiveNow() const noexcept
     {
         int n = 0;

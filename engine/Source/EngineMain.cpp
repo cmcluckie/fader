@@ -600,7 +600,8 @@ private:
     /// like the software failing.
     void sendNotInLoop()
     {
-        const int n = engine.notInLoopCount();
+        const int n = engine.notInLoopRecently() ? std::max (1, engine.notInLoopCount())
+                                                 : 0;
         if (n != lastNotInLoop)
         {
             lastNotInLoop = n;

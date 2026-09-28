@@ -79,13 +79,13 @@ def steady_band(x, fs, lo, hi, W=8192, tail=3.0):
     return 10 * np.log10(band.sum() + 1e-20), float(top)
 
 
-def run(margin_db, guarded):
+def run(margin_db, guarded, disconnected=False):
     sim = FeedbackSim(fs=44100)
     sim.build_room(mic_path=[(0.0, MIC)], **ROOM)
     sim.set_gain_margin(margin_db)
     guard = None
     if guarded:
-        guard = FkGuard(sim.fs, sim.block)
+        guard = FkGuard(sim.fs, sim.block, disconnected=disconnected)
         sim.external_eq = guard
     _, mic, _ = sim.run(seconds=SECONDS, seed="click")
     hf_s, hf_c = steady_band(mic, sim.fs, 2000, 16000)
@@ -93,7 +93,37 @@ def run(margin_db, guarded):
     return dict(hf_peak=band_peak(mic, sim.fs, 2000, 16000),
                 hf_steady=hf_s, lf_steady=lf_s, lf_ringlike=lf_c,
                 events=guard.events if guard else 0,
-                filters=len(guard.notches()) if guard else 0)
+                filters=len(guard.notches()) if guard else 0,
+                not_in_loop=guard.not_in_loop() if guard else 0,
+                deepest=guard.deepest_db() if guard else 0.0)
+
+
+def disconnected_check():
+    """The guard wired out of its own loop - the fault that cost a session.
+
+    It sees the microphone perfectly and none of its output reaches the
+    speakers. Two things must happen and both were broken at once when this
+    scenario did not exist:
+
+      1. it must NOTICE, because the symptom is otherwise indistinguishable
+         from the software simply failing - the room howls while the guard
+         reports itself busy and effective;
+      2. it must STOP DIGGING, because past the operator's dial every decibel
+         is tone damage in a fight it is not part of.
+
+    And afterwards it must still work. The first version of the give-up check
+    latched forever: once flagged, a filter stopped deepening and never retired,
+    so it squatted on its frequency and blocked anything else from trying. That
+    shipped, because the tests only ever proved the guard could ENTER the state.
+    """
+    g = run(9.0, True, disconnected=True)
+    problems = []
+    if g["not_in_loop"] < 1:
+        problems.append("disconnected: the guard never noticed it was not in the loop")
+    if g["deepest"] < -30.0:
+        problems.append(f"disconnected: parked a filter at {g['deepest']:.1f} dB, "
+                        f"far past the dial, for no effect")
+    return g, problems
 
 
 def measure():
@@ -157,6 +187,12 @@ if __name__ == "__main__":
     print("closed-loop gate: the shipping guard inside a real acoustic loop\n")
     now = measure()
     bad = gate(now, base)
+
+    dis, dis_bad = disconnected_check()
+    print(f"\n{'disconnected':<12}{'flagged ' + str(dis['not_in_loop']):>15}"
+          f"{'deepest ' + format(dis['deepest'], '.1f') + 'dB':>20}"
+          f"{dis['events']:>8}{dis['filters']:>9}")
+    bad += dis_bad
 
     if update:
         json.dump(now, open(BASELINE, "w"), indent=2, sort_keys=True)

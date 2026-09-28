@@ -25,7 +25,7 @@ LIB = "/Users/cmcluckie/Code/Fader/engine/build/libfk-loopdsp.dylib"
 class FkGuard:
     """Quacks like feedback_sim's StatefulSOS, but is 4000 lines of C++."""
 
-    def __init__(self, fs, block=64, caps=None):
+    def __init__(self, fs, block=64, caps=None, disconnected=False):
         self.lib = ctypes.CDLL(LIB)
         self.lib.fk_create.restype = ctypes.c_void_p
         self.lib.fk_create.argtypes = [ctypes.c_double, ctypes.c_int]
@@ -52,11 +52,20 @@ class FkGuard:
             self.lib.fk_set_caps.argtypes = [ctypes.c_void_p, ctypes.c_float,
                                              ctypes.c_float, ctypes.c_float]
             self.lib.fk_set_caps(self.h, *[float(c) for c in caps])
+        self.disconnected = disconnected
         self.zi = np.zeros((1, 2))     # the sim pokes this; harmless
 
     def process(self, x):
         buf = np.ascontiguousarray(x, dtype=np.float32)
         self.lib.fk_process(self.h, buf, len(buf))
+        if self.disconnected:
+            # The guard sees the microphone and does all its work, but the
+            # console is feeding the wedge from upstream of our return, so none
+            # of it reaches the loop. This is not a hypothetical: it happened at
+            # the rig on 2026-09-28 and cost a session. Every cut the guard makes
+            # is real and completely without effect, which is the one condition
+            # under which "cut harder" is exactly the wrong answer.
+            return np.asarray(x, dtype=np.float64)
         return buf.astype(np.float64)
 
     @property
@@ -68,6 +77,14 @@ class FkGuard:
         n = self.lib.fk_notches(self.h, f.ctypes.data_as(ctypes.POINTER(ctypes.c_float)),
                                 d.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), cap)
         return list(zip(f[:n].tolist(), d[:n].tolist()))
+
+    def not_in_loop(self):
+        self.lib.fk_not_in_loop.restype = ctypes.c_int
+        self.lib.fk_not_in_loop.argtypes = [ctypes.c_void_p]
+        return int(self.lib.fk_not_in_loop(self.h))
+
+    def deepest_db(self):
+        return min([d for _, d in self.notches()], default=0.0)
 
     def tracks(self, cap=8):
         a = [np.zeros(cap, np.float32) for _ in range(4)]

@@ -1695,6 +1695,47 @@ int main()
                 ! s.ineffective, msg);
     }
 
+    // ---- T48: the give-up verdict must be provisional ----------------------
+    // The regression test for a bug that shipped and was caught at the rig the
+    // same hour. The first version of the not-in-the-loop check returned early
+    // forever once a filter was flagged. That refreshed the slot's timer, so it
+    // never retired, and it stopped deepening - a squatter: holding a frequency,
+    // refusing to fight, blocking anything else from trying. Measured: a 9615 Hz
+    // ring detected in 21 ms and then pinned at -7.8 dB of cut while it climbed
+    // 11 dB, because it had matched a slot flagged during an earlier ring.
+    //
+    // "We are not in the loop" is a statement about the WIRING, and somebody can
+    // patch the return. The verdict has to expire when its evidence does.
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -12.0; bank.hardCapDb = -18.0; bank.holdSeconds = 1.0;
+
+        // Phase 1: hopeless. It gets louder no matter how deep we go.
+        double t = 0.0, lvl = -50.0;
+        for (int i = 0; i < 24; ++i, t += 0.05, lvl += 2.0)
+            bank.trigger (7235.0, t, true, lvl, 47.0);
+        const bool flagged = bank.getSlot (0).ineffective;
+        const double parked = bank.getSlot (0).targetDb;
+
+        // Phase 2: somebody patches the return. The same ring now responds.
+        for (int i = 0; i < 12; ++i, t += 0.05, lvl -= 2.0)
+            bank.trigger (7235.0, t, false, lvl, 47.0);
+        const bool cleared = ! bank.getSlot (0).ineffective;
+
+        // Phase 3: and it must be willing to fight again.
+        for (int i = 0; i < 6; ++i, t += 0.05, lvl += 3.0)
+            bank.trigger (7235.0, t, true, lvl, 47.0);
+        const double fighting = bank.getSlot (0).targetDb;
+
+        std::snprintf (msg, sizeof msg, "flagged=%d parked %.1f, cleared=%d, then reached %.1f dB",
+                       (int) flagged, parked, (int) cleared, fighting);
+        report ("T48 giving up is provisional, and it is taken back",
+                flagged && cleared, msg);
+        report ("T48 a filter that gave up once will still fight later",
+                fighting <= parked - 0.01, msg);
+    }
+
     // ---- T45: what a hop costs, and what memory buys back ------------------
     // The rig's own failure, 2026-09-27. A ring was fought to the cap at
     // 9293 Hz, went quiet, came back 713 Hz higher, then 710 higher again. Each

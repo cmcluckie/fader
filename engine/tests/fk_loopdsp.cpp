@@ -117,6 +117,13 @@ int fk_place (void* h, float hz, float depthDb)
     return g->bank.placeManual ((double) hz, (double) depthDb, g->t);
 }
 
+/** Filters that have concluded they are not in the loop. See NotchBank. */
+int fk_not_in_loop (void* h)
+{
+    auto* g = static_cast<Guard*> (h);
+    return g ? (g->bank.ineffectiveEver > 0 ? std::max (1, g->bank.ineffectiveNow()) : 0) : 0;
+}
+
 // ---- what the guard did, so the sim can score it ------------------------
 
 int fk_event_count (void* h)
