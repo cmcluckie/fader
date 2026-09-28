@@ -1644,6 +1644,45 @@ int main()
         }
     }
 
+    // ---- T44: the hop ladder measured at the rig is ONE ring ---------------
+    // Replayed from capture-log-20260927-180044.csv, which recorded 71 catches
+    // and refused none of them: 9293 Hz fought to the -18.7 dB cap, then 10006,
+    // then 10716. Each jump is ~7.7%, fifteen times outside matchTolHz, so the
+    // suspect table saw three unrelated rings and the bank opened three fresh
+    // filters at -12 dB while one ring kept everything it had built.
+    //
+    // This tests the track layer only - not detection - so it replays the
+    // frequencies the room actually produced rather than re-deriving them.
+    {
+        fk::FeedbackDetector det; init (det, fk::FeedbackDetector::Params{});
+
+        for (float hz : { 9293.9f, 9294.1f, 9293.4f })   // fought where it started
+        { det.noteTrack (hz); det.advanceForTest (0.4); }
+        const float heatBefore = det.heatAt (9293.9f);
+
+        det.advanceForTest (1.5);
+        for (float hz : { 10006.2f, 10007.4f, 10006.8f }) { det.noteTrack (hz); det.advanceForTest (0.4); }
+        det.advanceForTest (1.5);
+        for (float hz : { 10716.0f, 10718.3f }) { det.noteTrack (hz); det.advanceForTest (0.4); }
+
+        int live = 0; const fk::FeedbackDetector::Track* t = nullptr;
+        for (int i = 0; i < fk::FeedbackDetector::maxTracks; ++i)
+            if (det.trackAt (i).active) { ++live; t = &det.trackAt (i); }
+
+        std::snprintf (msg, sizeof msg,
+                       "%d track(s), %.0f-%.0f Hz, %d hops, heat %.2f (was %.2f at the start)",
+                       live, t ? t->loHz : 0.0f, t ? t->hiHz : 0.0f, t ? t->hops : 0,
+                       t ? t->heat() : 0.0f, heatBefore);
+
+        // One ring, not three. It covers the whole stretch it walked, it counted
+        // the jumps, and it reads cold while it sits still and hot once it moves.
+        report ("T44 a hop ladder is followed as one ring",
+                live == 1 && t != nullptr && t->hops == 2
+                && t->loHz < 9300.0f && t->hiHz > 10700.0f, msg);
+        report ("T44 a ring that sits still stays cold, one that walks goes hot",
+                heatBefore < 0.05f && t != nullptr && t->heat() > 0.95f, msg);
+    }
+
     // ---- T43: the slow riser, and what it is allowed to cost ---------------
     // The shape the bank was blind to. Not a howl - a ring that climbs, sits,
     // climbs, sits, gaining a few dB a minute and carrying more excess loop gain

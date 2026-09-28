@@ -162,3 +162,27 @@ if(MSVC)
         endif()
     endforeach()
 endif()
+
+# ---------------------------------------------------------------------------
+# fk-loopdsp: the shipping guard as a C ABI shared library, so a closed-loop
+# room simulator (feedback_sim.py) can put it INSIDE the loop rather than
+# rendering its output through us afterwards. See tests/fk_loopdsp.cpp for why
+# that distinction is the whole point.
+#
+#   cmake --build build --target fk-loopdsp
+# ---------------------------------------------------------------------------
+add_library(fk-loopdsp SHARED tests/fk_loopdsp.cpp)
+
+target_compile_definitions(fk-loopdsp PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_STANDALONE_APPLICATION=1
+)
+
+set_target_properties(fk-loopdsp PROPERTIES
+    CXX_VISIBILITY_PRESET default
+    POSITION_INDEPENDENT_CODE ON)
+
+target_link_libraries(fk-loopdsp
+    PRIVATE juce::juce_dsp
+    PUBLIC  juce::juce_recommended_config_flags)

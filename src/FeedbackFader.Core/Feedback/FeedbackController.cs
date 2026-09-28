@@ -89,6 +89,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Log += m => Log?.Invoke(m);
         _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
         _supervisor.Client.ContextReceived += c => { Context = c; ContextChanged?.Invoke(c); };
+        _supervisor.Client.TrackReceived += OnTrack;
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.RejectionReceived += OnRejection;
@@ -106,6 +107,7 @@ public sealed class FeedbackController : IAsyncDisposable
     public event Action<string>? Log;
     public event Action<int, FkNotch[]>? NotchesChanged;      // slot, notches
     public event Action<FkSpectrum>? SpectrumChanged;         // slot in .Channel
+    public event Action<IReadOnlyList<FkTrack>>? TracksChanged;   // rings being followed across hops
     public event Action<FkDetection>? DetectionReceived;      // slot in .Channel
     public event Action<FkStatus>? StatusChanged;             // engine running + CPU load
     public event Action? SearchRangeChanged;
@@ -156,6 +158,24 @@ public sealed class FeedbackController : IAsyncDisposable
         _floorAuto = on;
         SaveAudio();
         SearchRangeChanged?.Invoke();
+    }
+
+    /// <summary>
+    /// The engine sends every track slot, empty ones included, so a slot that has
+    /// gone quiet clears rather than leaving its last hot reading on the display.
+    /// </summary>
+    private readonly Dictionary<(int, int), FkTrack> _trackSlots = new();
+
+    private void OnTrack(FkTrack t)
+    {
+        List<FkTrack> live;
+        lock (_trackSlots)
+        {
+            if (t.Hz > 0f) _trackSlots[(t.Channel, t.Index)] = t;
+            else _trackSlots.Remove((t.Channel, t.Index));
+            live = _trackSlots.Values.ToList();
+        }
+        TracksChanged?.Invoke(live);
     }
 
     /// <summary>Track the room: sit the floor a fixed margin above the measured noise.</summary>

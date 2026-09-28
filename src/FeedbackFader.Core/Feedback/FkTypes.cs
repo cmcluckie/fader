@@ -17,6 +17,18 @@ public sealed record FkStatus(bool EngineOk, float CpuLoad);
 /// Families are counted rather than pitches - one fundamental carrying partials
 /// is a voice, several at once is a backing track or a band, none is a room.
 /// </summary>
+/// <summary>
+/// One ring followed across its hops, as the engine's track layer sees it.
+///
+/// A ring does not always stay put. Measured at the rig on 2026-09-27 one went
+/// 9293 -> 10006 -> 10716 Hz, and on a 100-band log axis - where a single column
+/// spans 7.2% - that entire journey is three columns. It reads as one peak
+/// sitting still while nothing happens to it, which is exactly what it looked
+/// like at the time. Heat carries the movement that the axis cannot.
+/// </summary>
+/// <param name="Heat">0 while it sits still, 1 once it has walked a full hop.</param>
+public sealed record FkTrack(int Channel, int Index, float Hz, float LoHz, float HiHz, int Hops, float Heat);
+
 public sealed record FkContext(float LevelDb, float F0Hz, int Families, float Flatness)
 {
     /// <summary>Room, one voice, or something polyphonic.</summary>

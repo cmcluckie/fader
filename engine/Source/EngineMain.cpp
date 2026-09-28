@@ -202,6 +202,7 @@ private:
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz
             if ((mask & 0x8) && tick % 10 == 0) sendStatus();     // ~2 Hz
             if (tick % 4 == 0) sendContext();                    // ~5 Hz
+            if (tick % 4 == 0) sendTracks();                     // ~5 Hz
 
             ++tick;
             juce::Thread::sleep (50);   // ~20 Hz base cadence
@@ -454,6 +455,34 @@ private:
     {
         const auto c = engine.contextOf (0);
         sender.send (juce::OSCMessage ("/fk/context", c.levelDb, c.f0Hz, c.families, c.flatness));
+    }
+
+    /// The live tracks: one message per ring being followed across its hops.
+    /// A ring sitting still reads heat 0; one walking the band reads 1. The
+    /// display tints it, so a 7.7% hop - which is a single column on a 100-band
+    /// log axis, and therefore invisible as movement - is legible as colour.
+    void sendTracks()
+    {
+        std::fprintf (stderr, "[dbg] sendTracks entered\n");
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            const auto& det = engine.detector (ch);
+            for (int i = 0; i < fk::FeedbackDetector::maxTracks; ++i)
+            {
+                // Every slot, including the empty ones (freq 0): the app replaces
+                // by index, so a track that has just expired has to be SAID, or
+                // its last hot reading would sit on the display for ever.
+                const auto& t = det.trackAt (i);
+                const bool live = t.active && t.freq > 0.0f;
+                const bool ok = sender.send (juce::OSCMessage ("/fk/track", ch, i,
+                                               live ? t.freq  : 0.0f,
+                                               live ? t.loHz  : 0.0f,
+                                               live ? t.hiHz  : 0.0f,
+                                               live ? t.hops  : 0,
+                                               live ? t.heat() : 0.0f));
+                if (! ok) std::fprintf (stderr, "[dbg] track send FAILED ch=%d i=%d\n", ch, i);
+            }
+        }
     }
 
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }

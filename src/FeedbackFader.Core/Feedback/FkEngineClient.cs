@@ -62,6 +62,7 @@ public sealed class FkEngineClient : IAsyncDisposable
 
     public event Action<FkStatus>? StatusReceived;
     public event Action<FkContext>? ContextReceived;
+    public event Action<FkTrack>? TrackReceived;
     public event Action<FkDetection>? DetectionReceived;
     public event Action<FkRejection>? RejectionReceived;
     public event Action<int, FkNotch[]>? NotchesReceived;
@@ -160,6 +161,10 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/context" when m.Arguments is [float lvl, float f0, int fams, float flat]:
                 ContextReceived?.Invoke(new FkContext(lvl, f0, fams, flat));
+                break;
+
+            case "/fk/track" when m.Arguments is [int tch, int tix, float thz, float tlo, float thi, int hops, float heat]:
+                TrackReceived?.Invoke(new FkTrack(tch, tix, thz, tlo, thi, hops, heat));
                 break;
 
             // The engine now sends age and peak width alongside; the three-argument

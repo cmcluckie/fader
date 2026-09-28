@@ -331,6 +331,50 @@ public:
 private:
     static constexpr int windowSize = 128;  // >= sustainSeconds and voiceFrames
 
+public:
+    /// One ring, followed across its hops. See noteTrack().
+    struct Track
+    {
+        bool   active   = false;
+        float  freq     = 0.0f;   // where it is now
+        float  loHz     = 0.0f;   // the whole stretch it has walked
+        float  hiHz     = 0.0f;
+        int    hops     = 0;      // jumps clear of the suspect matcher
+        int    hits     = 0;
+        double lastSeen = 0.0;
+
+        /// How far it has wandered, as a fraction of where it sits. One measured
+        /// hop is 7.7%, so that is what counts as fully hot.
+        float heat() const noexcept
+        {
+            if (freq <= 0.0f) return 0.0f;
+            return juce::jlimit (0.0f, 1.0f, (hiHz - loHz) / (freq * 0.08f));
+        }
+    };
+
+    static constexpr int maxTracks = 8;
+    const Track& trackAt (int i) const noexcept { return tracks[(size_t) i]; }
+
+    /// Heat of the hottest live track covering f, 0 if none does.
+    float heatAt (float f) const noexcept
+    {
+        float best = 0.0f;
+        for (const auto& t : tracks)
+        {
+            if (! t.active || t.freq <= 0.0f) continue;
+            const float gap = f < t.loHz ? (t.loHz - f) : f > t.hiHz ? (f - t.hiHz) : 0.0f;
+            if (gap <= trackNearFrac * f) best = std::max (best, t.heat());
+        }
+        return best;
+    }
+
+private:
+    // Loose on purpose: the tight matcher is what the hop defeats.
+    static constexpr float  trackNearFrac    = 0.15f;  // twice a measured hop
+    static constexpr double trackHoldSeconds = 20.0;
+    std::array<Track, maxTracks> tracks {};
+    int64_t framesAnalysed = 0;
+
     struct Suspect
     {
         bool   active      = false;
@@ -359,6 +403,8 @@ private:
 
     void analyse() noexcept
     {
+        ++framesAnalysed;
+
         // Wait until the analysis window holds nothing but real audio.
         //
         // The ring starts at zero, so for the first fftSize samples every tone
@@ -1563,10 +1609,91 @@ private:
 
     void pushEvent (Event e) noexcept
     {
+        noteTrack (e.freq);
+
         const int next = (eventWrite + 1) % eventQueueSize;
         if (next == eventRead) return;         // full: drop, we will see it again next frame
         events[(size_t) eventWrite] = e;
         eventWrite = next;
+    }
+
+public:
+    /**
+        Follow one ring ACROSS its hops.
+
+        A suspect is matched to a peak within matchTolHz, which at 9293 Hz is
+        +-46 Hz. Measured at the rig on 2026-09-27 a ring went 9293 -> 10008 ->
+        10716 Hz: jumps of 715 Hz, fifteen times outside that window. Every hop
+        therefore built a brand-new suspect with no history, the bank opened a
+        fresh filter at -12 dB, and it climbed the ladder from the bottom while
+        the ring carried over every decibel it had already built. Three times.
+        Nothing in the system could know it was the same ring, so nothing did.
+
+        A track sits above the suspects and says so. It is deliberately loose -
+        a neighbourhood and a memory, not a match - because the whole point is
+        to survive a jump that the tight matcher is right to reject.
+
+        This only WATCHES for now. It is reported and drawn before it is allowed
+        to change a filter, because the last mechanism I was sure of turned out
+        to fix nothing, and this one should have to show itself first.
+    */
+    void noteTrack (float f) noexcept
+    {
+        if (f <= 0.0f) return;
+        const double now = nowSeconds();
+
+        Track* best = nullptr;
+        float bestGap = 1.0e9f;
+        for (auto& t : tracks)
+        {
+            if (! t.active) continue;
+            if (now - t.lastSeen > trackHoldSeconds) { t = Track{}; continue; }
+
+            // Near the span it has already covered, not just its last reading:
+            // a ring that has walked 9293 -> 10716 owns that whole stretch.
+            const float gap = f < t.loHz ? (t.loHz - f)
+                            : f > t.hiHz ? (f - t.hiHz) : 0.0f;
+            if (gap <= trackNearFrac * f && gap < bestGap) { best = &t; bestGap = gap; }
+        }
+
+        if (best == nullptr)
+        {
+            // Take a free slot, else the one nothing has fed for longest.
+            double oldest = 1.0e18;
+            for (auto& t : tracks)
+            {
+                if (! t.active) { best = &t; break; }
+                if (t.lastSeen < oldest) { oldest = t.lastSeen; best = &t; }
+            }
+            if (best == nullptr) return;
+            *best = Track{};
+            best->active = true;
+            best->loHz = best->hiHz = f;
+        }
+        else if (std::abs (f - best->freq) > matchTolHz (f))
+        {
+            ++best->hops;                       // cleared the matcher: a real jump
+        }
+
+        best->freq     = f;
+        best->loHz     = std::min (best->loHz, f);
+        best->hiHz     = std::max (best->hiHz, f);
+        best->lastSeen = now;
+        ++best->hits;
+    }
+
+    /// Advance the track clock without analysing audio - so a test can replay a
+    /// measured hop ladder with its real timing.
+    void advanceForTest (double seconds) noexcept
+    {
+        framesAnalysed += (int64_t) (seconds * sampleRate / (double) hopSize);
+    }
+
+private:
+
+    double nowSeconds() const noexcept
+    {
+        return (double) framesAnalysed * (double) hopSize / sampleRate;
     }
 
     // Must hold the LONGEST window, not the shortest: the low analyser reads

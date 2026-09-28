@@ -40,6 +40,7 @@ public sealed class SpectrumWindow : Window
         _feedback.SpectrumChanged += OnSpectrum;
         _feedback.NotchesChanged += OnNotches;
         _feedback.DetectionReceived += OnDetection;
+        _feedback.TracksChanged += OnTracks;
         _rta.FrameReceived += OnRta;
 
         _redraw = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };  // ~30 fps
@@ -51,6 +52,9 @@ public sealed class SpectrumWindow : Window
 
     private void OnSpectrum(FkSpectrum spec) =>
         Dispatcher.UIThread.Post(() => _view.SetEngine(spec.Channel, ToLogAxis(spec)));
+
+    private void OnTracks(IReadOnlyList<FkTrack> tracks) =>
+        Dispatcher.UIThread.Post(() => _view.SetTracks(tracks));
 
     private void OnRta(float[] frame) =>
         Dispatcher.UIThread.Post(() => _view.SetRta(frame));
@@ -73,6 +77,7 @@ public sealed class SpectrumWindow : Window
         _feedback.SpectrumChanged -= OnSpectrum;
         _feedback.NotchesChanged -= OnNotches;
         _feedback.DetectionReceived -= OnDetection;
+        _feedback.TracksChanged -= OnTracks;
         _rta.FrameReceived -= OnRta;
         _ = _rta.DisposeAsync();
     }

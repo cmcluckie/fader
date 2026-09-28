@@ -26,6 +26,55 @@ public sealed class SpectrumView : Control
     private IReadOnlyList<(float Hz, bool Locked)> _bgvNotches = Array.Empty<(float, bool)>();
     private readonly List<(float Hz, bool Correlated, long Ticks)> _detections = new();
 
+    // ---- heat: is this neighbourhood MOVING? --------------------------------
+    // The display gives the whole spectrum 100 columns, so one column spans 7.2%
+    // in frequency. Measured at the rig on 2026-09-27, a ring hopped 9293 ->
+    // 10008 -> 10716 Hz, which is three columns: on screen that is one peak
+    // jittering, not three rings being fought and replaced. The information is
+    // there - those are 30 analysis bins apart - the axis just throws it away.
+    //
+    // Colour does not have that problem. A peak that is walking gets hot while
+    // staying where it is, so motion is legible at a resolution where position
+    // is not. And the quantity is not decoration: "how far has this
+    // neighbourhood wandered lately" is exactly what the bank needs in order to
+    // recognise a returning ring that has moved further than one memory bucket
+    // (1/24 octave, 2.9%) can see. Shown here first, on purpose, so it can be
+    // watched before anything is allowed to act on it.
+    // The heat is NOT computed here. It is the engine's own track state, sent on
+    // /fk/track, so what is drawn is the guard's actual belief about which rings
+    // are the same ring - not a separate app-side guess that could agree with the
+    // picture while the guard believed something else. When the bank is later
+    // allowed to act on a hot track, this display is already the audit of it.
+    private IReadOnlyList<FkTrack> _tracks = Array.Empty<FkTrack>();
+
+    private static readonly Color Cold = Color.FromRgb(0x38, 0xBD, 0xF8);
+    private static readonly Color Hot = Color.FromRgb(0xEF, 0x44, 0x44);
+
+    public void SetTracks(IReadOnlyList<FkTrack> tracks) => _tracks = tracks;
+
+    /// <summary>Hottest track covering this frequency, 0 if none does.</summary>
+    private float HeatAt(double hz)
+    {
+        var best = 0f;
+        foreach (var t in _tracks)
+        {
+            if (t.Hz <= 0f) continue;
+            var gap = hz < t.LoHz ? t.LoHz - hz : hz > t.HiHz ? hz - t.HiHz : 0.0;
+            if (gap <= 0.15 * hz && t.Heat > best) best = t.Heat;
+        }
+        return best;
+    }
+
+    /// Cold to hot. Heat also drives width and opacity, so the signal survives
+    /// a monochrome screenshot and a red-green colour deficiency.
+    private static Color Temperature(float heat)
+    {
+        var k = Math.Clamp(heat, 0f, 1f);
+        return Color.FromRgb((byte) (Cold.R + (Hot.R - Cold.R) * k),
+                             (byte) (Cold.G + (Hot.G - Cold.G) * k),
+                             (byte) (Cold.B + (Hot.B - Cold.B) * k));
+    }
+
     private static readonly IBrush Background = new SolidColorBrush(Color.FromRgb(0x12, 0x14, 0x1A));
     private static readonly IPen Grid = new Pen(new SolidColorBrush(Color.FromRgb(0x2A, 0x2E, 0x38)), 1);
     private static readonly IBrush Label = new SolidColorBrush(Color.FromRgb(0x6B, 0x72, 0x80));
@@ -79,6 +128,9 @@ public sealed class SpectrumView : Control
             ctx.DrawText(Text(text), new Point(x + 2, h - 16));
         }
 
+        // --- where rings have been walking -------------------------------------
+        DrawTrackSpans(ctx, h, w);
+
         // --- spectra -----------------------------------------------------------
         ctx.DrawGeometry(LeadFill, null, Area(_lead, w, h));
         ctx.DrawGeometry(null, LeadLine, Line(_lead, w, h));
@@ -96,10 +148,12 @@ public sealed class SpectrumView : Control
         {
             var age = (now - d.Ticks) / 2500f;
             var alpha = (byte) (200 * (1 - age));
-            var colour = d.Correlated ? NotchLive : Color.FromRgb(0xFB, 0xBF, 0x24);
+            var heat = HeatAt(d.Hz);
+            var colour = heat > 0.05f ? Temperature(heat)
+                       : d.Correlated ? NotchLive : Color.FromRgb(0xFB, 0xBF, 0x24);
             var brush = new SolidColorBrush(Color.FromArgb(alpha, colour.R, colour.G, colour.B));
             var x = XForHz(d.Hz, w);
-            var r = d.Correlated ? 5.0 : 3.0;
+            var r = (d.Correlated ? 5.0 : 3.0) + 2.0 * heat;
             ctx.DrawEllipse(brush, null, new Point(x, 8), r, r);
         }
     }
@@ -110,10 +164,31 @@ public sealed class SpectrumView : Control
         {
             if (hz <= 0f) continue;
             var x = XForHz(hz, w);
-            var colour = locked ? NotchLocked : NotchLive;
-            var pen = new Pen(new SolidColorBrush(Color.FromArgb(0xAA, colour.R, colour.G, colour.B)), 1,
+            // A locked notch is the operator's decision and keeps its own colour.
+            // Everything else is tinted by how much its ring is moving.
+            var heat = locked ? 0f : HeatAt(hz);
+            var colour = locked ? NotchLocked : Temperature(heat);
+            var alpha = (byte) (0xAA + 0x55 * heat);
+            var pen = new Pen(new SolidColorBrush(Color.FromArgb(alpha, colour.R, colour.G, colour.B)),
+                1 + 1.5 * heat,
                 dashStyle: new DashStyle(new double[] { 3, 3 }, 0));
             ctx.DrawLine(pen, new Point(x, 0), new Point(x, h));
+        }
+    }
+
+    /// The stretch a walking ring has covered, drawn as a band behind everything
+    /// else. This is the part a log axis destroys: 9293 -> 10716 Hz is three
+    /// columns wide, so as a shaded span it is visible where a moving dot is not.
+    private void DrawTrackSpans(DrawingContext ctx, double h, double w)
+    {
+        foreach (var t in _tracks)
+        {
+            if (t.Hz <= 0f || t.Heat <= 0.05f || t.HiHz <= t.LoHz) continue;
+            var x0 = XForHz(t.LoHz, w);
+            var x1 = XForHz(t.HiHz, w);
+            var c = Temperature(t.Heat);
+            var brush = new SolidColorBrush(Color.FromArgb((byte) (0x18 + 0x30 * t.Heat), c.R, c.G, c.B));
+            ctx.FillRectangle(brush, new Rect(x0, 0, Math.Max(2.0, x1 - x0), h));
         }
     }
 
