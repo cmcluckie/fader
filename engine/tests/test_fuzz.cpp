@@ -54,6 +54,11 @@ struct Mode
     double phase    = 0.0;
     bool   live     = false;
     double bornAt   = 0.0;
+    // Each mode's own share of the loop gain drifts independently of its
+    // neighbours': the phase condition at one frequency is not the phase
+    // condition 200 Hz away. This is what lets the WINNER change - notch the
+    // leader and the next one up inherits the excess and starts climbing.
+    double ownDb    = 0.0;
     double peakDb   = -120.0;
     bool   caught   = false;
     double caughtLevel = -120.0;   // how loud it already was when first detected
@@ -64,6 +69,7 @@ struct Mode
     double audibleAt= 0.0;
     double caughtAt = 0.0;
     int    ringId   = 0;
+    int    ringIdx  = 0;      // index into rings[], NOT the id - ids start at 1
 };
 
 /// A ring: one mode below Schroeder, a cluster above it.
@@ -77,6 +83,21 @@ struct Ring
     double endAt     = 0.0;
     bool   plateau   = false;
     bool   scored    = false;
+
+    // The loop gain is not a constant, and assuming it was is why every ring in
+    // this rig used to grow along a clean exponential and never pause.
+    //
+    // G includes how much of the monitor the mic is hearing, which is geometry:
+    // 6 dB per doubling of the distance between them, plus the mic's own
+    // directivity as the singer turns their head. A singer who drifts 30 cm and
+    // turns 30 degrees over a phrase moves the loop gain by several dB, on a
+    // timescale of seconds. So the excess gain wanders, and a mode sitting near
+    // unity crosses back and forth over it: climb, stall, climb - gaining a
+    // little each time it is on the right side. That is the slow riser, and it
+    // is the shape a real room actually produces.
+    double wanderDb  = 0.0;   // current offset to every mode's excess gain
+    double wanderSd  = 2.0;   // dB, one standard deviation
+    double wanderTau = 2.0;   // seconds, how fast the singer moves
 };
 
 double dbToGain (double db) { return std::pow (10.0, db / 20.0); }
@@ -141,6 +162,8 @@ int main (int argc, char* argv[])
     }
     std::mt19937 rng (seed);
 
+    std::normal_distribution<double> normal (0.0, 1.0);
+    auto gauss = [&rng, &normal] () { return normal (rng); };
     auto uni = [&rng] (double a, double b) {
         return std::uniform_real_distribution<double> (a, b) (rng);
     };
@@ -177,6 +200,20 @@ int main (int argc, char* argv[])
     // A room per ring, because a rig moves: volume and RT60 decide Schroeder,
     // Schroeder decides whether this draw is a spike or a plateau. Nothing here
     // chooses a shape.
+    // The room's own frequencies, drawn once. Every ring picks from this list
+    // rather than inventing a fresh centre, because a room does not rebuild
+    // itself between rings: its modes are fixed by its dimensions, and the few
+    // that are hottest at the mic's position are the ones that ring, over and
+    // over, all night. The rig's own capture on 2026-09-27 rang at 9293 Hz,
+    // stopped, and came back to the same frequency twenty-two times.
+    //
+    // Drawing a new random centre per ring made every ring a stranger, which
+    // quietly made the bank's frequency memory untestable - there was never
+    // anything to remember.
+    std::vector<double> roomModes;
+    for (int i = 0; i < 18; ++i)
+        roomModes.push_back (std::pow (10.0, uni (std::log10 (70.0), std::log10 (12000.0))));
+
     const double totalSec = minutes * 60.0;
     double t = 0.0;
     int nextId = 1;
@@ -194,7 +231,10 @@ int main (int argc, char* argv[])
                                                      : std::pow (10.0, uni (2.3, 3.8));   // 200 - 6300 m3
         const double rt60   = uni (0.3, 3.0);
         const double fc     = 2000.0 * std::sqrt (rt60 / volume);    // Schroeder
-        const double centre = std::pow (10.0, uni (std::log10 (70.0), std::log10 (12000.0)));
+        // One of the room's modes, nudged a little: the mic and the singer move
+        // between rings, so the same mode presents at a slightly different peak.
+        const double centre = roomModes[(size_t) (int) uni (0.0, (double) roomModes.size() - 0.001)]
+                            * (1.0 + uni (-0.004, 0.004));
 
         const double B       = 2.2 / rt60;                           // modal bandwidth
         const double density = 4.0 * juce::MathConstants<double>::pi * volume
@@ -206,9 +246,22 @@ int main (int argc, char* argv[])
         r.centre    = centre;
         r.plateau   = centre > fc;
         r.modes     = r.plateau ? (int) juce::jlimit (3.0, 24.0, overlap) : 1;
-        r.bandwidth = r.plateau ? juce::jmax (120.0, B * (double) r.modes) : B;
+        // How wide a dense region actually is. The old floor of 120 Hz was made
+        // up, and it is the reason this rig could never reproduce the thing the
+        // room did on 2026-09-27: a ring at 9293 Hz that was notched, went quiet,
+        // and came back 715 Hz higher - over and over.
+        //
+        // Above Schroeder the modes that CAN ring are not a 120 Hz cluster. They
+        // are everything in the neighbourhood whose excess gain is within a few dB
+        // of the winner's, and which one actually wins is decided by the loop's
+        // phase condition - so notching the winner promotes the runner-up, and the
+        // ring reappears a few percent away. A region a few percent of centre wide
+        // is the right scale, and it matches what the capture showed.
+        r.bandwidth = r.plateau ? juce::jmax (0.08 * centre, B * (double) r.modes) : B;
         r.startAt   = t;
         r.endAt     = t + uni (4.0, 14.0);
+        r.wanderSd  = uni (0.5, 3.5);     // a still singer to a restless one
+        r.wanderTau = uni (0.8, 4.0);     // a head turn to a walk across the stage
         rings.push_back (r);
 
         // Excess gain per mode. A plateau shares it out - which is exactly why
@@ -220,6 +273,7 @@ int main (int argc, char* argv[])
         {
             Mode mo;
             mo.ringId   = r.id;
+            mo.ringIdx  = (int) rings.size() - 1;
             mo.freq     = r.modes == 1 ? centre
                                        : centre - r.bandwidth / 2.0
                                          + r.bandwidth * ((double) m + 0.5) / r.modes;
@@ -369,11 +423,29 @@ int main (int argc, char* argv[])
         // close the loop: the notch subtracts from the excess gain
         const double dt = (double) kBlock / kSR;
 
+        // Walk each ring's geometry. Ornstein-Uhlenbeck: a random walk with a
+        // spring, so it wanders but does not drift away for ever - which is what
+        // a singer working a fixed spot in front of a fixed monitor does.
+        for (auto& r : rings)
+        {
+            const double a = std::exp (-dt / r.wanderTau);
+            r.wanderDb = a * r.wanderDb
+                       + r.wanderSd * std::sqrt (std::max (0.0, 1.0 - a * a)) * gauss ();
+        }
         for (auto& mo : modes)
         {
             if (! mo.live) continue;
+            const double a = std::exp (-dt / 1.5);          // per-mode phase drift
+            mo.ownDb = a * mo.ownDb + 1.0 * std::sqrt (std::max (0.0, 1.0 - a * a)) * gauss ();
+        }
+
+        for (auto& mo : modes)
+        {
+            if (! mo.live) continue;
+            const double wander = (mo.ringIdx >= 0 && mo.ringIdx < (int) rings.size())
+                                      ? rings[(size_t) mo.ringIdx].wanderDb : 0.0;
             const double cut = bank.effectiveCutAtDb (mo.freq);
-            const double rate = (mo.excessDb + cut) / mo.tau;       // dB per second
+            const double rate = (mo.excessDb + wander + mo.ownDb + cut) / mo.tau;  // dB per second
             mo.levelDb = juce::jlimit (-100.0, 0.0, mo.levelDb + rate * dt);
             if (! mo.audible && mo.levelDb > -60.0) { mo.audible = true; mo.audibleAt = now; }
             // KILLED: driven 10 dB back down off its own peak, which only happens

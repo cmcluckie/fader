@@ -56,6 +56,8 @@ struct NotchSlot
     double q        = 40.0;
     double targetDb = 0.0;     // negative
     double currentDb= 0.0;     // smoothed toward targetDb
+    int    capHits    = 0;     // re-triggers while already at the ceiling
+    int    calmHits   = 0;     // consecutive re-triggers with no growth
     double pulsePhase = 0.0;   // where this filter sits in the pulse cycle, 0..1
     double lastHitS = 0.0;     // transport seconds of last (re)trigger
     double lastRelS = 0.0;     // transport seconds of last release step
@@ -173,8 +175,60 @@ public:
                 // The hard cap is for tones that are still building. One that is
                 // merely still present gets held at the soft cap, not driven deeper
                 // every quarter second for as long as the room hums.
-                const double floorDb = (growing && s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb;
-                s.targetDb = std::max (floorDb, s.targetDb + stepDb);
+                // Emergency: the filter is already at the ceiling and the ring is
+                // STILL climbing. Measured at the rig, 2026-09-27: a 9293 Hz ring
+                // caught at 21 ms and -52 dB, escalated to the -18.7 dB cap within
+                // 110 ms, re-triggered 22 more times - and grew 46 dB anyway,
+                // because it carried more than 18 dB of excess loop gain. A notch
+                // shallower than the excess loses however fast it lands; that is
+                // arithmetic, not detection.
+                //
+                // The dial governs how the guard SOUNDS in the steady state. It has
+                // no business governing how hard it may fight for its life. Past
+                // the cap while still losing, it goes as deep as it needs and
+                // releases back to the dial once the ring is dead.
+                // Evidence of growth must survive a PAUSE. A ring that rises in
+                // steps - climb, sit, climb, sit - is the shape this bank was
+                // blind to: zeroing the count on a single calm re-trigger meant
+                // it could never assemble three in a row, so it walked up to the
+                // dial over a minute and sat there breaking through, forever.
+                // It takes a sustained calm spell to conclude the ring is beaten,
+                // and one further climb to undo that conclusion.
+                if (growing && s.targetDb <= hardCapDb + 0.25) ++s.capHits;
+                if (growing) s.calmHits = 0;
+                else if (++s.calmHits >= calmHitsToForget) { s.capHits = 0; s.calmHits = 0; }
+
+                const bool emergency = s.capHits >= capHitsBeforeEmergency;
+                const double floorDb = emergency
+                                     ? emergencyCapDb
+                                     : ((growing && s.targetDb <= softCapDb + 0.25) ? hardCapDb : softCapDb);
+
+                // A trigger may only ever DEEPEN. Clamping with max() alone would
+                // yank a filter sitting at emergency depth straight back to the
+                // dial the moment its ring stopped growing - 27 dB in one call,
+                // which is a thump, and it hands the ring back the gain it just
+                // lost, so it grows again and the pair oscillate. Coming back up
+                // is release()'s job, on the bleed slew, and only once nothing
+                // has re-triggered for holdSeconds. That is what makes the
+                // emergency self-limiting: it costs depth for as long as the ring
+                // keeps knocking, and not one bleed step longer.
+                s.targetDb = std::min (s.targetDb, std::max (floorDb, s.targetDb + stepDb));
+                noteDepth (s.freq, s.targetDb, nowSeconds);
+
+                // Emergency depth is paid for by emergency NARROWNESS. Harm goes
+                // as depth x width, so going 20 dB deeper at the same Q triples
+                // the tone cost - which is exactly what the rig measured when the
+                // emergency first went in (harm 391 -> 481 across five seeds, for
+                // 4% fewer runaways). But the width was never justified: a room
+                // mode is B = 2.2/RT60 wide, one to three Hz, while Q 20 at 9 kHz
+                // is 450 Hz. We were 150x wider than the thing we were killing.
+                //
+                // By the time a filter is in emergency it has been re-triggered
+                // at one frequency five or more times, so it is far better
+                // localised than the single reading it opened on. Spend that
+                // confidence on narrowing rather than on breadth.
+                if (emergency && s.q < emergencyQ)
+                    s.q = std::min (emergencyQ, s.q * 1.6);
             }
             return existing;
         }
@@ -204,8 +258,31 @@ public:
         if (slot < 0) slot = stealLru();          // pool full: evict the coldest notch
         if (slot < 0) { lastRefusal = Refusal::AllLocked; return -1; }
 
-        const double openDb = (offenderCount (f, nowSeconds) >= fastTrackStrikes)
-                                  ? fastTrackCutDb : initialCutDb;
+        double openDb = (offenderCount (f, nowSeconds) >= fastTrackStrikes)
+                            ? fastTrackCutDb : initialCutDb;
+
+        // Reopen where we left off, not at the bottom of the ladder. Measured at
+        // the rig 2026-09-27: a 9293 Hz ring was fought to the cap, released when
+        // it went quiet, came back, and re-climbed the whole ladder from -18 -
+        // then did it 22 more times. Each climb is ~5 re-triggers of free growth
+        // handed back to a ring we had already characterised.
+        //
+        // Memory buys SPEED, not depth. The reopen is clamped at the dial however
+        // deep it went last time, and a margin shallower than it ended, because a
+        // room that has changed deserves the benefit of the doubt. Going past the
+        // dial still costs fresh evidence that it is still climbing (T18, T43).
+        int primedCapHits = 0;
+        const double was = rememberedDepth (f, nowSeconds);
+        if (was < 0.0)
+        {
+            openDb = std::clamp (std::min (openDb, was + reopenMarginDb), hardCapDb, 0.0);
+
+            // And if it needed emergency depth last time, it starts one growing
+            // re-trigger away from it rather than three. A ring that has already
+            // proven it carries more excess gain than the dial does not get to
+            // make us learn that again from scratch every time it returns.
+            if (was <= hardCapDb + 0.25) primedCapHits = capHitsBeforeEmergency - 1;
+        }
 
         // A wide, flat feature is not one ring and does not deserve one filter.
         // Answer it with a comb: a few narrow slots spread across it, together
@@ -230,6 +307,7 @@ public:
         // than thirty of them flickering in unison - which is audible flutter.
         s.pulsePhase = std::fmod (pulseStagger * 0.6180339887 * (double) slot, 1.0);
         s.targetDb = openDb;
+        s.capHits  = primedCapHits;
         s.currentDb= 0.0;
         s.lastHitS = nowSeconds;
         s.lastRelS = nowSeconds;
@@ -566,6 +644,14 @@ public:
     double stepDb         = -6.0;    // deepen per re-trigger (negative)
     double softCapDb      = -18.0;   // normal ceiling
     double hardCapDb      = -24.0;   // absolute ceiling for a stubborn tone
+    // ...and past THAT, for a ring that is winning anyway. Not a setting the
+    // operator chooses: it is what the guard is allowed to do when the choice is
+    // between tone damage and a runaway.
+    double emergencyCapDb = -45.0;
+    int    capHitsBeforeEmergency = 3;   // ~3 re-triggers at the cap, tens of ms
+    int    calmHitsToForget = 8;         // calm re-triggers before growth is forgotten
+    double reopenMarginDb = 6.0;         // reopen this much shallower than last time
+    double emergencyQ     = 80.0;        // 118 Hz at 9.4 kHz, still 40x a room mode
 
     // ---- release policy (spec §6) -------------------------------------------
     double holdSeconds    = 2.0;     // quiet time before a notch starts leaving
@@ -704,7 +790,7 @@ public:
     // ---- offender histogram (spec §8) ---------------------------------------
     // 1/24-octave buckets across the watched band; each bucket's count decays by
     // half every `histHalfLife` seconds (lazily, on touch).
-    struct Bucket { double count = 0.0; double stamp = 0.0; };
+    struct Bucket { double count = 0.0; double stamp = 0.0; double deepestDb = 0.0; };
 
     static constexpr double histBaseHz    = 200.0;    // band low edge
     static constexpr double histTopHz     = 16000.0;  // band high edge
@@ -740,6 +826,26 @@ public:
         auto& h = histogram[(size_t) b];
         decayed (h, nowSeconds);
         h.count += 1.0;
+    }
+
+    /** Record how deep this frequency actually had to be cut before it gave up. */
+    void noteDepth (double f, double db, double nowSeconds) noexcept
+    {
+        const int b = bucketOf (f);
+        if (b < 0) return;
+        auto& h = histogram[(size_t) b];
+        decayed (h, nowSeconds);
+        h.deepestDb = std::min (h.deepestDb, db);
+    }
+
+    /** How deep it took last time, or 0 once the bucket has faded. */
+    double rememberedDepth (double f, double nowSeconds) noexcept
+    {
+        const int b = bucketOf (f);
+        if (b < 0) return 0.0;
+        auto& h = histogram[(size_t) b];
+        if (decayed (h, nowSeconds) < 0.5) { h.deepestDb = 0.0; return 0.0; }
+        return h.deepestDb;
     }
 
     std::array<NotchSlot, MaxNotches> slots {};

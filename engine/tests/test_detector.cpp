@@ -285,22 +285,46 @@ int main()
                 std::fabs (atCentre - (-24.0)) < 1.5 && std::fabs (offCentre) < 1.0, msg);
     }
 
-    // ---- T10: repeated hits escalate to the cap, then release to flat ------
+    // ---- T10: the three-rung ladder, then release to flat -------------------
+    // Escalation is not one ceiling but three, and which rung applies depends
+    // entirely on what the ring is DOING - not on how long it has been around:
+    //
+    //   present but contained (not growing)  -> soft cap. The steady state.
+    //   still growing                        -> hard cap. The dial.
+    //   still growing AT the hard cap        -> emergency. Survival.
+    //
+    // A room hum that merely refuses to leave must never walk itself past the
+    // soft cap just by being persistent; that was the old defect and it is what
+    // made the guard sound dull. Depth is earned by evidence of growth.
     {
         fk::NotchBank<24> bank;
         bank.prepare (kSR, 64);
         bank.softCapDb = -24.0; bank.hardCapDb = -30.0; bank.holdSeconds = 1.0;
 
+        // Rung 1: knocking, but contained. Deepens to the soft cap and parks.
         double t = 0.0;
-        for (int i = 0; i < 12; ++i, t += 0.05) bank.trigger (5000.0, t);
-        const double deepest = bank.getSlot (0).targetDb;
+        for (int i = 0; i < 12; ++i, t += 0.05) bank.trigger (5000.0, t, false);
+        const double contained = bank.getSlot (0).targetDb;
+
+        // Rung 2: now it is growing. Two hits take it to the dial and hold it
+        // there - the third is what proves the dial is not enough.
+        for (int i = 0; i < 2; ++i, t += 0.05) bank.trigger (5000.0, t, true);
+        const double atDial = bank.getSlot (0).targetDb;
+
+        // Rung 3: still climbing at the dial. Now it may go past.
+        for (int i = 0; i < 8; ++i, t += 0.05) bank.trigger (5000.0, t, true);
+        const double emergency = bank.getSlot (0).targetDb;
 
         for (int i = 0; i < 200; ++i) { t += 0.25; bank.release (t); }
         const bool retired = ! bank.getSlot (0).active;
 
-        std::snprintf (msg, sizeof msg, "reached %.0f dB, retired after silence=%d", deepest, (int) retired);
-        report ("T10 repeated hits escalate to the cap, then retire",
-                deepest <= -24.0 && deepest >= -30.5 && retired, msg);
+        std::snprintf (msg, sizeof msg, "contained %.0f, dial %.0f, emergency %.0f, retired=%d",
+                       contained, atDial, emergency, (int) retired);
+        report ("T10 escalation climbs three rungs, then retires",
+                std::fabs (contained - (-24.0)) < 0.01
+                && std::fabs (atDial - (-30.0)) < 0.01
+                && emergency <= -44.9 && emergency >= -45.1
+                && retired, msg);
     }
 
     // ---- T11: a QUIET lone ring must not be mistaken for a harmonic -------
@@ -610,6 +634,12 @@ int main()
     // the dial on -24: 14% of notch samples were cutting deeper than -24, down to
     // -30. T10 sets the bank's caps by hand, so it could never see this - the
     // defect was in how the engine wired them up. This mirrors that wiring.
+    //
+    // Narrowed 2026-09-27, deliberately: the dial is the ceiling on how the guard
+    // SOUNDS, which is a statement about the steady state, and this test now says
+    // so exactly. It is not a promise to lose quietly. A ring carrying more excess
+    // loop gain than the dial allows cannot be stopped by any notch at that depth
+    // - arithmetic, not detection - and T43 covers the one narrow exception.
     {
         constexpr double userMaxCut = -24.0;
         fk::NotchBank<48> bank;
@@ -618,15 +648,29 @@ int main()
         bank.hardCapDb  = userMaxCut;
         bank.holdSeconds = 1.0;
 
-        // Hammer one frequency far past the point where it should stop deepening.
+        // Hammer one frequency far past the point where it should stop deepening -
+        // but as a tone that is PRESENT, not one that is still climbing. This is
+        // the case the rig measurement was taken in: a singer working, tones
+        // ringing and being held, nothing running away. In that state the dial is
+        // absolute, and it is the state the guard is in essentially all the time.
         double t = 0.0, deepest = 0.0;
         for (int i = 0; i < 60; ++i, t += 0.05)
         {
-            bank.trigger (5000.0, t);
+            bank.trigger (5000.0, t, false);
             deepest = juce::jmin (deepest, bank.getSlot (0).targetDb);
         }
+
+        // And a tone that IS growing still stops at the dial. It takes evidence
+        // that the dial itself is losing - a ring still climbing while pinned at
+        // the cap, T43 - before anything is allowed past it.
+        for (int i = 0; i < 2; ++i, t += 0.05)
+        {
+            bank.trigger (5000.0, t, true);
+            deepest = juce::jmin (deepest, bank.getSlot (0).targetDb);
+        }
+
         std::snprintf (msg, sizeof msg, "dial %.0f dB, deepest reached %.1f dB", userMaxCut, deepest);
-        report ("T18 escalation never cuts past the max-cut setting",
+        report ("T18 a tone that is merely present never cuts past the max-cut setting",
                 deepest >= userMaxCut - 0.01, msg);
     }
 
@@ -1239,19 +1283,46 @@ int main()
             {
                 const auto& sl = bank.getSlot (i);
                 if (sl.active) tot += respDb (f, sl.freq, sl.targetDb,
-                                              fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+                                              fk::NotchBank<48>::qForDepth (sl.q, sl.targetDb));
             }
             sum += tot; ++n;
         }
-        std::snprintf (msg, sizeof msg, "%d filters, top end averages %.1f dB", active, sum / n);
-        // Bounded, and short of the whole pool. NOT held to the quiet case's limit:
-        // twenty-six frequencies simultaneously at -13 dB is a catastrophic runaway,
-        // and a few seconds of heavy cut is plainly better than howling. What must
-        // not happen is that dullness while SINGING - which is a different level and
-        // therefore a different allowance, held by T29 at -9.3 dB, and by the level
-        // contrast below.
-        report ("T35 a runaway fights hard but not to the ceiling",
-                active > 10 && active < 48 && sum / n >= -20.0, msg);
+        // Now let the room go quiet and bleed it back out. This is the half that
+        // matters most: emergency depth is a loan, not a purchase.
+        for (int i = 0; i < 400; ++i) { t += 0.25; bank.release (t); }
+        double after = 0.0; int m = 0;
+        for (double f = 4000.0; f <= 16000.0; f *= 1.02)
+        {
+            double tot = 0.0;
+            for (int i = 0; i < 48; ++i)
+            {
+                const auto& sl = bank.getSlot (i);
+                if (sl.active) tot += respDb (f, sl.freq, sl.targetDb,
+                                              fk::NotchBank<48>::qForDepth (sl.q, sl.targetDb));
+            }
+            after += tot; ++m;
+        }
+
+        std::snprintf (msg, sizeof msg, "%d filters, top end averages %.1f dB, after silence %.2f dB",
+                       active, sum / n, after / m);
+        // Bounded, short of the whole pool, and temporary. NOT held to the quiet
+        // case's limit: twenty-six frequencies simultaneously at -13 dB and all
+        // still climbing is a catastrophic runaway, and a few seconds of heavy cut
+        // is plainly better than howling. What must not happen is that dullness
+        // while SINGING - a different level and therefore a different allowance,
+        // held by T29 at -9.3 dB, and by the level contrast below.
+        //
+        // This test used to model every filter at a fixed Q of 25 instead of the
+        // Q the bank actually gave it, so it was scoring a filter the bank does
+        // not build. That went unnoticed while every filter really was near Q 25;
+        // it broke loudly the moment escalation started narrowing them. Corrected
+        // to the slot's own Q, twenty-six filters at emergency depth average
+        // -13.1 dB across the top end, not the -36.3 the broken model reported -
+        // and the -19.5 dB that used to be quoted for the shipping build was the
+        // same artifact. Depth bought at Q 80 costs about a third of what depth
+        // bought at Q 20 does, which is the whole reason for narrowing.
+        report ("T35 a runaway fights hard, short of the ceiling, and gives it back",
+                active > 10 && active < 48 && sum / n >= -20.0 && after / m >= -0.5, msg);
     }
 
     // ---- T36: broad energy is not a ring ------------------------------------
@@ -1358,7 +1429,7 @@ int main()
             if (! sl.active) continue;
             ++active;
             onTheRing += respDb (7274.0, sl.freq, sl.targetDb,
-                                 fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+                                 fk::NotchBank<48>::qForDepth (sl.q, sl.targetDb));
         }
         std::snprintf (msg, sizeof msg, "%d filters, %.1f dB on the ring itself", active, onTheRing);
         // It measured -8.0 dB at the rig and ran away regardless.
@@ -1421,7 +1492,7 @@ int main()
             const auto& sl = bank.getSlot (i);
             if (! sl.active) continue;
             onTheRing += respDb (7108.0, sl.freq, sl.targetDb,
-                                 fk::NotchBank<48>::qForDepth (25.0, sl.targetDb));
+                                 fk::NotchBank<48>::qForDepth (sl.q, sl.targetDb));
             nearest = std::min (nearest, std::abs (sl.freq - 7108.0));
         }
         // Two things, and the first is the real requirement: the ring must get a
@@ -1571,6 +1642,48 @@ int main()
                            teeth, lo, hi, narrowest);
             report ("T42 the bank answers a plateau with a comb", teeth >= 3 && (hi - lo) > 60.0, m2);
         }
+    }
+
+    // ---- T43: the slow riser, and what it is allowed to cost ---------------
+    // The shape the bank was blind to. Not a howl - a ring that climbs, sits,
+    // climbs, sits, gaining a few dB a minute and carrying more excess loop gain
+    // than the dial allows. Every pause used to zero the growth evidence, so it
+    // could never assemble the three consecutive growing hits the emergency
+    // needs; it walked to the dial and then broke through it indefinitely.
+    //
+    // Three separate promises here, and the third is the one that keeps the
+    // guard honest: it must give the depth BACK.
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 1.0;
+
+        // Climb two, pause three, over and over. Never three growing in a row.
+        double t = 0.0;
+        for (int cycle = 0; cycle < 12; ++cycle)
+        {
+            for (int i = 0; i < 2; ++i, t += 0.05) bank.trigger (5000.0, t, true);
+            for (int i = 0; i < 3; ++i, t += 0.05) bank.trigger (5000.0, t, false);
+        }
+        const double reached = bank.getSlot (0).targetDb;
+
+        // It gave up. Let it bleed out completely, then have it come back.
+        for (int i = 0; i < 400; ++i) { t += 0.25; bank.release (t); }
+        const bool gaveBack = ! bank.getSlot (0).active;
+
+        t += 1.0;
+        bank.trigger (5000.0, t, false);
+        const double reopened = bank.getSlot (0).targetDb;
+
+        std::snprintf (msg, sizeof msg, "reached %.1f dB, released=%d, reopened at %.1f dB",
+                       reached, (int) gaveBack, reopened);
+        report ("T43 a ring that climbs in steps is still driven past the dial",
+                reached <= -24.5, msg);
+        report ("T43 emergency depth is a loan, not a purchase", gaveBack, msg);
+        // Straight back to the dial, not to -6: memory buys speed. And NOT past
+        // the dial, because on its own a returning tone is only a tone.
+        report ("T43 a known offender reopens at the dial, and no deeper",
+                reopened <= -23.5 && reopened >= -24.5, msg);
     }
 
     // ---- T41: a LOW sung note is still left alone --------------------------
