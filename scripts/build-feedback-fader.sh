@@ -21,6 +21,11 @@ EXE="FeedbackFader"
 PUB="$ROOT/dist/publish-feedback-fader"
 APP="$ROOT/dist/FeedbackFader.app"
 
+# Nothing leaves here without passing the closed-loop gate. The unit and fuzz
+# rigs feed the guard a signal it cannot influence; only the loop test can say
+# the room got quieter. SKIP_PRESHIP=1 for local iteration, never to ship.
+"$ROOT/scripts/preship.sh"
+
 echo "==> Publishing ($RID, framework-dependent)"
 rm -rf "$PUB" "$APP"
 dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$PUB" --nologo
