@@ -56,6 +56,12 @@ public:
     /// triggers the bank - see the bypass branch in process().
     void setAnalysis (bool b) noexcept       { analysis.store (b); }
 
+    /// What the guarded channel is hearing - level, note, and how many voices.
+    FeedbackDetector::Context contextOf (int ch) const noexcept
+    {
+        return detectors[(size_t) juce::jlimit (0, maxChans - 1, ch)].context();
+    }
+
     /**
         Flight recorder: the guarded channel's audio, before and after the notches.
 

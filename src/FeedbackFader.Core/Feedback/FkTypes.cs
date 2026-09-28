@@ -10,6 +10,35 @@ public enum FkTelemetry { None = 0, Events = 1, Notches = 2, Spectrum = 4, Statu
 /// <summary><c>/fk/status</c> — is the engine's audio callback running, and its CPU load.</summary>
 public sealed record FkStatus(bool EngineOk, float CpuLoad);
 
+/// <summary>
+/// What the microphone is hearing, as opposed to what the guard is doing about
+/// it: how loud, what note, how many independent voices, and how noise-like.
+///
+/// Families are counted rather than pitches - one fundamental carrying partials
+/// is a voice, several at once is a backing track or a band, none is a room.
+/// </summary>
+public sealed record FkContext(float LevelDb, float F0Hz, int Families, float Flatness)
+{
+    /// <summary>Room, one voice, or something polyphonic.</summary>
+    public string Scene => LevelDb < -70f ? "silent"
+                         : Families == 0  ? "room"
+                         : Families == 1  ? "voice"
+                                          : "music";
+
+    /// <summary>The note nearest F0, e.g. "D3" - empty when nothing is pitched.</summary>
+    public string Note
+    {
+        get
+        {
+            if (F0Hz < 25f) return "";
+            var semis = (int)Math.Round(12.0 * Math.Log2(F0Hz / 440.0)) + 57;   // A4 = 57
+            if (semis < 0) return "";
+            string[] names = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+            return $"{names[semis % 12]}{semis / 12}";
+        }
+    }
+}
+
 /// <summary><c>/fk/event</c> — a detection fired on a channel.</summary>
 public sealed record FkDetection(int Channel, float Hz, float LevelDb,
                                  float AgeMs = 0f, float WidthLoHz = 0f, float WidthHiHz = 0f,

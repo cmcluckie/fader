@@ -61,6 +61,7 @@ public sealed class FkEngineClient : IAsyncDisposable
     }
 
     public event Action<FkStatus>? StatusReceived;
+    public event Action<FkContext>? ContextReceived;
     public event Action<FkDetection>? DetectionReceived;
     public event Action<FkRejection>? RejectionReceived;
     public event Action<int, FkNotch[]>? NotchesReceived;
@@ -155,6 +156,10 @@ public sealed class FkEngineClient : IAsyncDisposable
         {
             case "/fk/status" when m.Arguments is [int ok, float cpu]:
                 StatusReceived?.Invoke(new FkStatus(ok != 0, cpu));
+                break;
+
+            case "/fk/context" when m.Arguments is [float lvl, float f0, int fams, float flat]:
+                ContextReceived?.Invoke(new FkContext(lvl, f0, fams, flat));
                 break;
 
             // The engine now sends age and peak width alongside; the three-argument

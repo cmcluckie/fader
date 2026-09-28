@@ -25,6 +25,11 @@ public sealed class ShowView : UserControl
     private readonly TextBlock _guardText = Ui.Text("GUARD ON", 15, Tokens.Accent, FontWeight.Bold);
     private readonly Border _guardPill;
     private readonly TextBlock _cpuValue = Ui.Mono("—", 15, Tokens.Ink, FontWeight.SemiBold);
+    // What the mic is hearing, so the singer does not have to report it while
+    // singing: how loud, what note, and whether that is a voice, a backing
+    // track, or an empty room.
+    private readonly TextBlock _sceneValue = Ui.Mono("—", 15, Tokens.InkDim, FontWeight.SemiBold);
+    private readonly TextBlock _noteValue  = Ui.Mono("—", 15, Tokens.Ink, FontWeight.SemiBold);
     private readonly TextBlock _rigValue = Ui.Mono("—", 15, Tokens.Ink, FontWeight.SemiBold);
 
     private readonly GuardSpectrum _spectrum = new();
@@ -66,6 +71,8 @@ public sealed class ShowView : UserControl
         _guardText.LetterSpacing = 2.0;
 
         var rig = Ui.Stack(Orientation.Horizontal, 26,
+            Readout("Hearing", _sceneValue),
+            Readout("Note", _noteValue),
             Readout("Engine", _rigValue),
             Readout("Load", _cpuValue));
         rig.HorizontalAlignment = HorizontalAlignment.Right;
@@ -285,6 +292,32 @@ public sealed class ShowView : UserControl
 
     /// <summary>Report the engine's CPU load (pushed by the window from telemetry).</summary>
     public void SetCpu(float load) => _cpuValue.Text = $"{load * 100f:0.0}%";
+
+    /// <summary>
+    /// The room, in three words. Level tells you whether anything is happening,
+    /// the scene whether it is one voice or several things at once, and the note
+    /// is the fundamental the detector is currently protecting.
+    /// </summary>
+    public void SetContext(FeedbackFader.FkContext c)
+    {
+        _sceneValue.Text = c.Scene switch
+        {
+            "voice"  => $"VOICE  {c.LevelDb:0} dB",
+            "music"  => $"MUSIC ({c.Families})  {c.LevelDb:0} dB",
+            "room"   => $"room  {c.LevelDb:0} dB",
+            _        => "silent",
+        };
+        _sceneValue.Foreground = c.Scene switch
+        {
+            "voice" => Tokens.Accent,
+            "music" => Tokens.Catch,
+            "room"  => Tokens.InkDim,
+            _       => Tokens.InkFaint,
+        };
+
+        _noteValue.Text = c.Note.Length > 0 ? $"{c.Note}  {c.F0Hz:0} Hz" : "—";
+        _noteValue.Foreground = c.Note.Length > 0 ? Tokens.Ink : Tokens.InkFaint;
+    }
 
     private void RebuildTiles()
     {

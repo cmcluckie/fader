@@ -201,6 +201,7 @@ private:
             if ((mask & 0x2) && tick % 2 == 0)  sendNotches();    // ~10 Hz
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz
             if ((mask & 0x8) && tick % 10 == 0) sendStatus();     // ~2 Hz
+            if (tick % 4 == 0) sendContext();                    // ~5 Hz
 
             ++tick;
             juce::Thread::sleep (50);   // ~20 Hz base cadence
@@ -445,6 +446,14 @@ private:
         const int sr = current ? (int) current->getCurrentSampleRate() : 0;
         const int bs = current ? current->getCurrentBufferSizeSamples() : 0;
         sendAudioState (current ? current->getName() : juce::String(), sr, bs);
+    }
+
+    /// Level, note and polyphony, so the app can say what it is hearing without
+    /// the operator having to narrate their own performance.
+    void sendContext()
+    {
+        const auto c = engine.contextOf (0);
+        sender.send (juce::OSCMessage ("/fk/context", c.levelDb, c.f0Hz, c.families, c.flatness));
     }
 
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }

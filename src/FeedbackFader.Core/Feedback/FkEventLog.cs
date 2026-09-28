@@ -35,7 +35,11 @@ public sealed class FkEventLog : IDisposable
 
             EqPath = System.IO.Path.Combine(directory, $"eq-log-{stamp}.csv");
             _eq = new StreamWriter(EqPath, append: false) { AutoFlush = true };
-            _eq.WriteLine("seconds,channel,bypassed,filters,avg_1k_4k,avg_4k_16k,worst_db,worst_hz");
+            // scene/note/level are what the MIC was hearing, not what the guard
+            // did about it: the two questions were impossible to separate when
+            // only one of them was written down.
+            _eq.WriteLine("seconds,channel,bypassed,filters,avg_1k_4k,avg_4k_16k,worst_db,worst_hz," +
+                          "scene,note,f0_hz,level_db,families");
         }
         catch
         {
@@ -100,12 +104,15 @@ public sealed class FkEventLog : IDisposable
     /// subtraction rather than a memory of how it sounded a minute ago.
     /// </summary>
     public void WriteEq(double seconds, int slot, bool bypassed, int filters,
-                        double avgLowDb, double avgTopDb, double worstDb, double worstHz)
+                        double avgLowDb, double avgTopDb, double worstDb, double worstHz,
+                        FkContext? ctx = null)
     {
         if (_eq is null) return;
+        var c = ctx ?? new FkContext(-120f, 0f, 0, 0f);
         var line = string.Create(CultureInfo.InvariantCulture,
             $"{seconds:F1},{ChannelName(slot)},{(bypassed ? 1 : 0)},{filters}," +
-            $"{avgLowDb:F2},{avgTopDb:F2},{worstDb:F2},{worstHz:F0}");
+            $"{avgLowDb:F2},{avgTopDb:F2},{worstDb:F2},{worstHz:F0}," +
+            $"{c.Scene},{c.Note},{c.F0Hz:F0},{c.LevelDb:F1},{c.Families}");
         lock (_lock)
         {
             _eq.WriteLine(line);

@@ -88,6 +88,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.EngineOkChanged += OnEngineOk;
         _supervisor.Log += m => Log?.Invoke(m);
         _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
+        _supervisor.Client.ContextReceived += c => { Context = c; ContextChanged?.Invoke(c); };
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.RejectionReceived += OnRejection;
@@ -495,6 +496,10 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public event Action<bool>? CaptureChanged;
 
+    /// <summary>What the mic is hearing right now: level, note, voice or music.</summary>
+    public FkContext Context { get; private set; } = new(-120f, 0f, 0, 0f);
+    public event Action<FkContext>? ContextChanged;
+
     public void SetBypass(bool on)
     {
         IsBypassed = on;
@@ -683,7 +688,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _log.WriteEq(now, slot, IsBypassed, live.Length,
                      NotchResponse.AverageDb(live, 1000, 4000),
                      NotchResponse.AverageDb(live, 4000, 16000),
-                     worstDb, worstHz);
+                     worstDb, worstHz, Context);
     }
 
     /// <summary>

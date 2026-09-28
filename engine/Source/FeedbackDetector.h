@@ -181,6 +181,26 @@ public:
     };
     const VoiceProbe& lastVoice() const noexcept { return vprobe; }
 
+    /**
+        What is going on in front of the microphone, as opposed to what the guard
+        is doing about it.
+
+        The operator cannot narrate their own performance - they are singing - so
+        the engine says it instead: how loud, what note, and whether that is one
+        voice, several things at once (a backing track, a band), or an empty room.
+
+        Families are counted, not pitches. A voice is one fundamental carrying
+        partials; polyphony is several at once. Room noise carries none.
+    */
+    struct Context
+    {
+        float levelDb   = -120.0f;   // frame RMS
+        float f0Hz      = 0.0f;      // the lowest fundamental found, 0 if none
+        int   families  = 0;         // independent harmonic families in the frame
+        float flatness  = 0.0f;      // 0 = tonal, 1 = noise-like
+    };
+    Context context() const noexcept { return ctx; }
+
     struct Reject
     {
         float freq    = 0.0f;
@@ -478,6 +498,8 @@ private:
 
         if (peakCount > maxSeenPeaks) maxSeenPeaks = peakCount;
 
+        updateContext (rmsDb);
+
         // What did the bottom of the spectrum look like this frame?
         {
             vprobe = VoiceProbe{};
@@ -723,6 +745,62 @@ private:
         advanced, minus the advance its centre frequency predicts, is the offset
         from that centre.
     */
+    /**
+        Who is in front of the microphone this frame.
+
+        A fundamental is a peak carrying partials above it that is NOT itself a
+        partial of something lower - otherwise a voice's own second harmonic
+        counts as a second voice and every singer reads as a duet.
+    */
+    void updateContext (float rmsDb) noexcept
+    {
+        Context c;
+        c.levelDb = rmsDb;
+
+        // Spectral flatness over the watched band: geometric mean over arithmetic.
+        // Noise sits near 1, a tone near 0, and it is what separates "empty room"
+        // from "someone is actually making a sound".
+        {
+            double logSum = 0.0, sum = 0.0; int n = 0;
+            const int lo = juce::jmax (2, (int) (params.minFreq / binHz));
+            const int hi = juce::jmin (numBins - 2, (int) (juce::jmin (8000.0f, params.maxFreq) / binHz));
+            for (int i = lo; i <= hi; ++i)
+            {
+                const double lin = juce::Decibels::decibelsToGain ((double) mag[(size_t) i]);
+                logSum += std::log (juce::jmax (1.0e-9, lin));
+                sum    += lin;
+                ++n;
+            }
+            if (n > 0 && sum > 0.0)
+                c.flatness = (float) juce::jlimit (0.0, 1.0,
+                    std::exp (logSum / n) / (sum / n));
+        }
+
+        for (int i = 0; i < peakCount; ++i)
+        {
+            if (! hasPartialsAbove (i)) continue;
+            const float f = peakFreq[(size_t) i];
+
+            // Is this peak itself a partial of a lower fundamental already counted?
+            bool isPartial = false;
+            for (int j = 0; j < peakCount && ! isPartial; ++j)
+            {
+                if (j == i) continue;
+                const float lower = peakFreq[(size_t) j];
+                if (lower <= 0.0f || lower >= f - 1.0f) continue;
+                const float ratio = f / lower;
+                if (std::abs (ratio - std::round (ratio)) < 0.04f && std::round (ratio) >= 2.0f
+                    && hasPartialsAbove (j))
+                    isPartial = true;
+            }
+            if (isPartial) continue;
+
+            ++c.families;
+            if (c.f0Hz <= 0.0f || f < c.f0Hz) c.f0Hz = f;
+        }
+        ctx = c;
+    }
+
     /// Sub-bin interpolation without phase history, for the long analysis.
     static float parabolicIn (const float* arr, int k, float bw) noexcept
     {
@@ -1457,6 +1535,7 @@ private:
     int histPos = 0, histCount = 0;
     PlateauProbe probe {};
     VoiceProbe   vprobe {};
+    Context      ctx {};
 
     /**
         Least-squares fit of the run's recent level against time, in dB.
