@@ -776,28 +776,59 @@ private:
                     std::exp (logSum / n) / (sum / n));
         }
 
+        int   rawFamilies = 0;
+        float lowestF0    = 0.0f;
         for (int i = 0; i < peakCount; ++i)
         {
             if (! hasPartialsAbove (i)) continue;
             const float f = peakFreq[(size_t) i];
 
-            // Is this peak itself a partial of a lower fundamental already counted?
+            // Is this peak a partial of ANY lower peak, whether or not that one
+            // was itself judged to carry a family? The first version required the
+            // lower one to be flagged too, which fails whenever a fundamental is
+            // weak - and then a singer's own second and third harmonics each
+            // counted as a voice, so one person read as a trio.
             bool isPartial = false;
             for (int j = 0; j < peakCount && ! isPartial; ++j)
             {
                 if (j == i) continue;
                 const float lower = peakFreq[(size_t) j];
-                if (lower <= 0.0f || lower >= f - 1.0f) continue;
+                if (lower <= 20.0f || lower >= f - 1.0f) continue;
                 const float ratio = f / lower;
-                if (std::abs (ratio - std::round (ratio)) < 0.04f && std::round (ratio) >= 2.0f
-                    && hasPartialsAbove (j))
+                if (std::abs (ratio - std::round (ratio)) < 0.04f && std::round (ratio) >= 2.0f)
                     isPartial = true;
             }
             if (isPartial) continue;
 
-            ++c.families;
-            if (c.f0Hz <= 0.0f || f < c.f0Hz) c.f0Hz = f;
+            ++rawFamilies;
+            if (lowestF0 <= 0.0f || f < lowestF0) lowestF0 = f;
         }
+
+        // Hold the verdict over ~0.4 s. A scene that flips every 5 ms is useless
+        // to read and worse to act on: consonants, breaths and the gaps between
+        // notes are not a change of who is in the room, and calling those "room"
+        // while someone is plainly singing was the second fault the rig found.
+        ctxFamilies[(size_t) ctxPos] = rawFamilies;
+        ctxF0[(size_t) ctxPos]       = lowestF0;
+        ctxLevel[(size_t) ctxPos]    = rmsDb;
+        ctxPos = (ctxPos + 1) % ctxHistory;
+        if (ctxCount < ctxHistory) ++ctxCount;
+
+        int pitched = 0, poly = 0;
+        float loudest = -140.0f, f0Sum = 0.0f; int f0Count = 0;
+        for (int i = 0; i < ctxCount; ++i)
+        {
+            if (ctxFamilies[(size_t) i] >= 1) { ++pitched; f0Sum += ctxF0[(size_t) i]; ++f0Count; }
+            if (ctxFamilies[(size_t) i] >= 2) ++poly;
+            loudest = juce::jmax (loudest, ctxLevel[(size_t) i]);
+        }
+
+        c.levelDb  = loudest;                       // the loudest moment, not this instant
+        c.f0Hz     = f0Count > 0 ? f0Sum / (float) f0Count : 0.0f;
+        c.families = ctxCount == 0 ? 0
+                   : (poly * 2 >= ctxCount)     ? 2     // polyphonic most of the window
+                   : (pitched * 3 >= ctxCount)  ? 1     // pitched some of the time: a voice
+                                                : 0;
         ctx = c;
     }
 
@@ -1536,6 +1567,11 @@ private:
     PlateauProbe probe {};
     VoiceProbe   vprobe {};
     Context      ctx {};
+    static constexpr int ctxHistory = 80;        // ~0.43 s at a 5.3 ms hop
+    std::array<int,   (size_t) ctxHistory> ctxFamilies {};
+    std::array<float, (size_t) ctxHistory> ctxF0 {};
+    std::array<float, (size_t) ctxHistory> ctxLevel {};
+    int ctxPos = 0, ctxCount = 0;
 
     /**
         Least-squares fit of the run's recent level against time, in dB.
