@@ -138,7 +138,7 @@ int main (int argc, char* argv[])
     const unsigned seed  = argc > 2 ? (unsigned) std::atoi (argv[2]) : 1u;
     // Diagnostic: silence the rings and leave only the singer, to separate "the
     // voice guard is weak" from "the voice guard is weak WHEN RINGS ARE PRESENT".
-    bool noRings = false, plateauPath = false;
+    bool noRings = false, plateauPath = false, useProfile = false;
     double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0, stagger = 1.0;
     bool realloc_ = true;
     for (int i = 1; i < argc; ++i)
@@ -147,6 +147,7 @@ int main (int argc, char* argv[])
         // The plateau path ships disabled. This turns it on so its worth can be
         // scored against the same rings rather than argued from one fixture.
         if (std::string (argv[i]) == "--plateau") plateauPath = true;
+        if (std::string (argv[i]) == "--profile") useProfile = true;
         // Pulsed suppression: apply each filter's full depth only for a slice of
         // the time. The loop integrates what it is given, so it sees duty x depth;
         // the ear, which fills in brief narrowband dips, may not. This measures
@@ -190,6 +191,15 @@ int main (int argc, char* argv[])
     bank.softCapDb   = deepDb;
     bank.hardCapDb   = deepDb * 1.35;
     bank.initialCutDb = -6.0;
+
+    // The shipped pitch profile: the fifteen 1/6-octave regions holding 85% of
+    // 51,501 real catches. Seeding these is what the engine now does at startup,
+    // so it has to be scored like anything else - a head start that costs tone
+    // across the whole 2-10 kHz band is not obviously a bargain.
+    if (useProfile)
+        for (double hz : { 2016.0, 2263.0, 2540.0, 2851.0, 3200.0, 3592.0, 4032.0,
+                           4526.0, 5080.0, 5702.0, 6400.0, 7184.0, 8064.0, 9051.0, 10159.0 })
+            bank.seedOffender (hz, 3.0, 0.0);
 
     std::vector<Ring> rings;
     std::vector<Mode> modes;
