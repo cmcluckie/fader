@@ -156,6 +156,16 @@ public:
     }
 
     FeedbackDetector& detector (int ch) noexcept { return detectors[(size_t) ch]; }
+
+    /**
+        Seed every channel's offender memory from a profile learned in earlier
+        sessions. Message thread only, before audio starts: this writes the
+        histogram directly, which the audio thread otherwise owns.
+    */
+    void seedProfile (double freqHz, double strikes) noexcept
+    {
+        for (auto& b : banks) b.seedOffender (freqHz, strikes, 0.0);
+    }
     float cpuLoad() const noexcept { return cpu.load(); }
     bool  running() const noexcept { return isRunning.load(); }
 

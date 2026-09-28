@@ -179,6 +179,7 @@ private:
     void telemetryLoop()
     {
         int tick = 0;
+        loadProfile();
         while (keepRunning.load())
         {
             serviceRecorder();
@@ -195,18 +196,23 @@ private:
 
             AudioEngine::EventOut e;
             while (engine.popEvent (e))
+            {
+                noteProfile (e.hz);
                 sender.send (juce::OSCMessage ("/fk/event", e.ch, e.hz, e.levelDb,
                                                e.ageMs, e.widthLoHz, e.widthHiHz, e.path, e.refused));
+            }
 
             if ((mask & 0x2) && tick % 2 == 0)  sendNotches();    // ~10 Hz
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz
             if ((mask & 0x8) && tick % 10 == 0) sendStatus();     // ~2 Hz
             if (tick % 4 == 0) sendContext();                    // ~5 Hz
             if (tick % 4 == 0) sendTracks();                     // ~5 Hz
+            if (tick % 600 == 0) saveProfile();                  // ~every 30 s
 
             ++tick;
             juce::Thread::sleep (50);   // ~20 Hz base cadence
         }
+        saveProfile();     // whatever this session learned, keep it
     }
 
     // JUCE opens a named device inside the *current* device type only. macOS has
@@ -483,6 +489,107 @@ private:
                 if (! ok) std::fprintf (stderr, "[dbg] track send FAILED ch=%d i=%d\n", ch, i);
             }
         }
+    }
+
+    // ---- the room's pitches, learned across sessions -----------------------
+    //
+    // 51,501 catches over 27 sessions at this rig: 50% of them land in eight
+    // 1/6-octave buckets, 80% in fourteen, out of 46 occupied. Feedback returns
+    // to the same handful of pitches night after night, because what shapes the
+    // loop up there is the microphone's presence peak and the ear canal, and
+    // neither changes when the room does.
+    //
+    // The bank's own offender memory half-lives in five minutes and dies with
+    // the process, so without this the guard relearns the room from scratch
+    // every time it starts, and pays for that lesson in the first few minutes
+    // of every session. This is deliberately COARSE and separate from that
+    // memory: 1/6 octave is 12.2% wide, wide enough to hold a measured 7.7% hop,
+    // and it only ever says "this region has a history here", never "cut this
+    // exact frequency this deep".
+    static constexpr int    profBuckets = 48;
+    static constexpr double profBaseHz  = 100.0;
+
+    std::array<double, profBuckets> profile {};
+    bool profileDirty = false;
+
+    static int profBucketOf (double f) noexcept
+    {
+        if (f <= 0.0) return -1;
+        const int b = (int) std::lround (6.0 * std::log2 (f / profBaseHz));
+        return (b < 0 || b >= profBuckets) ? -1 : b;
+    }
+
+    static juce::File profileFile()
+    {
+        return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                   .getChildFile ("FeedbackKiller").getChildFile ("pitch-profile.csv");
+    }
+
+    void noteProfile (float hz) noexcept
+    {
+        const int b = profBucketOf ((double) hz);
+        if (b < 0) return;
+        profile[(size_t) b] += 1.0;
+        profileDirty = true;
+    }
+
+    /// Load what earlier sessions learned and hand it to the banks, before audio.
+    void loadProfile()
+    {
+        const auto f = profileFile();
+        if (! f.existsAsFile()) return;
+
+        juce::StringArray lines;
+        f.readLines (lines);
+        int seeded = 0;
+        for (const auto& line : lines)
+        {
+            const auto parts = juce::StringArray::fromTokens (line, ",", "");
+            if (parts.size() < 2) continue;
+            const double hz = parts[0].getDoubleValue();
+            const double n  = parts[1].getDoubleValue();
+            const int b = profBucketOf (hz);
+            if (b < 0 || n <= 0.0) continue;
+            profile[(size_t) b] = n;
+
+        }
+
+        // Seed only the DOMINANT regions, on a relative threshold. An absolute
+        // one does not survive contact with a real log: 51,501 catches spread
+        // over 46 buckets puts 44 of them past any small fixed number, which
+        // seeds the whole spectrum and means nothing. Half of all feedback
+        // lives in eight buckets - those are the ones worth knowing about, and
+        // a share test finds them whatever the session length.
+        double total = 0.0;
+        for (double v : profile) total += v;
+        if (total <= 0.0) return;
+
+        for (int b = 0; b < profBuckets; ++b)
+        {
+            if (profile[(size_t) b] / total < 0.03) continue;
+            // History says "look here first", never "cut deeper forever": the
+            // seed is capped at the fast-track threshold, so a known region
+            // opens at the fast-track depth and then has to earn the rest.
+            engine.seedProfile (profBaseHz * std::pow (2.0, b / 6.0), 3.0);
+            ++seeded;
+        }
+        juce::Logger::writeToLog ("pitch profile: " + juce::String (seeded)
+                                  + " known region(s) seeded from " + f.getFullPathName());
+    }
+
+    void saveProfile()
+    {
+        if (! profileDirty) return;
+        const auto f = profileFile();
+        f.getParentDirectory().createDirectory();
+
+        juce::String out ("centre_hz,catches\n");
+        for (int b = 0; b < profBuckets; ++b)
+            if (profile[(size_t) b] > 0.0)
+                out << juce::String (profBaseHz * std::pow (2.0, b / 6.0), 1) << ","
+                    << juce::String (profile[(size_t) b], 1) << "\n";
+        f.replaceWithText (out);
+        profileDirty = false;
     }
 
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }
