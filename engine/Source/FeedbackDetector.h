@@ -77,6 +77,11 @@ public:
         // 2048-point one. 1 kHz: a voice's partials are 4.7 bins apart at 110 Hz
         // in the short window and 19 in the long one.
         float  crossoverHz    = 1000.0f;
+        // How close to a multiple of the CURRENT sung fundamental a peak must sit
+        // before the voice protections apply to it. Measured at the rig: rings at
+        // 252, 287 and 357 Hz sat 2-3% from sung notes at 262, 294 and 349 and
+        // were shielded as if they were the voice, uncut, for up to 1.9 s.
+        float  voiceTolerance = 0.015f;
         float  plateauMinHz   = 150.0f;  // a plateau must be at least this wide
         float  plateauRipple  = 6.0f;    // peak-to-median across it, dB
         // OFF by default (999 = never). The path works - it catches a synthetic
@@ -1134,6 +1139,47 @@ private:
         return (float) s.frames * (float) hopSize / (float) sampleRate * 1000.0f;
     }
 
+    /**
+        Is this peak part of what the singer is doing RIGHT NOW?
+
+        The harmonic tests ask whether a peak looks like part of some voice. That
+        is not the same question, and the difference is what hurt at the rig: a
+        ring at 287 Hz, sitting 2% from a sung D4, was shielded by the voice
+        protections and cut by nothing for over a second.
+
+        A peak the singer is not producing gets no voice protection, whatever its
+        neighbours look like. With no voice present at all, nothing is protected.
+    */
+    bool belongsToTheVoice (float f) const noexcept
+    {
+        // Only strip protection when we are CONFIDENT someone is singing and this
+        // peak is not part of it. With no voice detected - silence, the first
+        // 150 ms of a note before the pitch settles, an unpitched consonant - the
+        // old conservative rules stand.
+        //
+        // Getting this backwards notched four voice tests at once, including a
+        // sung note being cut on its own attack.
+        if (ctx.families <= 0 || ctx.f0Hz <= 20.0f) return true;
+
+        // Both frequencies belonging to ONE series, not one being a multiple of
+        // the other. A voice whose fundamental is missing - a thin vocal through a
+        // high-passed channel - is estimated at a higher partial, and then its own
+        // partials are not integer multiples of it: 756 is 1.5x 504, and T31 lost
+        // its 3rd and 5th partials to exactly that.
+        //
+        // So: does f/f0 land on a ratio of small whole numbers?
+        for (int m = 1; m <= 8; ++m)
+        {
+            const float target = f * (float) m;
+            const float k = target / ctx.f0Hz;
+            const float nearest = std::round (k);
+            if (nearest < 1.0f) continue;
+            if (std::abs (target - nearest * ctx.f0Hz) <= params.voiceTolerance * target)
+                return true;
+        }
+        return false;
+    }
+
     void track (float freq, float levelDb, bool harmonic, bool family) noexcept
     {
         // Associate with an existing candidate (a wider window than the stability
@@ -1199,7 +1245,11 @@ private:
             // already loud. Scale the requirement to the window's real duration.
             const float windowSec  = (float) (n * hopSize) / (float) sampleRate;
             // Judged here because the bar itself depends on it.
-            const bool  inVoiceBand = s.freq < params.voiceBandHz || s.harmonic;
+            // The voice protections only apply to what the voice is actually
+            // producing. Everything else is judged on the fast path, however
+            // harmonic-looking its neighbours happen to be.
+            const bool  mine        = belongsToTheVoice (s.freq);
+            const bool  inVoiceBand = mine && (s.freq < params.voiceBandHz || s.harmonic);
             const float growthBar  = inVoiceBand ? params.growthDb : params.growthDbFast;
             const float needGrowth = growthBar * (windowSec / 0.1f);
             // In the voice band, stability alone cannot tell a held note from a ring,
@@ -1218,7 +1268,7 @@ private:
 
             if (! s.reported)
             {
-                const bool wobbling = voiceBand
+                const bool wobbling = voiceBand && mine
                     && looksLikeVibrato (s, juce::jmin (s.frames, params.voiceFrames));
 
                 // Path A - the classic attack: stable, and climbing.
@@ -1235,7 +1285,7 @@ private:
                 // such frame was all the slow path needed, which is how T41's
                 // leak moved from the fundamental to its ninth partial. A ring
                 // never looks harmonic at all, so the bar is low.
-                const bool everVoice = s.voiceFrames * 4 >= s.frames;
+                const bool everVoice = mine && s.voiceFrames * 4 >= s.frames;
 
                 bool sustainWander = false;
                 if (! fire && ! s.harmonic && ! s.hasFamily && ! everVoice)
