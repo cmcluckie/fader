@@ -90,6 +90,7 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.StatusReceived += s => StatusChanged?.Invoke(s);
         _supervisor.Client.ContextReceived += c => { Context = c; ContextChanged?.Invoke(c); };
         _supervisor.Client.TrackReceived += OnTrack;
+        _supervisor.Client.NotInLoopReceived += n => { NotInLoop = n; NotInLoopChanged?.Invoke(n); };
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.RejectionReceived += OnRejection;
@@ -108,6 +109,9 @@ public sealed class FeedbackController : IAsyncDisposable
     public event Action<int, FkNotch[]>? NotchesChanged;      // slot, notches
     public event Action<FkSpectrum>? SpectrumChanged;         // slot in .Channel
     public event Action<IReadOnlyList<FkTrack>>? TracksChanged;   // rings being followed across hops
+    /// <summary>Filters cutting at maximum while their ring gets louder: a wiring fault, not a feedback one.</summary>
+    public int NotInLoop { get; private set; }
+    public event Action<int>? NotInLoopChanged;
     public event Action<FkDetection>? DetectionReceived;      // slot in .Channel
     public event Action<FkStatus>? StatusChanged;             // engine running + CPU load
     public event Action? SearchRangeChanged;

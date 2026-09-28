@@ -1644,6 +1644,57 @@ int main()
         }
     }
 
+    // ---- T46: a guard that is not in the loop must stop digging ------------
+    // Measured at the rig 2026-09-28, and it is the reason a session was
+    // abandoned before a note was sung. A 7235 Hz ring, from the capture log:
+    //
+    //   t=603.53  level -50.6  cut   0.0   (nearest filter 2.5 kHz away)
+    //   t=603.64  level -39.1  cut -30.0
+    //   t=603.75  level -33.6  cut -45.3
+    //   t=603.86  level -23.3  cut -45.3   <- grew 27 dB under a 45 dB notch
+    //
+    // No studio loop carries 45 dB of excess gain. A cut that deep ends real
+    // feedback instantly, so a ring that ignores it is telling us the signal we
+    // are filtering is not the signal going round - the console is feeding the
+    // wedge upstream of our return. Every further decibel is tone damage spent
+    // on a fight we are not in, and the operator's dial said -18 anyway.
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -12.0; bank.hardCapDb = -18.0; bank.holdSeconds = 1.0;
+
+        double t = 0.0, lvl = -50.6;
+        for (int i = 0; i < 24; ++i, t += 0.05, lvl += 2.0)   // louder every time
+            bank.trigger (7235.0, t, true, lvl, 47.0);
+
+        const auto& s = bank.getSlot (0);
+        std::snprintf (msg, sizeof msg, "settled at %.1f dB, dial %.0f, gave up=%d, flagged=%d",
+                       s.targetDb, bank.hardCapDb, (int) s.ineffective, bank.ineffectiveNow());
+        report ("T46 a filter that cannot win stops spending tone on it",
+                s.ineffective && s.targetDb >= bank.hardCapDb - 0.01, msg);
+        report ("T46 and it says so, so the routing can be checked",
+                bank.ineffectiveNow() == 1, msg);
+    }
+
+    // ---- T47: a ring that IS beaten must not be mistaken for that -----------
+    // The same shape, except the cut works. This must never trip.
+    {
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -12.0; bank.hardCapDb = -18.0; bank.holdSeconds = 1.0;
+
+        double t = 0.0, lvl = -50.0;
+        for (int i = 0; i < 24; ++i, t += 0.05)
+        {
+            bank.trigger (7235.0, t, i < 4, lvl, 47.0);
+            lvl += (i < 4 ? 2.0 : -1.5);          // it climbs, we bite, it falls
+        }
+        const auto& s = bank.getSlot (0);
+        std::snprintf (msg, sizeof msg, "reached %.1f dB, gave up=%d", s.targetDb, (int) s.ineffective);
+        report ("T47 a ring that responds to the cut is not called hopeless",
+                ! s.ineffective, msg);
+    }
+
     // ---- T45: what a hop costs, and what memory buys back ------------------
     // The rig's own failure, 2026-09-27. A ring was fought to the cap at
     // 9293 Hz, went quiet, came back 713 Hz higher, then 710 higher again. Each

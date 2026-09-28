@@ -99,6 +99,7 @@ public sealed class FaderWindow : Window
 
         _feedback.StatusChanged += OnStatus;
         _feedback.ContextChanged += OnContext;
+        _feedback.NotInLoopChanged += OnNotInLoop;
 
         _frame = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(30) };   // ~33 fps
         _frame.Tick += (_, _) => Frame();
@@ -111,6 +112,7 @@ public sealed class FaderWindow : Window
     private void OnStatus(FkStatus s) => Dispatcher.UIThread.Post(() => _show.SetCpu(s.CpuLoad));
 
     private void OnContext(FkContext c) => Dispatcher.UIThread.Post(() => _show.SetContext(c));
+    private void OnNotInLoop(int n) => Dispatcher.UIThread.Post(() => _show.SetNotInLoop(n));
 
     private void Frame()
     {

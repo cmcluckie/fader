@@ -58,6 +58,9 @@ struct NotchSlot
     double currentDb= 0.0;     // smoothed toward targetDb
     int    capHits    = 0;     // re-triggers while already at the ceiling
     int    calmHits   = 0;     // consecutive re-triggers with no growth
+    int    futileHits = 0;     // re-triggers where it grew LOUDER at maximum cut
+    bool   ineffective= false; // concluded: this filter is not in the loop
+    double lastLevelDb= -1000.0;
     double pulsePhase = 0.0;   // where this filter sits in the pulse cycle, 0..1
     double lastHitS = 0.0;     // transport seconds of last (re)trigger
     double lastRelS = 0.0;     // transport seconds of last release step
@@ -197,6 +200,52 @@ public:
                 if (growing && s.targetDb <= hardCapDb + 0.25) ++s.capHits;
                 if (growing) s.calmHits = 0;
                 else if (++s.calmHits >= calmHitsToForget) { s.capHits = 0; s.calmHits = 0; }
+
+                // ---- are we even IN the loop? --------------------------------
+                //
+                // Measured at the rig 2026-09-28. A 7235 Hz ring: no filter near
+                // it, then -30 dB, then -45.3 dB within 250 ms - and its level
+                // went -50.6 -> -23.3 dB ANYWAY, while that 45 dB notch sat on
+                // it. Then it did the same thing twice more.
+                //
+                // That is not a stubborn ring. It is arithmetic saying we are not
+                // in its loop. No studio path carries 45 dB of excess gain; a cut
+                // that deep ends any real feedback instantly. If it does not, the
+                // signal we are filtering is not the signal going round - the
+                // console is feeding the wedge from somewhere upstream of our
+                // return, and every decibel we spend is pure tone damage in a
+                // fight we are not part of.
+                //
+                // So: count re-triggers where the level RISES while we are already
+                // at emergency depth. A few is normal - the cut takes a moment to
+                // bite. A run of them means stop digging, come back to the dial,
+                // and tell somebody, because the fix is a routing cable and not
+                // another 6 dB.
+                if (levelDb > -900.0)
+                {
+                    const bool atMax  = s.targetDb <= emergencyCapDb + 3.0;
+                    const bool louder = levelDb > s.lastLevelDb + 1.0;
+                    if (atMax && louder && s.lastLevelDb > -900.0) ++s.futileHits;
+                    else if (! louder && s.futileHits > 0)         --s.futileHits;
+                    s.lastLevelDb = levelDb;
+
+                    if (s.futileHits >= futileHitsBeforeGivingUp && ! s.ineffective)
+                    {
+                        s.ineffective = true;
+                        ++ineffectiveEver;
+                    }
+                }
+
+                // Once we have concluded we are not in the loop, the depth is
+                // doing nothing but harm. Hold at the operator's dial - not
+                // shallower, because if the routing comes back we want a filter
+                // already there - and stop escalating.
+                if (s.ineffective)
+                {
+                    s.targetDb = std::max (s.targetDb, hardCapDb);
+                    s.lastHitS = nowSeconds;
+                    return existing;
+                }
 
                 const bool emergency = s.capHits >= capHitsBeforeEmergency;
                 const double floorDb = emergency
@@ -676,6 +725,7 @@ public:
     double emergencyCapDb = -45.0;
     int    capHitsBeforeEmergency = 3;   // ~3 re-triggers at the cap, tens of ms
     int    calmHitsToForget = 8;         // calm re-triggers before growth is forgotten
+    int    futileHitsBeforeGivingUp = 6; // louder-at-max-cut before we stop digging
     double reopenMarginDb = 6.0;         // reopen this much shallower than last time
     double emergencyQ     = 80.0;        // 118 Hz at 9.4 kHz, still 40x a room mode
 
@@ -702,6 +752,18 @@ public:
 public:
     enum class Refusal { None = 0, AlreadyCovered = 1, RegionTooDark = 2, AllLocked = 3 };
     Refusal lastRefusal = Refusal::None;
+
+    /// How many filters have concluded they are not in the loop: cutting at
+    /// maximum depth while their ring got louder anyway. Non-zero means the
+    /// guard's output is very likely not the signal reaching the speakers, and
+    /// the fix is routing, not more suppression.
+    int ineffectiveEver = 0;
+    int ineffectiveNow() const noexcept
+    {
+        int n = 0;
+        for (const auto& s : slots) if (s.active && s.ineffective) ++n;
+        return n;
+    }
 
     // A frequency already cut this deep does not need another filter on it.
     double coveredDb      = -15.0;

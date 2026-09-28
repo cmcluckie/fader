@@ -157,6 +157,14 @@ public:
 
     FeedbackDetector& detector (int ch) noexcept { return detectors[(size_t) ch]; }
 
+    /// Filters that have concluded they are not in the loop - see NotchBank.
+    int notInLoopCount() const noexcept
+    {
+        int n = 0;
+        for (const auto& b : banks) n += b.ineffectiveNow();
+        return n;
+    }
+
     /**
         Seed every channel's offender memory from a profile learned in earlier
         sessions. Message thread only, before audio starts: this writes the
@@ -177,6 +185,7 @@ public:
         for (int ch = 0; ch < maxChans; ++ch)
         {
             banks[(size_t) ch].prepare (sr, block);
+            if ((int64_t) probeBuf.size() != probeLen) probeBuf.assign ((size_t) probeLen, 0.0f);
             detectors[(size_t) ch].prepare (sr);
         }
         elapsed = 0.0;
@@ -515,8 +524,8 @@ private:
     /// regenerate it exactly rather than having to record what we sent.
     float chirpAt (int64_t k) const noexcept
     {
-        const double t  = (double) k / sampleRateNow;
-        const double T  = (double) probeChirpLen / sampleRateNow;
+        const double t  = (double) k / sr;
+        const double T  = (double) probeChirpLen / sr;
         const double f0 = 500.0, f1 = 12000.0;
         const double ph = 2.0 * juce::MathConstants<double>::pi
                         * (f0 * t + 0.5 * (f1 - f0) / T * t * t);

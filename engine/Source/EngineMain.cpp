@@ -207,6 +207,7 @@ private:
             if ((mask & 0x8) && tick % 10 == 0) sendStatus();     // ~2 Hz
             if (tick % 4 == 0) sendContext();                    // ~5 Hz
             if (tick % 4 == 0) sendTracks();                     // ~5 Hz
+            if (tick % 10 == 0) sendNotInLoop();                 // ~2 Hz
             if (tick % 600 == 0) saveProfile();                  // ~every 30 s
 
             ++tick;
@@ -591,6 +592,26 @@ private:
         f.replaceWithText (out);
         profileDirty = false;
     }
+
+    /// Filters that have concluded they are not in the loop. Non-zero is not a
+    /// feedback problem - it is a WIRING problem, and no amount of suppression
+    /// will touch it. Worth saying loudly, because the symptom (unbearable
+    /// feedback while the guard reports itself busy and effective) looks exactly
+    /// like the software failing.
+    void sendNotInLoop()
+    {
+        const int n = engine.notInLoopCount();
+        if (n != lastNotInLoop)
+        {
+            lastNotInLoop = n;
+            if (n > 0)
+                juce::Logger::writeToLog ("NOT IN THE LOOP: " + juce::String (n)
+                    + " filter(s) cutting at maximum while their ring got LOUDER. "
+                      "The console is probably not listening to our return.");
+        }
+        sender.send (juce::OSCMessage ("/fk/notinloop", n));
+    }
+    int lastNotInLoop = -1;
 
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }
     void sendAudioState (const juce::String& d, int sr, int bs)

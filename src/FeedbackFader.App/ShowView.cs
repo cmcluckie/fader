@@ -298,8 +298,37 @@ public sealed class ShowView : UserControl
     /// the scene whether it is one voice or several things at once, and the note
     /// is the fundamental the detector is currently protecting.
     /// </summary>
+    private int _notInLoop;
+
+    /// <summary>
+    /// Filters cutting at maximum depth while their ring got LOUDER anyway.
+    ///
+    /// This is a wiring fault, not a feedback one, and it is worth shouting
+    /// about because the symptom is indistinguishable from the software simply
+    /// failing: the room howls, and the guard sits there reporting itself busy.
+    /// Measured at the rig 2026-09-28 - a 7235 Hz ring grew 27 dB under a 45 dB
+    /// notch, which no real loop can do. The console was not listening to our
+    /// return, so every decibel we spent was tone damage in a fight we were not
+    /// part of, and a session was abandoned before a note was sung.
+    /// </summary>
+    public void SetNotInLoop(int n)
+    {
+        if (n == _notInLoop) return;
+        _notInLoop = n;
+        if (n > 0) ShowWarning();
+    }
+
+    private void ShowWarning()
+    {
+        _sceneValue.Text = "NOT IN THE LOOP — check the return";
+        _sceneValue.Foreground = Tokens.Catch;
+    }
+
     public void SetContext(FeedbackFader.FkContext c)
     {
+        // The wiring fault outranks anything we could say about the audio.
+        if (_notInLoop > 0) { ShowWarning(); return; }
+
         _sceneValue.Text = c.Scene switch
         {
             "voice"  => $"VOICE  {c.LevelDb:0} dB",
