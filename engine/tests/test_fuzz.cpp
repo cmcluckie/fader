@@ -255,7 +255,16 @@ int main (int argc, char* argv[])
         r.id        = nextId++;
         r.centre    = centre;
         r.plateau   = centre > fc;
-        r.modes     = r.plateau ? (int) juce::jlimit (3.0, 24.0, overlap) : 1;
+        // A spike is ONE mode below Schroeder - but it has neighbours, and that
+        // is the whole point. Kill the winner and the runner-up inherits the
+        // excess gain and starts climbing a few percent away. Measured at the
+        // rig: 9293 -> 10006 -> 10716 Hz, 7.7% a step, three times, and the log
+        // shows 59% of the surviving HF rings had more than 15 dB of cut on
+        // them. They were not out-gunned. They stepped sideways.
+        //
+        // With one mode per spike this rig could not produce that at all, so it
+        // could only ever measure what a hop fix COSTS and never what it buys.
+        r.modes     = r.plateau ? (int) juce::jlimit (3.0, 24.0, overlap) : 4;
         // How wide a dense region actually is. The old floor of 120 Hz was made
         // up, and it is the reason this rig could never reproduce the thing the
         // room did on 2026-09-27: a ring at 9293 Hz that was notched, went quiet,
@@ -267,7 +276,9 @@ int main (int argc, char* argv[])
         // phase condition - so notching the winner promotes the runner-up, and the
         // ring reappears a few percent away. A region a few percent of centre wide
         // is the right scale, and it matches what the capture showed.
-        r.bandwidth = r.plateau ? juce::jmax (0.08 * centre, B * (double) r.modes) : B;
+        // A spike's neighbours sit a measured hop apart, not a bandwidth apart.
+        r.bandwidth = r.plateau ? juce::jmax (0.08 * centre, B * (double) r.modes)
+                                : 0.077 * centre * (double) (r.modes - 1);
         r.startAt   = t;
         r.endAt     = t + uni (4.0, 14.0);
         r.wanderSd  = uni (0.5, 3.5);     // a still singer to a restless one

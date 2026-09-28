@@ -231,6 +231,14 @@ public:
             const bool rec = recording.load() && ch == 0 && numSamples <= maxRecBlock;
             if (rec) juce::FloatVectorOperations::copy (recPre.data(), out, numSamples);
 
+            // Loop delay probe: capture the raw microphone while the chirp is out.
+            if (ch == 0 && probeState.load() == 1)
+                for (int n = 0; n < numSamples; ++n)
+                {
+                    const int64_t k = probePos + n;
+                    if (k >= 0 && k < probeLen) probeBuf[(size_t) k] = out[n];
+                }
+
             auto& det  = detectors[(size_t) ch];
             auto& bank = banks[(size_t) ch];
             det.setParams (p);
@@ -323,6 +331,32 @@ public:
             }
 
             if (rec) pushRecording (recPre.data(), out, numSamples);
+        }
+
+        // Loop delay probe: a short chirp out of the return, then listen.
+        //
+        // Everything else in this engine infers the loop from the microphone
+        // alone, which is why it can react and never predict. This measures it:
+        // we know the sample we emitted on and we know the sample it came back
+        // on, and the difference is the round trip - mic to console to monitor
+        // to air to mic. No model, no assumption, no room dimensions. That
+        // number is what turns a growth rate into a loop gain margin in dB,
+        // because growth = margin / round-trip.
+        if (probeState.load() == 1)
+        {
+            for (int ch = 0; ch < active; ++ch)
+            {
+                const int rank = outRank[(size_t) ch];
+                if (rank < 0 || rank >= numOutputs || outputs[rank] == nullptr) continue;
+                float* out = outputs[rank];
+                for (int n = 0; n < numSamples; ++n)
+                {
+                    const int64_t k = probePos + n;
+                    out[n] = (k >= 0 && k < probeChirpLen) ? chirpAt (k) : 0.0f;
+                }
+            }
+            probePos += numSamples;
+            if (probePos >= probeLen) probeState.store (2);    // captured, go analyse
         }
 
         // Diagnostic override, applied last so it replaces whatever the slot wrote.
@@ -468,6 +502,28 @@ private:
     std::atomic<int>   persistFrames { 6 };
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };
+
+    // ---- loop delay probe ---------------------------------------------------
+    // 0 = idle, 1 = emitting/capturing, 2 = ready for the message thread.
+    static constexpr int64_t probeLen      = 48000;   // 1 s of listening at 48 k
+    static constexpr int64_t probeChirpLen = 480;     // 10 ms sweep
+    std::atomic<int> probeState { 0 };
+    int64_t probePos = 0;
+    std::vector<float> probeBuf;
+
+    /// 500 Hz -> 12 kHz linear sweep. Deterministic, so the analysis can
+    /// regenerate it exactly rather than having to record what we sent.
+    float chirpAt (int64_t k) const noexcept
+    {
+        const double t  = (double) k / sampleRateNow;
+        const double T  = (double) probeChirpLen / sampleRateNow;
+        const double f0 = 500.0, f1 = 12000.0;
+        const double ph = 2.0 * juce::MathConstants<double>::pi
+                        * (f0 * t + 0.5 * (f1 - f0) / T * t * t);
+        // Taper the ends so the loudspeaker is not asked for a step.
+        const double w = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * t / T);
+        return (float) (0.25 * w * std::sin (ph));
+    }
     double             tonePhase = 0.0;
     std::array<int, maxChans> outRank { 0, 1, 2, 3, 4, 5, 6, 7 };   // slot -> dense output rank
     std::atomic<float> cpu { 0.0f };

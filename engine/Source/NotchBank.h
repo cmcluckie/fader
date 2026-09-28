@@ -638,7 +638,33 @@ public:
     // Measured at the rig: a 10.6 kHz ring walked 9250 -> 10850 Hz within seconds,
     // and a 296 Hz filter (Q36) let it out - one guarded run in three failed at the
     // bypassed level. Up high the filter has to cover where the tone is GOING.
-    double qMax           = 20.0;   // 533 Hz at 10.6 kHz: still 40% narrower than Q12
+    // A ring does not sit still, and the filter has to cover where it is GOING.
+    //
+    // Measured at the rig: the hop is 7.7% (9293 -> 10006 -> 10716). Q20 is
+    // 5.0% wide, so the ring steps cleanly outside the notch we just put on it,
+    // every time, and 59% of the high-frequency rings that survived in the logs
+    // had more than 15 dB of cut on them and lived anyway. Not a depth problem.
+    // A coverage problem.
+    //
+    // Q13 is 7.7% - the measured hop exactly. And up here that is nearly free:
+    // one ERB at 9 kHz is about 1000 Hz, so covering the whole hop range costs
+    // around 0.7 of a critical band, where the same fraction at 500 Hz would
+    // cost four of them. The ear sets the price and it is cheap at the top.
+    double qMax           = 20.0;   // 5.0% wide: the cap below the hop band
+    double qMaxHigh       = 13.0;   // 7.7% wide: one measured hop
+    double qWidenAboveHz  = 2000.0;
+
+    /// Kept, unused, with its measurement: widening the notch to cover a whole
+    /// 7.7% hop is the obvious fix for a ring that steps outside its filter, and
+    /// it does not work. Flat everywhere: harm +30% for 1% fewer runaways. Only
+    /// above 2 kHz, on a rig where spikes CAN hop: runaways 52% -> 49% but kills
+    /// 86% -> 77% and latency 589 -> 880 ms. The ring stepping outside the notch
+    /// is real and well evidenced; making the notch bigger is not the answer.
+    double qMaxAt (double f) const noexcept
+    {
+        return f >= qWidenAboveHz ? qMaxHigh : qMax;
+    }
+
     double initialCutDb   = -12.0;   // first strike
     double fastTrackCutDb = -18.0;   // first strike on a known repeat offender
     double stepDb         = -6.0;    // deepen per re-trigger (negative)
@@ -797,6 +823,7 @@ public:
     static constexpr int    histBuckets   = 160;      // 24/oct * log2(80) ~= 152
     static constexpr double histHalfLife  = 300.0;    // halve every 5 min
     static constexpr int    fastTrackStrikes = 3;
+    static constexpr int    hopBuckets       = 3;   // +-8.9%: one measured hop
 
     int bucketOf (double f) const noexcept
     {
@@ -866,13 +893,38 @@ public:
     }
 
     /** How deep it took last time, or 0 once the bucket has faded. */
+    /**
+        How deep this frequency, OR ONE NEXT DOOR, had to be cut last time.
+
+        The neighbourhood is the whole point. Measured at the rig 2026-09-27: a
+        ring was fought to the cap at 9293 Hz, went quiet, and came back at
+        10006, then 10716 - hops of 7.7%. Buckets are 1/24 octave, 2.9%, so the
+        returning ring landed three buckets from everything we had learned and
+        opened at -12 dB as a total stranger, while it kept every decibel it had
+        already built. It did that three times and won every time.
+
+        We were never too slow to see it. The log has the first catch at 21 ms.
+        We were throwing away the fight each time it stepped sideways.
+
+        So the search spans +-3 buckets, +-8.9%, which covers a measured hop and
+        little more. Still clamped at the dial by the caller, so this buys the
+        SPEED of not re-climbing the ladder and never permission to cut deeper.
+    */
     double rememberedDepth (double f, double nowSeconds) noexcept
     {
         const int b = bucketOf (f);
         if (b < 0) return 0.0;
-        auto& h = histogram[(size_t) b];
-        if (decayed (h, nowSeconds) < 0.5) { h.deepestDb = 0.0; return 0.0; }
-        return h.deepestDb;
+
+        double best = 0.0;
+        for (int d = -hopBuckets; d <= hopBuckets; ++d)
+        {
+            const int i = b + d;
+            if (i < 0 || i >= histBuckets) continue;
+            auto& h = histogram[(size_t) i];
+            if (decayed (h, nowSeconds) < 0.5) { h.deepestDb = 0.0; continue; }
+            best = std::min (best, h.deepestDb);
+        }
+        return best;
     }
 
     std::array<NotchSlot, MaxNotches> slots {};

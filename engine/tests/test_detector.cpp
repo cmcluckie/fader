@@ -1644,6 +1644,41 @@ int main()
         }
     }
 
+    // ---- T45: what a hop costs, and what memory buys back ------------------
+    // The rig's own failure, 2026-09-27. A ring was fought to the cap at
+    // 9293 Hz, went quiet, came back 713 Hz higher, then 710 higher again. Each
+    // rung opened as a stranger at -12 dB and had to re-climb the ladder while
+    // the ring kept every decibel it had already built. It won three times.
+    //
+    // fk-fuzz cannot see this: a spike there has exactly one mode and so cannot
+    // hop at all. This drives the bank with the measured frequencies instead.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 1.0;
+
+        double t = 0.0;
+        auto fight = [&] (double hz)
+        {
+            const int slot = bank.trigger (hz, t, true, -30.0, 70.0);
+            const double opened = slot >= 0 ? bank.getSlot (slot).targetDb : 0.0;
+            for (int i = 0; i < 10; ++i) { t += 0.05; bank.trigger (hz, t, true, -30.0, 70.0); }
+            return opened;
+        };
+
+        const double r1 = fight (9293.9);
+        t += 1.2;                                   // it goes quiet, then moves
+        const double r2 = fight (10006.2);
+        t += 1.2;
+        const double r3 = fight (10716.0);
+
+        std::snprintf (msg, sizeof msg, "rungs opened at %.0f, %.0f, %.0f dB", r1, r2, r3);
+        // The first rung is a stranger and should open shallow. The ones after
+        // it are the same ring one step sideways, and must not start over.
+        report ("T45 a ring that hops does not re-open as a stranger",
+                r1 >= -13.0 && r2 <= -17.0 && r3 <= -17.0, msg);
+    }
+
     // ---- T44: the hop ladder measured at the rig is ONE ring ---------------
     // Replayed from capture-log-20260927-180044.csv, which recorded 71 catches
     // and refused none of them: 9293 Hz fought to the -18.7 dB cap, then 10006,
