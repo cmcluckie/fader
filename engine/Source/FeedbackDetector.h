@@ -128,9 +128,18 @@ public:
         float  sustainRiseDb  = 1.5f;   // the sustain path also needs to have GROWN this
                                         // much: steady-forever is furniture, not feedback
         // A tone this loud is a howl, not furniture, and its filter must not be
-        // allowed to bleed away underneath it however steady it has gone. Top
-        // 5% of every detection ever logged at the rig.
-        float  sustainHoldDb  = -25.0f;
+        // allowed to bleed away underneath it however steady it has gone.
+        //
+        // Calibrated by replaying the real recordings through this detector
+        // (tests/sim/replay.py), not from a percentile. The 2026-09-30 howl -
+        // +41 dB on the spectrum, screaming - reports here as -35.5..-25.3 dB,
+        // median -30, so the first bar of -25 held it for exactly none of its
+        // eleven seconds: 10 events during the climb, then silence while the
+        // notch bled 43 -> 28 dB. The 18-second howl of 2026-09-28 reports
+        // -69..-22, median -33, and dipped from -30 to -8 dB of cut in the
+        // middle for the same reason. -40 is below every screaming howl on
+        // record and above the median of all 52,053 detections (-52).
+        float  sustainHoldDb  = -40.0f;
         float  sustainSeconds = 0.3f;   // a dead-stable, harmonically isolated peak this
                                         // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence

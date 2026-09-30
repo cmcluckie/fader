@@ -138,7 +138,7 @@ public:
                 --e.futileHits;
             e.lastLevelDb = levelDb;
 
-            if (e.futileHits >= futileHitsBeforeGivingUp)
+            if (loopVerdict && e.futileHits >= futileHitsBeforeGivingUp)
             {
                 e.ineffective = true;
                 // Latch the CONCLUSION separately from the filter that reached
@@ -786,6 +786,11 @@ public:
     int    capHitsBeforeEmergency = 3;   // ~3 re-triggers at the cap, tens of ms
     int    calmHitsToForget = 8;         // calm re-triggers before growth is forgotten
     int    futileHitsBeforeGivingUp = 6; // louder-while-deeply-cut before we stop digging
+    // Off only for REPLAYS. A recording cannot respond to a cut, so against one
+    // the verdict fires by construction, snaps every filter to the dial, clears,
+    // and re-escalates - a sawtooth that says nothing about the guard and hides
+    // whether it holds. Live it stays on: that is the wiring alarm.
+    bool   loopVerdict = true;
     // 20 dB is past any excess gain a real room path carries, so a ring
     // that keeps climbing through it is not being fought - it is being
     // missed, and the signal going round is not the one we are filtering.

@@ -36,6 +36,9 @@ namespace
 {
 constexpr int kMaxNotches = 48;
 
+struct EventRec  { float hz, levelDb; int growing, path; double t; };
+struct RejectRec { float hz, levelDb; int reason, frames; double t; };
+
 struct Guard
 {
     fk::FeedbackDetector        det;
@@ -43,6 +46,14 @@ struct Guard
     double sampleRate = 48000.0;
     double t          = 0.0;      // transport seconds, advanced by process()
     int    events     = 0;        // detections seen, cumulative
+
+    // Everything the detector SAID, kept for the caller. A replay of a real
+    // recording is worthless without the rejections: the question "why did it
+    // not fire on that howl" has an answer inside the detector and nowhere
+    // else, and the shipping app only writes those answers to disk when the
+    // operator presses a button. Offline, the caller drains these.
+    std::vector<EventRec>  evq;  size_t evRead = 0;
+    std::vector<RejectRec> rjq;  size_t rjRead = 0;
 };
 }
 
@@ -89,11 +100,16 @@ void fk_process (void* h, float* buf, int n)
 
     g->det.push (buf, n);
 
+    fk::FeedbackDetector::Reject rj;
+    while (g->det.popReject (rj))
+        g->rjq.push_back ({ rj.freq, rj.levelDb, rj.reason, rj.frames, g->t });
+
     fk::FeedbackDetector::Event ev;
     while (g->det.popEvent (ev))
     {
         g->bank.trigger (ev.freq, g->t, ev.growing, ev.levelDb,
                          (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
+        g->evq.push_back ({ ev.freq, ev.levelDb, ev.growing ? 1 : 0, ev.path, g->t });
         ++g->events;
     }
 
@@ -115,6 +131,37 @@ int fk_place (void* h, float hz, float depthDb)
     auto* g = static_cast<Guard*> (h);
     if (g == nullptr) return -1;
     return g->bank.placeManual ((double) hz, (double) depthDb, g->t);
+}
+
+/** Drain one detection. Returns 1 if one was written, 0 when empty. */
+int fk_pop_event (void* h, float* hz, float* levelDb, int* growing, int* path, double* t)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr || g->evRead >= g->evq.size()) { if (g) { g->evq.clear(); g->evRead = 0; } return 0; }
+    const auto& e = g->evq[g->evRead++];
+    if (hz) *hz = e.hz; if (levelDb) *levelDb = e.levelDb; if (growing) *growing = e.growing;
+    if (path) *path = e.path; if (t) *t = e.t;
+    return 1;
+}
+
+/** Drain one rejection: a suspect that waited long enough and was declined. */
+int fk_pop_reject (void* h, float* hz, float* levelDb, int* reason, int* frames, double* t)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr || g->rjRead >= g->rjq.size()) { if (g) { g->rjq.clear(); g->rjRead = 0; } return 0; }
+    const auto& r = g->rjq[g->rjRead++];
+    if (hz) *hz = r.hz; if (levelDb) *levelDb = r.levelDb; if (reason) *reason = r.reason;
+    if (frames) *frames = r.frames; if (t) *t = r.t;
+    return 1;
+}
+
+/** Replays only: a recording cannot respond to a cut, so the not-in-the-loop
+    verdict fires by construction and sawtooths every filter. Turn it off to
+    measure holding. Never off live. */
+void fk_set_loop_verdict (void* h, int on)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g) g->bank.loopVerdict = on != 0;
 }
 
 /** Filters that have concluded they are not in the loop. See NotchBank. */
