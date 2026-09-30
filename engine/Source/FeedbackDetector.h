@@ -127,6 +127,10 @@ public:
         // feedback does. These three separate them.
         float  sustainRiseDb  = 1.5f;   // the sustain path also needs to have GROWN this
                                         // much: steady-forever is furniture, not feedback
+        // A tone this loud is a howl, not furniture, and its filter must not be
+        // allowed to bleed away underneath it however steady it has gone. Top
+        // 5% of every detection ever logged at the rig.
+        float  sustainHoldDb  = -25.0f;
         float  sustainSeconds = 0.3f;   // a dead-stable, harmonically isolated peak this
                                         // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
@@ -1417,7 +1421,37 @@ private:
                 // If the notch is genuinely not enough, the tone climbs again and
                 // `climbing` says so. That is the informative signal; mere presence
                 // is not.
-                const bool surviving = false;
+                // Re-enabled, narrowly, and the reason the old blanket version was
+                // wrong no longer holds.
+                //
+                // Measured at the rig 2026-09-30: a 9533 Hz ring screaming into
+                // the microphone at +45 dB for eleven seconds with ZERO
+                // detections logged. It had already won and gone steady, so it
+                // was not climbing, so nothing re-fired, so the 44 dB notch
+                // holding it down bled away underneath it at exactly the release
+                // rate - cut -44.1 dB, then -30.6, then -26.9, while its output
+                // climbed +1 dB to +18 dB. The guard grabbed the howl and then
+                // let go of it while the singer was still listening.
+                //
+                // The old comment is right that mere PRESENCE is not news: a tone
+                // being held down perfectly still reads at full strength here,
+                // because analysis is pre-notch, so "surviving" is true forever
+                // for any room resonance. That is why it used to pin two dozen
+                // filters at full depth and sound like a high shelf.
+                //
+                // Two things make this safe now. It takes LOUD, not merely
+                // present - above -25 dB, which is the top 5% of 52,053 real
+                // detections, so room furniture cannot qualify. And it reports
+                // growing=false, so the three-rung ladder (added since that
+                // comment was written) refuses to escalate on it: the filter
+                // holds where it is and stops bleeding, which is all that was
+                // ever needed. It cannot dig.
+                // Once every ~160 ms, not every 16. It exists to refresh a hold
+                // measured in seconds, and at three frames it fired sixty times a
+                // second - same protection, ten times the telemetry and ten times
+                // the log.
+                const bool surviving = s.sinceReport >= 30
+                                    && s.lastLevel >= params.sustainHoldDb;
                 if (climbing || surviving)
                 {
                     s.reportLevel = s.lastLevel;

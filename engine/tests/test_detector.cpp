@@ -1695,6 +1695,84 @@ int main()
                 ! s.ineffective, msg);
     }
 
+    // ---- T49: a howl that has already won must keep its filter -------------
+    // Measured at the rig 2026-09-30, and it is what "turned it up and nothing
+    // happened" actually was. A 9533 Hz ring at +45 dB into the microphone for
+    // eleven seconds, ZERO detections logged, and the 44 dB notch holding it
+    // down bleeding away underneath it at the release rate:
+    //
+    //   t= 0.3  ring in +45.5  out  +1.4   cut -44.1
+    //   t= 5.1  ring in +45.9  out +15.3   cut -30.6
+    //   t=10.9  ring in +42.7  out +15.7   cut -26.9
+    //
+    // The ring was not dead, it was SATURATED - pinned at maximum and therefore
+    // not growing. The detector fires on growth, so a ring that has already won
+    // is invisible to it, and we released the one filter keeping it down.
+    {
+        fk::FeedbackDetector::Params p;
+        p.minFreq = 1000.0f;
+        fk::FeedbackDetector det; init (det, p);
+
+        fk::NotchBank<24> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -18.0; bank.hardCapDb = -24.0; bank.holdSeconds = 2.0;
+
+        // The filter must be placed by the DETECTOR, through the normal path.
+        // The first version of this test used placeManual, which locks the slot,
+        // and release() skips locked slots - so it could never bleed and the
+        // test passed on broken code twice. A locked filter proves nothing about
+        // a bug whose entire mechanism is bleeding.
+
+        // Now a loud, dead-steady tone: the howl that has already won. Feed the
+        // detector, and let every event it reports drive the bank, for 10 s.
+        // Twenty seconds, and the measurement is taken over the SECOND ten.
+        // A tone that starts from silence looks like growth and gets detections
+        // on its way up, which refresh the hold - the first version of this test
+        // measured that and passed on the broken code. The rig's ring had been
+        // screaming for a long time already, and the question is what happens
+        // AFTER it has gone steady and the growth path has fallen silent.
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        double phase = 0.0, t = 0.0;
+        double atTen = 0.0; int eventsLate = 0;
+        const int blocks = (int) (20.0 * kSR / block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            if (t >= 10.0 && atTen == 0.0) atTen = bank.getSlot (0).targetDb;
+            // It has to ARRIVE, not just be there. A tone present from the first
+            // sample is room furniture by T22's rule and is deliberately ignored,
+            // so the previous version of this test placed no filter at all and
+            // failed for the wrong reason. This climbs for two seconds - which is
+            // what puts a filter on it - and then saturates and holds, which is
+            // the state the rig was actually in.
+            const double amp = (t < 2.0) ? 0.0006 * std::pow (10.0, 2.0 * t) : 0.35;
+            for (int i = 0; i < block; ++i)
+            {
+                phase += 2.0 * M_PI * 9533.0 / kSR;
+                buf[(size_t) i] = (float) (juce::jmin (0.35, amp) * std::sin (phase));
+            }
+            det.push (buf.data(), block);
+            fk::FeedbackDetector::Event ev;
+            while (det.popEvent (ev))
+            {
+                if (t >= 10.0) ++eventsLate;
+                bank.trigger (ev.freq, t, ev.growing, ev.levelDb,
+                              (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
+            }
+            bank.process (buf.data(), block, false);
+            bank.release (t);
+            t += (double) block / kSR;
+        }
+        const double after = bank.getSlot (0).targetDb;
+
+        std::snprintf (msg, sizeof msg, "at 10 s %.1f dB, at 20 s %.1f dB (%d events in the second half)",
+                       atTen, after, eventsLate);
+        // The rig lost 17 dB in ten seconds. Losing a couple on the ladder is
+        // fine; bleeding out from under a live howl is not.
+        report ("T49 a filter does not bleed out under a howl that is still screaming",
+                bank.getSlot (0).active && after <= atTen + 4.0, msg);
+    }
+
     // ---- T48: the give-up verdict must be provisional ----------------------
     // The regression test for a bug that shipped and was caught at the rig the
     // same hour. The first version of the not-in-the-loop check returned early
