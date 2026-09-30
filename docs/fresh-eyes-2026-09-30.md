@@ -41,8 +41,13 @@ alone above 1 kHz. It is indistinguishable from feedback by eye. The detector
 tells them apart (harmonic family, vibrato rate); the display cannot. Part of
 "I can see feedback and you won't attack it" has been this.
 
-Two of the six were hit anyway (1266 Hz at −7 dB, 3486 Hz at −20 dB, both for
-under half a second). That is the real voice-damage cost, measured.
+One of the six was hit anyway. At 225 s you were singing F4 (349 Hz): the
+detector rejected the 2nd, 3rd, 4th, 8th and 9th harmonics as vibrato within
+the same 0.3 s, then fired on the **10th at 3486 Hz** and cut it 20–28 dB. Six
+siblings correctly refused, the seventh notched — each suspect is judged on its
+own, and nothing in that frame says "this is a vocal comb, all of it." (The
+other, 1266 Hz, was only a neighbouring notch's skirt: −0.4 dB on its own.)
+That is the real voice-damage cost, measured, and the shape of the fix.
 
 **3. Holding was the failure, and it was worse than the fix I shipped.**
 
@@ -129,7 +134,8 @@ giving up and squatting. Each of those is a second chance handed back.
    2 voice hits. The gate had never seen feedback; now it always will.
 2. ~~Log rejections live~~ — **done.** `reject-log-<stamp>.csv` beside the others, one row per
    rejection with reason and frame count, from the moment the app starts.
-3. The two voice hits.
+3. The voice hit: when several partials of one comb are being refused as vibrato
+   in the same frame, the frame is a voice — no sibling should fire.
 4. The hop: memory can now follow a ring across a step, but the fixture set will
    say whether that is enough.
 
