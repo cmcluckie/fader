@@ -1,0 +1,232 @@
+[
+ {
+  "file": "howl-20260927-174547-0017s-9896Hz.wav",
+  "kind": "howl",
+  "hz": 9896.5,
+  "onset": 2.0,
+  "end": 2.25,
+  "peak": 33.3,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 16.67
+ },
+ {
+  "file": "voice-20260927-174547-0055s-1245Hz.wav",
+  "kind": "voice",
+  "hz": 1245.1,
+  "onset": 2.0,
+  "end": 2.25,
+  "peak": 26.7,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 54.67
+ },
+ {
+  "file": "voice-20260927-174547-0106s-1266Hz.wav",
+  "kind": "voice",
+  "hz": 1265.6,
+  "onset": 2.0,
+  "end": 2.25,
+  "peak": 31.0,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 106.42
+ },
+ {
+  "file": "voice-20260927-174547-0111s-1484Hz.wav",
+  "kind": "voice",
+  "hz": 1484.4,
+  "onset": 2.0,
+  "end": 2.5,
+  "peak": 34.5,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 110.67
+ },
+ {
+  "file": "voice-20260927-174547-0117s-1500Hz.wav",
+  "kind": "voice",
+  "hz": 1500.0,
+  "onset": 2.0,
+  "end": 2.5,
+  "peak": 36.4,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 117.42
+ },
+ {
+  "file": "howl-20260927-174547-0140s-9743Hz.wav",
+  "kind": "howl",
+  "hz": 9742.7,
+  "onset": 2.0,
+  "end": 3.0,
+  "peak": 40.9,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 139.67
+ },
+ {
+  "file": "voice-20260927-174547-0154s-1261Hz.wav",
+  "kind": "voice",
+  "hz": 1261.2,
+  "onset": 2.0,
+  "end": 3.0,
+  "peak": 39.7,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 154.17
+ },
+ {
+  "file": "howl-20260927-174547-0161s-9400Hz.wav",
+  "kind": "howl",
+  "hz": 9400.4,
+  "onset": 2.0,
+  "end": 2.5,
+  "peak": 26.9,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 160.92
+ },
+ {
+  "file": "howl-20260927-174547-0179s-9548Hz.wav",
+  "kind": "howl",
+  "hz": 9547.9,
+  "onset": 2.0,
+  "end": 2.25,
+  "peak": 27.3,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 179.42
+ },
+ {
+  "file": "howl-20260927-174547-0181s-9665Hz.wav",
+  "kind": "howl",
+  "hz": 9665.0,
+  "onset": 2.0,
+  "end": 2.75,
+  "peak": 28.2,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 180.67
+ },
+ {
+  "file": "voice-20260927-174547-0225s-3486Hz.wav",
+  "kind": "voice",
+  "hz": 3486.3,
+  "onset": 2.0,
+  "end": 2.25,
+  "peak": 20.7,
+  "source": "audio-20260927-174547.wav",
+  "source_t0": 225.42
+ },
+ {
+  "file": "howl-20260927-180044-0006s-9293Hz.wav",
+  "kind": "howl",
+  "hz": 9293.0,
+  "onset": 2.0,
+  "end": 5.0,
+  "peak": 37.6,
+  "source": "audio-20260927-180044.wav",
+  "source_t0": 5.67
+ },
+ {
+  "file": "howl-20260927-180044-0009s-10008Hz.wav",
+  "kind": "howl",
+  "hz": 10007.8,
+  "onset": 2.0,
+  "end": 2.75,
+  "peak": 42.1,
+  "source": "audio-20260927-180044.wav",
+  "source_t0": 8.92
+ },
+ {
+  "file": "howl-20260928-133724-0003s-7236Hz.wav",
+  "kind": "howl",
+  "hz": 7236.3,
+  "onset": 2.0,
+  "end": 7.0,
+  "peak": 43.8,
+  "source": "audio-20260928-133724.wav",
+  "source_t0": 3.17
+ },
+ {
+  "file": "howl-20260928-133724-0008s-10424Hz.wav",
+  "kind": "howl",
+  "hz": 10423.8,
+  "onset": 2.0,
+  "end": 2.75,
+  "peak": 29.0,
+  "source": "audio-20260928-133724.wav",
+  "source_t0": 8.42
+ },
+ {
+  "file": "howl-20260928-140139-0003s-7236Hz.wav",
+  "kind": "howl",
+  "hz": 7236.3,
+  "onset": 2.0,
+  "end": 3.25,
+  "peak": 22.7,
+  "source": "audio-20260928-140139.wav",
+  "source_t0": 2.92
+ },
+ {
+  "file": "howl-20260928-140139-0004s-9732Hz.wav",
+  "kind": "howl",
+  "hz": 9731.7,
+  "onset": 2.0,
+  "end": 5.75,
+  "peak": 44.7,
+  "source": "audio-20260928-140139.wav",
+  "source_t0": 4.42
+ },
+ {
+  "file": "howl-20260928-140139-0008s-8467Hz.wav",
+  "kind": "howl",
+  "hz": 8466.8,
+  "onset": 2.0,
+  "end": 2.75,
+  "peak": 39.2,
+  "source": "audio-20260928-140139.wav",
+  "source_t0": 8.42
+ },
+ {
+  "file": "howl-20260928-142007-0002s-9615Hz.wav",
+  "kind": "howl",
+  "hz": 9615.2,
+  "onset": 2.0,
+  "end": 3.0,
+  "peak": 12.0,
+  "source": "audio-20260928-142007.wav",
+  "source_t0": 2.42
+ },
+ {
+  "file": "howl-20260928-142007-0006s-9612Hz.wav",
+  "kind": "howl",
+  "hz": 9611.5,
+  "onset": 2.0,
+  "end": 8.0,
+  "peak": 44.1,
+  "source": "audio-20260928-142007.wav",
+  "source_t0": 5.67
+ },
+ {
+  "file": "howl-20260928-142007-0025s-10418Hz.wav",
+  "kind": "howl",
+  "hz": 10418.0,
+  "onset": 2.0,
+  "end": 8.0,
+  "peak": 42.9,
+  "source": "audio-20260928-142007.wav",
+  "source_t0": 24.67
+ },
+ {
+  "file": "howl-20260928-142007-0034s-9615Hz.wav",
+  "kind": "howl",
+  "hz": 9615.2,
+  "onset": 2.0,
+  "end": 5.0,
+  "peak": 42.4,
+  "source": "audio-20260928-142007.wav",
+  "source_t0": 34.17
+ },
+ {
+  "file": "howl-20260930-142551-0000s-9536Hz.wav",
+  "kind": "howl",
+  "hz": 9535.6,
+  "onset": 0.17,
+  "end": 8.0,
+  "peak": 40.8,
+  "source": "audio-20260930-142551.wav",
+  "source_t0": 0.17
+ }
+]

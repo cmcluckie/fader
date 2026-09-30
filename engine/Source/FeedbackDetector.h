@@ -225,6 +225,13 @@ public:
         float levelDb = 0.0f;
         int   reason  = 0;
         int   frames  = 0;
+        // The numbers the verdict was made on. "Unstable" without the spread
+        // and the tolerance it failed is an opinion; with them it is a fact
+        // that can be argued with. Four real howls at 1245-1500 Hz were
+        // declined as unstable/vibrato on 2026-09-27 and nothing recorded by
+        // how much.
+        float spreadHz = 0.0f;
+        float tolHz    = 0.0f;
     };
 
     bool popReject (Reject& out) noexcept
@@ -1388,7 +1395,7 @@ private:
                                          : s.harmonic          ? Reason::Harmonic
                                          : sustainWander       ? Reason::Drifting
                                                                : Reason::NoGrowth;
-                        pushReject ({ s.freq, levelDb, (int) why, s.frames });
+                        pushReject ({ s.freq, levelDb, (int) why, s.frames, (float) spread, (float) stabTol });
                     }
                 }
 

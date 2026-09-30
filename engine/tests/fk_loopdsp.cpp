@@ -37,7 +37,7 @@ namespace
 constexpr int kMaxNotches = 48;
 
 struct EventRec  { float hz, levelDb; int growing, path; double t; };
-struct RejectRec { float hz, levelDb; int reason, frames; double t; };
+struct RejectRec { float hz, levelDb; int reason, frames; double t; float spreadHz, tolHz; };
 
 struct Guard
 {
@@ -102,7 +102,7 @@ void fk_process (void* h, float* buf, int n)
 
     fk::FeedbackDetector::Reject rj;
     while (g->det.popReject (rj))
-        g->rjq.push_back ({ rj.freq, rj.levelDb, rj.reason, rj.frames, g->t });
+        g->rjq.push_back ({ rj.freq, rj.levelDb, rj.reason, rj.frames, g->t, rj.spreadHz, rj.tolHz });
 
     fk::FeedbackDetector::Event ev;
     while (g->det.popEvent (ev))
@@ -145,13 +145,15 @@ int fk_pop_event (void* h, float* hz, float* levelDb, int* growing, int* path, d
 }
 
 /** Drain one rejection: a suspect that waited long enough and was declined. */
-int fk_pop_reject (void* h, float* hz, float* levelDb, int* reason, int* frames, double* t)
+int fk_pop_reject (void* h, float* hz, float* levelDb, int* reason, int* frames, double* t,
+                   float* spreadHz, float* tolHz)
 {
     auto* g = static_cast<Guard*> (h);
     if (g == nullptr || g->rjRead >= g->rjq.size()) { if (g) { g->rjq.clear(); g->rjRead = 0; } return 0; }
     const auto& r = g->rjq[g->rjRead++];
     if (hz) *hz = r.hz; if (levelDb) *levelDb = r.levelDb; if (reason) *reason = r.reason;
     if (frames) *frames = r.frames; if (t) *t = r.t;
+    if (spreadHz) *spreadHz = r.spreadHz; if (tolHz) *tolHz = r.tolHz;
     return 1;
 }
 
