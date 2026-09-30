@@ -127,7 +127,8 @@ giving up and squatting. Each of those is a second chance handed back.
    howls, 6 voice needles) replay on every build; all four layers run in 43 s.
    Baseline: 17/17 caught, median 432 ms before visible, 4 bleed at hand-over,
    2 voice hits. The gate had never seen feedback; now it always will.
-2. Log rejections live, every time.
+2. ~~Log rejections live~~ — **done.** `reject-log-<stamp>.csv` beside the others, one row per
+   rejection with reason and frame count, from the moment the app starts.
 3. The two voice hits.
 4. The hop: memory can now follow a ring across a step, but the fixture set will
    say whether that is enough.

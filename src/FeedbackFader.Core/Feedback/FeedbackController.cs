@@ -722,6 +722,7 @@ public sealed class FeedbackController : IAsyncDisposable
     /// </summary>
     private void OnRejection(FkRejection r)
     {
+        _log.WriteReject(_clock.Elapsed.TotalSeconds, r.Channel, r);
         lock (_recentRejections)
         {
             _recentRejections.Enqueue(new

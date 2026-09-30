@@ -12,12 +12,17 @@ public sealed class FkEventLog : IDisposable
 {
     private readonly StreamWriter? _writer;
     private readonly StreamWriter? _eq;
+    private readonly StreamWriter? _rej;
     private StreamWriter? _capture;
     private readonly string _directory;
     private readonly object _lock = new();
 
     public string Path { get; }
     public string EqPath { get; private set; } = string.Empty;
+    /// <summary>Every rejection, as it happens. Until 2026-09-30 these lived in a 400-entry
+    /// memory queue and reached disk only when the operator pressed the label button;
+    /// three presses on 09-28 wrote three files containing zero of them.</summary>
+    public string RejectPath { get; private set; } = "";
     public string CapturePath { get; private set; } = string.Empty;
 
     public static string ChannelName(int ch) => ch == 0 ? "LEAD" : "BGV";
@@ -38,6 +43,9 @@ public sealed class FkEventLog : IDisposable
             // scene/note/level are what the MIC was hearing, not what the guard
             // did about it: the two questions were impossible to separate when
             // only one of them was written down.
+            RejectPath = System.IO.Path.Combine(directory, $"reject-log-{stamp}.csv");
+            _rej = new StreamWriter(RejectPath, append: false) { AutoFlush = true };
+            _rej.WriteLine("seconds,channel,frequency_hz,level_db,reason,frames");
             _eq.WriteLine("seconds,channel,bypassed,filters,avg_1k_4k,avg_4k_16k,worst_db,worst_hz," +
                           "scene,note,f0_hz,level_db,families");
         }
@@ -120,6 +128,13 @@ public sealed class FkEventLog : IDisposable
     }
 
     /// <param name="applied">True when AUTO deployed a notch; false when merely flagged (ASSIST/OFF).</param>
+    /// <summary>A suspect that waited long enough and was declined, and why.</summary>
+    public void WriteReject(double seconds, int slot, FkRejection r)
+    {
+        _rej?.WriteLine(FormattableString.Invariant(
+            $"{seconds:F3},{slot},{r.Hz:F1},{r.LevelDb:F1},{r.Why},{r.Frames}"));
+    }
+
     public void Write(FkDetection d, bool applied, double seconds)
     {
         if (_writer is null)
@@ -142,6 +157,7 @@ public sealed class FkEventLog : IDisposable
             _writer?.Dispose();
             _eq?.Flush();
             _eq?.Dispose();
+            _rej?.Dispose();
             _capture?.Flush();
             _capture?.Dispose();
         }
