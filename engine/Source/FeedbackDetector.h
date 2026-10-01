@@ -140,6 +140,7 @@ public:
         // middle for the same reason. -40 is below every screaming howl on
         // record and above the median of all 52,053 detections (-52).
         float  sustainHoldDb  = -40.0f;
+        float  sustainHoldMinHz = 2000.0f;   // the hold is for howls; speech lives below this
         float  sustainSeconds = 0.3f;   // a dead-stable, harmonically isolated peak this
                                         // old is feedback even with NO growth
         float  harmonicPromDb = 6.0f;   // harmonic-related peaks need this much EXTRA prominence
@@ -1466,8 +1467,20 @@ private:
                 // measured in seconds, and at three frames it fired sixty times a
                 // second - same protection, ten times the telemetry and ten times
                 // the log.
+                // ...and ONLY in the band howls live in, and never on the singer.
+                // Shipped without this on 2026-09-30 and measured the next day,
+                // the first time the guard had ever been the only path to the
+                // monitors: speech cut by a median 14 dB at 80-200 Hz and 11 dB at
+                // 200-400 Hz, worst bin -27 dB. Seven filters sitting on a spoken
+                // vowel. A filter wrongly placed on a voice used to bleed away in
+                // two seconds; the hold kept it there for as long as the voice
+                // did, which is exactly the risk the regroup named and shipped.
+                // Howls are above 2 kHz (85% of every catch on record); a voice's
+                // fundamental and first harmonics are not.
                 const bool surviving = s.sinceReport >= 30
-                                    && s.lastLevel >= params.sustainHoldDb;
+                                    && s.lastLevel >= params.sustainHoldDb
+                                    && s.freq >= params.sustainHoldMinHz
+                                    && ! partialOfTheVoice (s.freq);
                 if (climbing || surviving)
                 {
                     s.reportLevel = s.lastLevel;
@@ -1740,6 +1753,17 @@ public:
     }
 
 private:
+
+    /// Is f a low-order partial of the voice the context tracker hears right now?
+    /// Unlike belongsToTheVoice() this is false when no voice is detected: a
+    /// howl in an empty room must still be held.
+    bool partialOfTheVoice (float f) const noexcept
+    {
+        if (ctx.families <= 0 || ctx.f0Hz <= 20.0f) return false;
+        for (int m = 1; m <= 12; ++m)
+            if (std::abs (f - (float) m * ctx.f0Hz) <= 0.02f * f) return true;
+        return false;
+    }
 
     double nowSeconds() const noexcept
     {
