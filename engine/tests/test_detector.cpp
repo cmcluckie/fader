@@ -1695,6 +1695,47 @@ int main()
                 ! s.ineffective, msg);
     }
 
+    // ---- T51: a full budget must never leave a screaming ring uncut --------
+    // From the rig, 2026-10-03, the first day the guard was ever in series. A
+    // 4354 Hz ring at +37 dB for five seconds with -0.8 dB on it. The detector
+    // fired 24 times in the first 0.3 s; the filter count sat at 9 and never
+    // became 10. The budget (30) was full of nine filters, and the hold added
+    // this week kept every one of them fresh, so "retire the stalest to pay for
+    // a new one" found nothing stale - and refused. The wall removed on 09-27
+    // ("budget 30 refused 890 of 901 catches"), rebuilt by the hold.
+    //
+    // Refusal is never the answer for a loud ring. If the budget is full and
+    // nothing is stale, something still has to give - the least valuable
+    // filter, not the ring.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.softCapDb = -12.0; bank.hardCapDb = -18.0; bank.holdSeconds = 2.0;
+        bank.harmBudget = 30.0;
+
+        // Nine rings fought to depth and KEPT FRESH, the way the sustain hold
+        // keeps them: a re-trigger every 150 ms, none ever stale.
+        const double held[] = { 6867, 4095, 7907, 4942, 10001, 5964, 9542, 7544, 6042 };
+        double t = 0.0;
+        for (double hz : held)
+            for (int i = 0; i < 8; ++i, t += 0.05) bank.trigger (hz, t, true, -30.0, 70.0);
+        for (int k = 0; k < 20; ++k, t += 0.15)
+            for (double hz : held) bank.trigger (hz, t, false, -30.0, 70.0);
+
+        int active = 0; for (int i = 0; i < 48; ++i) active += bank.getSlot (i).active ? 1 : 0;
+        const double harm = bank.harmNow();
+
+        // Now the new one: loud, growing, unmistakable.
+        int placed = -1;
+        for (int i = 0; i < 6 && placed < 0; ++i, t += 0.05)
+            placed = bank.trigger (4354.0, t, true, -24.0, 47.0);
+        const double cut = bank.cutAtDb (4354.0, -1);
+
+        std::snprintf (msg, sizeof msg, "%d held filters, harm %.0f of budget 30; new ring %s, cut on it %.1f dB (refusal %d)",
+                       active, harm, placed >= 0 ? "placed" : "REFUSED", cut, (int) bank.lastRefusal);
+        report ("T51 a full budget with nothing stale still cuts a loud new ring", placed >= 0 && cut <= -10.0, msg);
+    }
+
     // ---- T49: a howl that has already won must keep its filter -------------
     // Measured at the rig 2026-09-30, and it is what "turned it up and nothing
     // happened" actually was. A 9533 Hz ring at +45 dB into the microphone for

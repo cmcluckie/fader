@@ -166,6 +166,13 @@ void fk_set_loop_verdict (void* h, int on)
     if (g) g->bank.loopVerdict = on != 0;
 }
 
+/** The ear-weighted harm budget, as the app's "Voice budget" sets it. 0 = off. */
+void fk_set_budget (void* h, float dbErb)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g) g->bank.harmBudget = dbErb;
+}
+
 /** Filters that have concluded they are not in the loop. See NotchBank. */
 int fk_not_in_loop (void* h)
 {

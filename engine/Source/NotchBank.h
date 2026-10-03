@@ -348,7 +348,20 @@ public:
         // And when the budget IS full, take the money back rather than refusing.
         // The stalest filter - one nothing has re-triggered for holdSeconds - is
         // by definition the least useful thing the budget is being spent on.
-        if (harmBudget > 0.0 && harmNow() >= harmBudget)
+        //
+        // And when nothing is stale, a LOUD ring is placed anyway, over budget.
+        // Measured at the rig 2026-10-03, the first day the guard was ever in
+        // series: a 4354 Hz ring at +37 dB for five seconds with -0.8 dB on it,
+        // 24 catches in the first 0.3 s, and the filter count pinned at nine.
+        // The sustain hold keeps every held filter fresh, so "retire the
+        // stalest" found nothing stale and this block refused - the 09-27 wall,
+        // rebuilt. A budget is a ceiling on tone damage; a screaming ring is
+        // the thing the whole machine exists to stop. When the two conflict the
+        // budget yields, and only to a ring loud enough to be unmistakable -
+        // the same bar the hold uses. Quiet, marginal placements still queue
+        // behind it as before. T51.
+        const bool loud = levelDb > -900.0 && levelDb >= budgetOverrideDb;
+        if (harmBudget > 0.0 && harmNow() >= harmBudget && ! loud)
         {
             const int stale = budgetReallocates ? stalestBefore (nowSeconds - holdSeconds) : -1;
             if (stale < 0)
@@ -734,6 +747,7 @@ public:
     int    combTeeth       = 5;
     double combCoverage    = 0.20;  // total glass removed, as a fraction of width
     double harmBudget      = 0.0;   // ear-weighted dB-ERB; 0 = no budget
+    double budgetOverrideDb = -40.0; // a ring this loud is placed over a full budget
     bool   budgetReallocates = true;  // full budget: retire the stalest, or refuse?
     // Pulsed suppression. 1.0 = continuous, which is what ships until the ear
     // half of the bet has been tested in a room.
