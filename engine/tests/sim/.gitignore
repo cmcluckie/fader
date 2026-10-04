@@ -1,2 +1,4 @@
 out/
 __pycache__/
+# real voices cut from the rig recordings: local only (public repository)
+voices/local/

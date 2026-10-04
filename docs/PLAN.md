@@ -1,4 +1,8 @@
-# Plan
+# Plan (superseded)
+
+> **Superseded on 2026-10-04** by [PROJECT_PLAN.md](../PROJECT_PLAN.md) (the plan) and
+> [TODO-AS-BUILT.md](TODO-AS-BUILT.md) (the detail). Kept as the record of 10-03 and 10-04;
+> nothing below is maintained.
 
 Written 2026-10-03, after the first evening of driving the rig by sweep. Two
 pieces of work, in this order, on Chris's instruction; then a list of things
