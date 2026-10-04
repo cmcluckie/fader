@@ -37,7 +37,7 @@ namespace
 {
 constexpr int kMaxNotches = 48;
 
-struct EventRec  { float hz, levelDb; int growing, path; double t; };
+struct EventRec  { float hz, levelDb; int growing, path; double t; int runaway; float depthDb; };
 struct RejectRec { float hz, levelDb; int reason, frames; double t; float spreadHz, tolHz; };
 
 struct Guard
@@ -149,9 +149,10 @@ void fk_process (void* h, float* buf, int n)
     fk::FeedbackDetector::Event ev;
     while (g->det.popEvent (ev))
     {
-        g->bank.trigger (ev.freq, g->t, ev.growing, ev.levelDb,
-                         (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
-        g->evq.push_back ({ ev.freq, ev.levelDb, ev.growing ? 1 : 0, ev.path, g->t });
+        const int slot = g->bank.trigger (ev.freq, g->t, ev.growing, ev.levelDb,
+                         (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4, ev.runaway);
+        const float depth = slot >= 0 ? (float) g->bank.getSlot (slot).targetDb : 0.0f;
+        g->evq.push_back ({ ev.freq, ev.levelDb, ev.growing ? 1 : 0, ev.path, g->t, ev.runaway ? 1 : 0, depth });
         ++g->events;
     }
 
@@ -183,6 +184,19 @@ int fk_pop_event (void* h, float* hz, float* levelDb, int* growing, int* path, d
     const auto& e = g->evq[g->evRead++];
     if (hz) *hz = e.hz; if (levelDb) *levelDb = e.levelDb; if (growing) *growing = e.growing;
     if (path) *path = e.path; if (t) *t = e.t;
+    return 1;
+}
+
+/** As fk_pop_event, plus what the bank did with it: whether the detector called
+    it a runaway, and the depth of the filter it landed on (0 if refused). */
+int fk_pop_event_ex (void* h, float* hz, float* levelDb, int* growing, int* path, double* t,
+                     int* runaway, float* depthDb)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr || g->evRead >= g->evq.size()) { if (g) { g->evq.clear(); g->evRead = 0; } return 0; }
+    const auto& e = g->evq[g->evRead++];
+    if (hz) *hz = e.hz; if (levelDb) *levelDb = e.levelDb; if (growing) *growing = e.growing;
+    if (path) *path = e.path; if (t) *t = e.t; if (runaway) *runaway = e.runaway; if (depthDb) *depthDb = e.depthDb;
     return 1;
 }
 
@@ -271,6 +285,22 @@ int fk_find_near (void* h, float f)
 {
     auto* g = static_cast<Guard*> (h);
     return g ? g->bank.findNear ((double) f) : -1;
+}
+
+/** The detector's suspects in a band, for "why has it not fired yet". Each row is
+    freq, level, frames, flags (1 reported, 2 harmonic, 4 family, 8 missed-this-frame). */
+int fk_suspects (void* h, float loHz, float hiHz, float* freq, float* level, int* frames, int* flags, int cap)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr) return 0;
+    fk::FeedbackDetector::SuspectView v[16];
+    const int n = g->det.debugSuspects (loHz, hiHz, v, std::min (cap, 16));
+    for (int i = 0; i < n; ++i)
+    {
+        freq[i] = v[i].freq; level[i] = v[i].level; frames[i] = v[i].frames;
+        flags[i] = (v[i].reported ? 1 : 0) | (v[i].harmonic ? 2 : 0) | (v[i].hasFamily ? 4 : 0) | (v[i].missed > 0 ? 8 : 0);
+    }
+    return n;
 }
 
 /** Total cut the guard is applying at f, dB (negative). The sim can subtract

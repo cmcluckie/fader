@@ -5,10 +5,6 @@
 #include <cmath>
 #include <algorithm>
 
-#ifndef FLAT_TOP_MIN_HZ
-#define FLAT_TOP_MIN_HZ 4000.0f
-#endif
-
 namespace fk
 {
 /**
@@ -48,12 +44,40 @@ public:
                                         // not silently change when the hop size does
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
-        // Three or more contiguous bins within this of a peak's top cannot be
-        // one windowed sinusoid: it is a cluster of modes, and its frequency is
-        // the cluster's centroid - see refineFrequency.
-        float  flatTopDb      = 5.5f;
-        int    flatTopMaxBins = 5;
-        float  flatTopMinHz   = FLAT_TOP_MIN_HZ;
+        // The fast riser (path 5). Measured at the rig 2026-10-03 on cold steps to
+        // 18-22 dB over the ring point. Two shapes, one cause:
+        //   a single mode climbing 700 dB/s - floor to -21 dB in ~100 ms, 3.8 dB
+        //     a frame - which the classic path caught anywhere between -61 and
+        //     -22 dB depending on where the frames fell;
+        //   a cluster of modes 70 Hz wide climbing 130 dB/s, the loudest bin
+        //     hopping between them, vetoed "unstable" from -77 to -37 dB and
+        //     called by the sustain path at 1.3 s.
+        // Anything that costs the detector frames costs tens of decibels. So:
+        // above the voice, not harmonic, no pitched voice owning it, alive
+        // runawayFrames, risen runawayRiseDb across them with no frame falling
+        // more than a decibel - fired, whatever its frequency estimate is doing.
+        // 4 dB over six 5.3 ms frames is 125 dB/s, six times the classic bar.
+        // And a non-falling peak within clusterReachBins keeps its suspect, so a
+        // hopping maximum does not restart the count.
+        // A bin up this much on the frame before (5.3 ms) is let past the width
+        // gate at the peak stage: 1.5 dB a frame is 280 dB/s, where a line gains
+        // enough inside one analysis window to smear to 300 Hz at -20 dB. One
+        // frame's rise is no evidence of anything - a noise bin does it half the
+        // time - so what such a suspect may then DO is decided at firing.
+        float  fastRiseDbPerFrame  = 1.5f;
+        float  runawayMinHz   = 4000.0f;
+        int    runawayFrames  = 6;
+        float  runawayRiseDb  = 4.0f;
+        // ...in a straight line. A ring climbs exponentially, which in dB is a
+        // line: the 9979 Hz mode rose 4.0, 3.2, 3.9, 4.2, 3.7 dB a frame. A noise
+        // bin under a rising envelope - a sibilant coming up, T36's hump fading
+        // in - lurches 5 dB either side of it. RMS distance from the fitted line.
+        float  runawayResidualDb = 0.8f;
+        float  runawayPromDb     = 20.0f;   // above the median of +-20 bins, at firing
+        float  runawayOfTotalDb  = 15.0f;   // the line within this of the frame's total level...
+        int    runawayMaxPeaks   = 10;      // ...or no more than this many peaks in the frame
+        float  runawayGlideFrac  = 0.003f;  // a steady march of this much in frequency is a voice
+        int    clusterReachBins = 3;
         // Watching and ACTING are different questions, and conflating them is what
         // made the guard audible with no feedback in the room. The floor is dragged
         // low on purpose, so a ring is tracked while it is still tiny - that is the
@@ -178,6 +202,7 @@ public:
         float ageMs  = 0.0f;    // tracked for this long before it was called feedback
         float widthLoHz = 0.0f; // -6 dB skirts of the peak as measured in the frame
         float widthHiHz = 0.0f; // that fired it
+        bool  runaway   = false;// climbing out of control right now: hit it at full depth
     };
 
     /// Why a candidate that looked like a peak did NOT become a detection.
@@ -313,6 +338,20 @@ public:
 
     void setParams (const Params& p) noexcept { params = p; }
 
+    /// For the test library only: the suspects between two frequencies, as the
+    /// firing logic sees them. Every "why did it not fire" tonight was answered by
+    /// inference from the reject log, which is throttled to one line per half
+    /// second - longer than a runaway takes to reach full scale.
+    struct SuspectView { float freq, level; int frames, missed; bool reported, harmonic, hasFamily; };
+    int debugSuspects (float loHz, float hiHz, SuspectView* out, int cap) const noexcept
+    {
+        int n = 0;
+        for (const auto& s : suspects)
+            if (s.active && s.freq >= loHz && s.freq <= hiHz && n < cap)
+                out[n++] = { s.freq, s.lastLevel, s.frames, s.missed, s.reported, s.harmonic, s.hasFamily };
+        return n;
+    }
+
     /** Feed one block. Analysis fires internally every hopSize samples. */
     /// Discard the analysis window and wait for it to refill with real audio.
     /// Used when the signal has been away - after a bypass, say - so the join is
@@ -420,6 +459,7 @@ private:
         float  reportLevel = 0.0f;    // level at the last event, for escalation
         int    sinceReport = 0;
         int    sinceReject = 0;
+        int64_t seenFrame  = -1;      // the frame this suspect was last updated in
 
         // Stability and growth are judged over a ROLLING window, not the suspect's
         // whole life. Judging them cumulatively was a real bug: a tone that wandered
@@ -464,6 +504,7 @@ private:
         double sumSq = 0.0;
         for (int i = 0; i < fftSize; ++i) sumSq += (double) scratch[(size_t) i] * scratch[(size_t) i];
         const float rmsDb = juce::Decibels::gainToDecibels ((float) std::sqrt (sumSq / fftSize), -120.0f);
+        frameRmsDb = rmsDb;
 
         window.multiplyWithWindowingTable (scratch.data(), (size_t) fftSize);
 
@@ -494,6 +535,8 @@ private:
 
         for (auto& s : suspects) if (s.active) ++s.missed;
         peakCount = 0;
+        risingCount = 0;
+        harmonicPeaksThisFrame = 0;
 
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
@@ -527,6 +570,39 @@ private:
                 // Too broad to be a ring. Checked here rather than at firing so a
                 // formant never becomes a suspect at all - it is the suspects that
                 // turn into filters, and a wide feature spawns many of them.
+                //
+                // Unless it is rising fast. A tone that gains several decibels a
+                // frame gains tens inside one analysis window; the window then
+                // weighs its last few milliseconds and the line smears to 300 Hz
+                // at -20 dB. That is the window's width, not the ring's. Measured
+                // at the rig 2026-10-03: a single 9984 Hz mode visible in the
+                // spectrum from -117 dB, climbing 3.7 dB a frame, was refused
+                // here until -71 dB and then on five of the next eleven frames -
+                // it took until -32 dB to collect the six it needed. A formant or
+                // a sibilant coming up just as fast is broad too, but it is not
+                // twelve decibels proud of its own neighbourhood, and the
+                // prominence test above has already sent it away.
+                float risePerFrame = 0.0f;
+                if (hasPrevFrame && freq >= params.runawayMinHz)
+                {
+                    constexpr float norm = 2.0f / fftSize;
+                    const float rp = (*prevRe)[(size_t) i], ip = (*prevIm)[(size_t) i];
+                    const float was = juce::Decibels::gainToDecibels (std::sqrt (rp * rp + ip * ip) * norm, -120.0f);
+                    risePerFrame = here - was;
+                }
+
+                // Whether it then FIRES is decided where there is history: the
+                // runaway path asks for a straight-line climb, prominence, no
+                // glide; the classic path re-applies this gate at firing.
+                // A width or single-lobe test here was tried and cannot work: at
+                // 20 dB over, the loop's own delay comb puts lines 100 Hz apart
+                // all above unity (9878, 9979, 10085 Hz, rising in step), and
+                // the middle tooth's -20 dB skirt runs into its neighbours.
+                //
+                // Such a peak is tracked and NOTHING ELSE. It goes in its own
+                // list, not the one the voice logic reads: in the main list it
+                // changed who the detector thought was singing, and a sung
+                // partial at 1300 Hz lost its protection and took 24 dB.
                 if (params.maxWidthHz > 0.0f)
                 {
                     float wlo = 0.0f, whi = 0.0f;
@@ -538,7 +614,16 @@ private:
                         // through; a rippled one is a voice and is dropped as before.
                         const bool plateau = span >= params.plateauMinHz
                                           && rippleDb (wlo, whi) <= params.plateauRipple;
-                        if (! plateau) continue;
+                        if (! plateau)
+                        {
+                            if (risePerFrame >= params.fastRiseDbPerFrame && risingCount < maxRising)
+                            {
+                                risingFreq[(size_t) risingCount]  = freq;
+                                risingLevel[(size_t) risingCount] = here;
+                                ++risingCount;
+                            }
+                            continue;
+                        }
                     }
                 }
 
@@ -686,6 +771,7 @@ private:
             // multiply. A ring is a lone peak: it has no evenly-spaced companions.
             if (! harmonic)
                 harmonic = sitsOnAComb (i);
+            if (harmonic) ++harmonicPeaksThisFrame;
 
             // A harmonic-series member must be markedly more prominent to be believed.
             if (harmonic && peakProm[(size_t) i] < params.prominenceDb + params.harmonicPromDb)
@@ -693,6 +779,11 @@ private:
 
             track (peakFreq[(size_t) i], peakLevel[(size_t) i], harmonic, hasPartialsAbove (i));
         }
+
+        // The fast risers that were too wide for the peak list: tracked last, as
+        // nobody's harmonic and nobody's fundamental, for the runaway path alone.
+        for (int i = 0; i < risingCount; ++i)
+            track (risingFreq[(size_t) i], risingLevel[(size_t) i], false, false);
 
         for (auto& s : suspects)
             if (s.active && s.missed > 2) s = Suspect{};
@@ -914,6 +1005,110 @@ private:
         ctx = c;
     }
 
+    /**
+        The runaway test: is this suspect, right now, a ring climbing out of
+        control? Used twice - as a gate of its own (path 5), and on EVERY event to
+        tell the bank how hard to hit, because which gate happened to fire first
+        is an accident of frame alignment and the depth must not depend on it.
+
+        "Owned by the voice" is voice PRESENT and this peak part of it:
+        belongsToTheVoice answers true when nobody is singing, which is the
+        conservative default for the voice protections and exactly backwards
+        here - the first version of this test used it bare and never fired once.
+    */
+    bool runawayNow (const Suspect& s, bool mine) noexcept
+    {
+        const bool voicePresent = ctx.families > 0 && ctx.f0Hz > 20.0f;
+        if (! (s.freq >= params.runawayMinHz && ! s.harmonic && ! s.hasFamily
+               && ! (voicePresent && mine) && s.frames >= params.runawayFrames))
+            return false;
+        // The pitch context takes ~150 ms to settle, and a note's first frames are
+        // exactly where its upper partials climb fastest. The per-frame harmonic
+        // test knows sooner: peaks are judged low to high, so by the time a
+        // suspect above runawayMinHz is asked, the series below it has been
+        // counted. Two or more and somebody is singing - measured on the
+        // replay fixtures, without this the 13th, 16th and 18th harmonics of a
+        // sung F4 took -42 to -45 dB at the note's onset.
+        if (harmonicPeaksThisFrame >= 2) return false;
+        {
+            // least-squares line through the last runawayFrames levels
+            const int n6 = juce::jmin (params.runawayFrames, windowSize - 2);
+            double sx = 0, sy = 0, sxx = 0, sxy = 0;
+            for (int i = 0; i < n6; ++i)
+            {
+                const int idx = (s.windowPos - n6 + i + windowSize) % windowSize;
+                const double y = s.wLevel[(size_t) idx];
+                sx += i; sy += y; sxx += (double) i * i; sxy += (double) i * y;
+            }
+            const double den   = n6 * sxx - sx * sx;
+            const double slope = den > 0.0 ? (n6 * sxy - sx * sy) / den : 0.0;       // dB per frame
+            const double icpt  = (sy - slope * sx) / n6;
+            double ss = 0.0;
+            for (int i = 0; i < n6; ++i)
+            {
+                const int idx = (s.windowPos - n6 + i + windowSize) % windowSize;
+                const double r = s.wLevel[(size_t) idx] - (icpt + slope * i);
+                ss += r * r;
+            }
+            const double resid = std::sqrt (ss / n6);
+            if (slope * (n6 - 1) >= params.runawayRiseDb && resid <= params.runawayResidualDb)
+            {
+                // ...and towering over its surroundings. The straight line is
+                // necessary and not sufficient: frames overlap 87%, so over
+                // six of them even a noise bin moves smoothly, and T36's
+                // hump was taken once more on exactly that. What noise
+                // cannot do is stand far above its own neighbourhood - a
+                // bin inside a hump or a sibilant is barely the 12 dB it
+                // needed to become a peak - while a ring at high margin is
+                // a line, or a comb of them, over a quiet band.
+                int k = juce::jlimit (22, numBins - 23, (int) (s.freq / binHz + 0.5f));
+                if (mag[(size_t) (k + 1)] > mag[(size_t) k]) ++k;
+                else if (mag[(size_t) (k - 1)] > mag[(size_t) k]) --k;
+                // ...and either it IS the signal, or the signal is only a few
+                // lines. The first live-recording replay of this path took
+                // two partials of a sung note at 4.4 and 4.75 kHz, at the
+                // onset, before any pitch context existed - at -45 dB. A
+                // vocal partial up there sits 20-33 dB under the voice's own
+                // total; a ring from a quiet room is within 7-12 dB of it.
+                // A second ring starting under a louder one fails that test
+                // too (the 14.6 kHz doublet, 18-31 dB under), but then the
+                // spectrum is a handful of lines, where a note is dozens.
+                //
+                // And it must not be GLIDING. Those two "partials" turned
+                // out to be the singer scooping into a note: 4723, 4724,
+                // 4726, 4732, 4741, 4749, 4759, 4768 Hz, frame by frame,
+                // louder each time and within 15 dB of the total. A loop
+                // does not move - the comb line at 9979 Hz shifted less
+                // than 1 Hz in eighteen frames - and a cluster's estimate
+                // hops back and forth, it does not march. Three or more
+                // steps one way, none the other, 0.3% in all: a voice.
+                bool gliding = false;
+                {
+                    const int   first = (s.windowPos - n6 + windowSize) % windowSize;
+                    const int   last  = (s.windowPos - 1 + windowSize) % windowSize;
+                    const float net   = s.wFreq[(size_t) last] - s.wFreq[(size_t) first];
+                    const float tiny  = 0.0002f * s.freq;
+                    int same = 0, opposed = 0;
+                    for (int i = 1; i < n6; ++i)
+                    {
+                        const int a = (s.windowPos - n6 + i - 1 + windowSize) % windowSize;
+                        const int b = (s.windowPos - n6 + i + windowSize) % windowSize;
+                        const float d = s.wFreq[(size_t) b] - s.wFreq[(size_t) a];
+                        if (std::abs (d) < tiny) continue;
+                        if ((d > 0.0f) == (net > 0.0f)) ++same; else ++opposed;
+                    }
+                    gliding = std::abs (net) >= params.runawayGlideFrac * s.freq && same >= 3 && opposed == 0;
+                }
+                const bool isTheSignal = s.lastLevel >= frameRmsDb - params.runawayOfTotalDb;
+                const bool fewLines    = peakCount <= params.runawayMaxPeaks;
+                if (! gliding && (isTheSignal || fewLines)
+                    && mag[(size_t) k] - medianAround (k, 20) >= params.runawayPromDb)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     /// Sub-bin interpolation without phase history, for the long analysis.
     static float parabolicIn (const float* arr, int k, float bw) noexcept
     {
@@ -925,57 +1120,15 @@ private:
 
     float refineFrequency (int k, float levelDb) noexcept
     {
-        // A flat-topped peak is not one sinusoid. Measured at the rig 2026-10-03
-        // on a step straight to 18 dB of margin: a cluster of modes 70 Hz wide
-        // started together, each bin carrying its own component, and the loudest
-        // bin hopped between them frame to frame. The phase estimate below is
-        // exact for each bin, so the suspect read "unstable" - spread 53 Hz
-        // against 15.8 - from -77 dB to -37 dB, and the sustain path took 1.3 s
-        // to call it at -22. On a gentle climb only the top mode exceeds unity,
-        // the peak is clean from the start, and the same mode is caught at -68.
-        //
-        // The discriminator is the window itself. One Hann-windowed sinusoid puts
-        // at most TWO bins within 5.5 dB of its top - the third is 9.5 dB down
-        // by the window's shape, wherever the tone sits between bins. Three or
-        // more bins within that cannot be one tone. Only then is the magnitude
-        // centroid of the neighbourhood used, as the cluster's centre; it
-        // barely moves while the loudest bin hops. Everything else keeps the
-        // sub-bin phase estimate below, which the vibrato and location tests
-        // depend on: a centroid applied to every flat-ish top notched the
-        // singer in four unit tests at once. Anything wider than flatTopMaxBins
-        // is a formant, not a ring, and keeps the old estimate for the width
-        // gate to refuse.
-        // And only above the voice (flatTopMinHz): a vibrato partial sweeping
-        // half a bin inside one frame smears into three bins too, and the
-        // centroid costs the vibrato test its precision (T4 notched a sung
-        // 400 Hz note). Vocal partials up there are weak and the modes are
-        // dense; the clusters were measured at 9.9 and 14.6 kHz.
-        // Counted over a neighbourhood, not a contiguous run: the same night a
-        // 14.6 kHz ring came up as a DOUBLET - two modes 47 Hz apart with a 5 dB
-        // dip between them - and the loudest bin hopped across the dip while a
-        // contiguous rule counted two bins and stood aside (1232 ms to call it,
-        // at -31 dB). One sinusoid cannot put three bins within flatTopDb of its
-        // top anywhere within +-3 bins, dip or no dip. The centroid is taken
-        // over the whole neighbourhood so it does not jump when a bin crosses
-        // the threshold.
-        if ((float) k * binHz >= params.flatTopMinHz)
-        {
-            constexpr int reach = 3;
-            const int lo = juce::jmax (1, k - reach), hi = juce::jmin (numBins - 2, k + reach);
-            int within = 0;
-            for (int b = lo; b <= hi; ++b)
-                if (mag[(size_t) b] >= levelDb - params.flatTopDb) ++within;
-            if (within >= 3 && within <= params.flatTopMaxBins)
-            {
-                double num = 0.0, den = 0.0;
-                for (int b = lo; b <= hi; ++b)
-                {
-                    const double w = std::pow (10.0, (double) mag[(size_t) b] / 20.0);
-                    num += w * (double) b; den += w;
-                }
-                if (den > 0.0) return (float) (num / den) * binHz;
-            }
-        }
+        // A magnitude centroid was tried here for clusters of modes (three or more
+        // bins within 5.5 dB of the top) and withdrawn the same night. It fixed
+        // two real clusters and broke three fast single modes: a tone climbing
+        // 700 dB/s gains 30 dB inside one analysis window, its spectrum smears
+        // across three bins, the rule read it as a cluster, and the estimate
+        // flipped between centroid and phase value all the way up. "One
+        // sinusoid cannot put three bins within 5.5 dB" is true of a STEADY
+        // one. Clusters are handled where they belong - in the suspect's
+        // continuity and the runaway path - and the estimate stays exact.
 
         // parabolic on magnitudes - the fallback, and the sanity check
         const float ym1 = mag[(size_t) (k - 1)], y0 = levelDb, yp1 = mag[(size_t) (k + 1)];
@@ -1316,7 +1469,21 @@ private:
         for (auto& s : suspects)
         {
             if (! s.active) continue;
-            if (std::abs (s.freq - freq) > matchTolHz (freq)) continue;
+            // A rising peak above the voice keeps its suspect while it moves
+            // within a cluster's reach - see runawayMinHz.
+            const float apart  = std::abs (s.freq - freq);
+            const bool  cluster = freq >= params.runawayMinHz
+                               && levelDb >= s.lastLevel - 1.0f
+                               && apart <= (float) params.clusterReachBins * binHz;
+            if (apart > matchTolHz (freq) && ! cluster) continue;
+            // One update per frame, above the voice. Two maxima of one cluster
+            // both land here - often inside the ordinary tolerance, not only the
+            // cluster reach - and the suspect's level window then alternates
+            // between two bins: no straight line survives that, and the runaway
+            // path went blind to exactly the clusters it was written for. Below
+            // runawayMinHz nothing changes.
+            if (freq >= params.runawayMinHz && s.seenFrame == framesAnalysed) return;
+            s.seenFrame = framesAnalysed;
 
             s.missed    = 0;
             s.frames   += 1;
@@ -1405,6 +1572,25 @@ private:
                             && growth >= needGrowth && monotonic;
                 int firedPath = fire ? 1 : 0;
 
+                // The classic path keeps the width gate it always had. A fast-rising
+                // bin is let past it at the peak stage, so it is applied again
+                // here; the runaway path has its own discriminator and no width
+                // test, because a comb tooth has none worth measuring.
+                if (fire && firedPath == 1 && params.maxWidthHz > 0.0f)
+                {
+                    float wlo = 0.0f, whi = 0.0f;
+                    peakWidth (s.freq, wlo, whi);
+                    const float span = whi - wlo;
+                    if (span > params.maxWidthHz
+                        && ! (span >= params.plateauMinHz && rippleDb (wlo, whi) <= params.plateauRipple))
+                    {
+                        fire = false; firedPath = 0;
+                    }
+                }
+
+                // Path R - the runaway: see runawayNow().
+                if (! fire && runawayNow (s, mine)) { fire = true; firedPath = 5; }
+
                 // Path B - the slow creep. A ring hovering near unity loop gain
                 // grows too slowly to trip the growth gate, but it sits dead
                 // still for hundreds of ms, which nothing musical does. Held
@@ -1471,7 +1657,8 @@ private:
                     {
                         float wlo = 0.0f, whi = 0.0f;
                         peakWidth (s.freq, wlo, whi);
-                        pushEvent ({ s.freq, s.lastLevel, true, firedPath, ageMsOf (s), wlo, whi });
+                        pushEvent ({ s.freq, s.lastLevel, true, firedPath, ageMsOf (s), wlo, whi,
+                                     firedPath == 5 || runawayNow (s, mine) });
                     }
                 }
             }
@@ -1559,7 +1746,8 @@ private:
                     {
                         float wlo = 0.0f, whi = 0.0f;
                         peakWidth (s.freq, wlo, whi);
-                        pushEvent ({ s.freq, s.lastLevel, climbing, 3, ageMsOf (s), wlo, whi });
+                        pushEvent ({ s.freq, s.lastLevel, climbing, 3, ageMsOf (s), wlo, whi,
+                                     climbing && runawayNow (s, mine) });
                     }
                 }
             }
@@ -1857,6 +2045,11 @@ private:
     std::array<float, (size_t) numBins>*   prevRe = &reB;
     std::array<float, (size_t) numBins>*   prevIm = &imB;
     bool hasPrevFrame = false;
+    float frameRmsDb  = -120.0f;   // this frame's total level, for the runaway path
+    static constexpr int maxRising = 12;
+    std::array<float, maxRising> risingFreq {}, risingLevel {};
+    int risingCount = 0;
+    int harmonicPeaksThisFrame = 0;   // peaks judged part of a series so far this frame
     int  samplesSeen  = 0;
 public:
     int floorHalfWidthOverride = 0;   // test hook

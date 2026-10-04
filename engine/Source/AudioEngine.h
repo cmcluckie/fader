@@ -336,7 +336,8 @@ public:
                     // gets a wide filter, a narrow top-end whistle a narrow one.
                     const double widthHz = (double) (ev.widthHiHz - ev.widthLoHz);
                     const int placed = bank.trigger (ev.freq, elapsed, ev.growing, ev.levelDb,
-                                                     widthHz, ev.path == 4);   // 4 = plateau
+                                                     widthHz, ev.path == 4,      // 4 = plateau
+                                                     ev.runaway);       // climbing out of control: full depth
                     const int refused = placed >= 0 ? 0 : (int) bank.lastRefusal;
                     pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs,
                                  ev.widthLoHz, ev.widthHiHz, refused });

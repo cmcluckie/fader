@@ -315,7 +315,7 @@ int main (int argc, char* argv[])
         fk::FeedbackDetector::Event ev;
         while (det.popEvent (ev))
             bank.trigger (ev.freq, t, ev.growing, ev.levelDb,
-                          (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
+                          (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4, ev.runaway);
 
         bank.process (block, kBlock, false);
         bank.release (t);

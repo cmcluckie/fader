@@ -1352,7 +1352,7 @@ int main()
         const double b0 = alpha, b2 = -alpha, a0 = 1 + alpha,
                      a1 = -2 * std::cos (w0), a2 = 1 - alpha;
         double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
-        int broadHits = 0;
+        int broadHits = 0, firstPath = 0; float firstHz = 0, firstDb = 0, firstW = 0; double firstT = 0;
         for (int b = 0; b < (int) (5.0 * kSR / block); ++b)
         {
             for (int i = 0; i < block; ++i)
@@ -1365,7 +1365,11 @@ int main()
             }
             det.push (buf.data(), block);
             fk::FeedbackDetector::Event ev;
-            while (det.popEvent (ev)) ++broadHits;
+            while (det.popEvent (ev))
+            {
+                if (broadHits == 0) { firstHz = ev.freq; firstDb = ev.levelDb; firstPath = ev.path; firstW = ev.widthHiHz - ev.widthLoHz; firstT = (double) (b * block) / kSR; }
+                ++broadHits;
+            }
         }
 
         // ...and a genuine ring in the same place, which must still be caught.
@@ -1374,8 +1378,11 @@ int main()
             return std::make_pair (9000.0, juce::jmin (0.00016 * std::pow (10.0, 30.0 * t / 20.0), 0.006));
         }, 0.00008, 0.05);
 
-        std::snprintf (msg, sizeof msg, "broad hump: %d catches (want 0); ring: %s",
-                       broadHits, ring.fired ? "caught" : "MISSED");
+        if (broadHits > 0)
+            std::snprintf (msg, sizeof msg, "broad hump: %d catches (want 0), first at %.2f s: %.0f Hz %.1f dB path %d width %.0f Hz; ring: %s",
+                           broadHits, firstT, firstHz, firstDb, firstPath, firstW, ring.fired ? "caught" : "MISSED");
+        else
+            std::snprintf (msg, sizeof msg, "broad hump: 0 catches; ring: %s", ring.fired ? "caught" : "MISSED");
         report ("T36 a broad hump is not carved into rings", broadHits == 0 && ring.fired, msg);
     }
 
@@ -1834,7 +1841,7 @@ int main()
             {
                 if (t >= 10.0) ++eventsLate;
                 bank.trigger (ev.freq, t, ev.growing, ev.levelDb,
-                              (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
+                              (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4, ev.runaway);
             }
             bank.process (buf.data(), block, false);
             bank.release (t);

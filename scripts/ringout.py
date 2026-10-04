@@ -268,8 +268,18 @@ def main():
             eng.bypass(True); print("   guard BYPASSED (detector still watching)")
         elif a.mode == "baseline": print("   [dry] guard would be bypassed")
         else: eng.bypass(False)
-        x32.set(a.fader, fader_pos(a.start_db)); x32.set(a.main, fader_pos(a.main_db))
-        meter = Meter(rec); time.sleep(1.0)
+        # The meter is live BEFORE anything is raised. The first version set the
+        # start level and then slept a second while the meter came up - and on a
+        # cold step that second is the whole event: 2026-10-03, a ring reached
+        # -21 dB at 0.7 s with the kill switch not yet looking. Park low, prove
+        # the meter reads, and let the loop below make the first move.
+        x32.set(a.fader, fader_pos(a.safe_db)); x32.set(a.main, fader_pos(a.main_db))
+        meter = Meter(rec)
+        for _ in range(40):
+            if meter.read(0.05) is not None: break
+            time.sleep(0.05)
+        else:
+            raise RuntimeError("the meter never read the recording - not moving any fader")
         rings = []; loud_since = None; prev_peaks = []
         print(f"\n{'t':>6} {'fader':>6} {'peak Hz':>8} {'dB':>6} {'prom':>5} {'rms':>6}  note")
         while True:
@@ -279,8 +289,8 @@ def main():
             x32.set(a.fader, fader_pos(cur_db)); log("step", db=cur_db)
             step_end = time.time() + a.hold_s; ring_here = None; candidate = None
             while time.time() < step_end:
-                time.sleep(0.1)
-                m = meter.read(0.1)
+                time.sleep(0.05)
+                m = meter.read(0.05)
                 if m is None: continue
                 spec, rms = m; hz, lvl, prom = meter.peak(spec)
                 # --- kill switch, before anything else

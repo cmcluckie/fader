@@ -250,5 +250,27 @@
   "source": "ringout/20261003-195851-guard/sweep.wav",
   "source_t0": 0.0,
   "note": "cold step to +10 dB, 22 dB over the ring point: a doublet, two modes 47 Hz apart with a dip between"
+ },
+ {
+  "file": "howl-20261003-202218-0000s-9980Hz.wav",
+  "kind": "howl",
+  "hz": 9980.0,
+  "onset": 0.7,
+  "end": 1.6,
+  "peak": 0.0,
+  "source": "ringout/20261003-202218-guard/sweep.wav",
+  "source_t0": 0.0,
+  "note": "cold step to 22 dB over the ring point: a tooth of the loop's delay comb, 3.7 dB a frame"
+ },
+ {
+  "file": "howl-20261003-202138-0000s-9980Hz.wav",
+  "kind": "howl",
+  "hz": 9980.0,
+  "onset": 0.7,
+  "end": 1.6,
+  "peak": 0.0,
+  "source": "ringout/20261003-202138-guard/sweep.wav",
+  "source_t0": 0.0,
+  "note": "cold step to 22 dB over the ring point: the same comb, a different frame alignment"
  }
 ]

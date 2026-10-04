@@ -65,7 +65,7 @@ public sealed record FkDetection(int Channel, float Hz, float LevelDb,
     /// <summary>Which gate let it through - the thing every "why was that slow" needs.</summary>
     public string Gate => Path switch
     {
-        1 => "growth", 2 => "sustain", 3 => "escalation", _ => "?",
+        1 => "growth", 2 => "sustain", 3 => "escalation", 4 => "plateau", 5 => "runaway", _ => "?",
     };
 
     /// <summary>How wide the peak was, in Hz, at the frame that fired it.</summary>

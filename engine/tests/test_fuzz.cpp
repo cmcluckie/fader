@@ -398,7 +398,7 @@ int main (int argc, char* argv[])
         while (det.popEvent (ev))
         {
             bank.trigger (ev.freq, now, ev.growing, ev.levelDb,
-                          (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4);
+                          (double) (ev.widthHiHz - ev.widthLoHz), ev.path == 4, ev.runaway);
 
             // Was that one of ours, or the singer?
             bool mine = false;

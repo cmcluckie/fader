@@ -131,7 +131,8 @@ public:
         is the transport clock.
     */
     int trigger (double f, double nowSeconds, bool growing = true,
-                 double levelDb = -1000.0, double widthHz = 0.0, bool wide = false) noexcept
+                 double levelDb = -1000.0, double widthHz = 0.0, bool wide = false,
+                 bool runaway = false) noexcept
     {
         juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
@@ -195,7 +196,9 @@ public:
         // halved because rings die instead of persisting, summed EQ the same or
         // better in three rooms of four, and ASG unchanged within 0.4 dB in all
         // four. It cost coverage and bought nothing.
-        if (cutAtDb (f, existing) <= coveredDb)
+        // ...unless it is running away. A ring climbing five decibels a frame with
+        // 15 dB already on it is the definition of not handled.
+        if (! runaway && cutAtDb (f, existing) <= coveredDb)
         {
             lastRefusal = Refusal::AlreadyCovered;
             return -1;
@@ -338,6 +341,17 @@ public:
                 // so this is a swell over ~130 ms rather than a step.
                 if (outOfLoop) s.targetDb = std::max (s.targetDb, hardCapDb);
 
+                // A runaway does not climb the ladder. Six decibels a trigger
+                // against a ring with twenty of margin is a second strike, a
+                // third and a fourth handed back while it grows through them -
+                // measured: first strike -18 at -33 dB, ring at -22 two frames
+                // later. Straight to the bottom; release earns the way back.
+                if (runaway && ! outOfLoop)
+                {
+                    s.targetDb = std::min (s.targetDb, emergencyCapDb);
+                    s.capHits  = std::max (s.capHits, capHitsBeforeEmergency);
+                }
+
                 noteDepth (s.freq, s.targetDb, nowSeconds);
 
                 // Emergency depth is paid for by emergency NARROWNESS. Harm goes
@@ -379,7 +393,7 @@ public:
         // budget yields, and only to a ring loud enough to be unmistakable -
         // the same bar the hold uses. Quiet, marginal placements still queue
         // behind it as before. T51.
-        const bool loud = levelDb > -900.0 && levelDb >= budgetOverrideDb;
+        const bool loud = runaway || (levelDb > -900.0 && levelDb >= budgetOverrideDb);
         if (harmBudget > 0.0 && harmNow() >= harmBudget && ! loud)
         {
             const int stale = budgetReallocates ? stalestBefore (nowSeconds - holdSeconds) : -1;
@@ -420,6 +434,14 @@ public:
             // proven it carries more excess gain than the dial does not get to
             // make us learn that again from scratch every time it returns.
             if (was <= hardCapDb + 0.25) primedCapHits = capHitsBeforeEmergency - 1;
+        }
+
+        // A runaway opens at the bottom, already in emergency: attack first, hard,
+        // then earn the way back. See the re-trigger branch above.
+        if (runaway && ineffectiveNow() == 0)
+        {
+            openDb = emergencyCapDb;
+            primedCapHits = capHitsBeforeEmergency;
         }
 
         // A wide, flat feature is not one ring and does not deserve one filter.
