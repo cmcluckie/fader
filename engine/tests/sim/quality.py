@@ -195,15 +195,14 @@ def run_loop(loop, src, margin=None, guarded=True, noise_db=NOISE_DB, seed=7, co
 
 
 def _duck(guard):
-    """The rescue duck's state; builds before f5c5f0b have no duck."""
-    try: return guard.rescue()
-    except AttributeError: return dict(triggers=0, episodes=0, deepest_db=0.0, depth_db=0.0, reason="", futile=0)
+    """The rescue duck's state (zeros on a build from before the duck)."""
+    return guard.rescue()
 
 
 def _details(guard):
     lib = guard.lib
-    try: fn = lib.fk_notch_detail
-    except AttributeError: return [dict(freq=f, q=12.0, depth_db=d) for f, d in guard.notches()]
+    if not guard.has("fk_notch_detail"): return [dict(freq=f, q=12.0, depth_db=d) for f, d in guard.notches()]
+    fn = lib.fk_notch_detail
     FP, IP = ctypes.POINTER(ctypes.c_float), ctypes.POINTER(ctypes.c_int)
     fn.restype = ctypes.c_int; fn.argtypes = [ctypes.c_void_p, ctypes.c_int, FP, FP, FP, FP, IP]
     out = []
@@ -550,6 +549,15 @@ def headline(rows, room="rig", vname="synth"):
 
 # ============================================================================ the ruler, checked
 
+def selftest_quiet():
+    """The self-check, saying nothing unless it fails."""
+    import contextlib, io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf): bad = selftest()
+    if bad: print(buf.getvalue())
+    return ["the ruler failed its own check: " + b for b in bad]
+
+
 def selftest():
     """Known inputs, known answers. A ruler that has not been checked against
     something of known length measures nothing."""
@@ -617,11 +625,48 @@ def selftest():
 
 # ============================================================================ the gate
 
-# Regression thresholds for the quick subset: the rig-like room, the synthetic
-# singer. They are what this build measured when they were written, with room
-# for run-to-run drift - "no worse than it was". The GOALS these are on the way
-# to live in docs/TODO-AS-BUILT.md, and they are stricter.
+# The quick subset the ship gate runs: the rig-like room, the synthetic singer.
+# These are REGRESSION thresholds - what d55f580 measured on 2026-10-04, with a
+# little room - and say only "no worse than it was". The goals they are on the
+# way to (3 % with nothing ringing, 15 % while holding feedback, caught in
+# 10 ms, killed in 15) are in docs/TODO-AS-BUILT.md, and this build is far from
+# the first two. Tighten a line when the number improves. Never loosen one to
+# make a red build green.
 GATE_CASES = ["alone", -6, 6, 10]
+GATE = [  # case, field, limit, why
+    ("alone", "change_pct", 35.0, "what the guard takes from a singer with nothing ringing (goal 3 %)"),
+    ("alone", "duck_episodes", 0, "the rescue duck must never fire on a voice alone"),
+    ("-6", "audible", 0, "a ring heard six decibels UNDER the room's limit is the guard's own doing"),
+    ("6", "audible", 0, "no ring may be heard 6 dB over"),
+    ("10", "audible", 0, "no ring may be heard 10 dB over"),
+    ("10", "change_pct", 51.0, "what holding 10 dB over costs the voice (goal 15 %)"),
+]
+GOALS = dict(alone=3.0, m6=3.0, at6=10.0, at10=15.0)
+
+
+def gate(rows):
+    bad = []
+    pick = {r["case"]: r for r in rows if r["guarded"]}
+    for case, field, limit, why in GATE:
+        if case not in pick: bad.append(f"{case}: did not run"); continue
+        v = pick[case][field]
+        if v > limit: bad.append(f"{case}: {field} = {v:.1f}, limit {limit} - {why}")
+    return bad
+
+
+def _record(rows, ok, gate_run):
+    """One row in the results log per room and voice (ledger.py)."""
+    try:
+        import ledger
+    except ImportError:
+        return
+    for room in sorted({r["room"] for r in rows}):
+        for v in sorted({r["voice"] for r in rows}):
+            sub = [r for r in rows if r["room"] == room and r["voice"] == v]
+            if not sub: continue
+            _, info = voice(v)
+            ledger.record("singer-in-loop", "simulated", dict(room=room, voice=v, voice_id=info["id"], **headline(rows, room, v)),
+                          ok=ok if gate_run else None, cases=sub)
 
 
 if __name__ == "__main__":
@@ -639,7 +684,8 @@ if __name__ == "__main__":
     t0 = time.time()
     rooms = (room,) if room else ("rig", "hall")
     vs = [vname] if vname else None
-    if "--gate" in args:
+    is_gate = "--gate" in args
+    if is_gate:
         rooms, vs, cases = ("rig",), ["synth"], GATE_CASES
     else:
         cases = None
@@ -657,3 +703,15 @@ if __name__ == "__main__":
     print(f"\n{len(rows)} runs in {time.time() - t0:.0f} s")
     if out_json:
         json.dump(rows, open(out_json, "w"), indent=1)
+    bad = []
+    if is_gate:
+        bad = selftest_quiet() + gate(rows)
+        h = headline(rows, "rig", "synth")
+        print(f"\nagainst the goals:  nothing ringing {h['alone_change_pct']:.0f} % (goal {GOALS['alone']:.0f})   "
+              f"6 dB over {h['at6_change_pct']:.0f} % (goal {GOALS['at6']:.0f})   10 dB over {h['at10_change_pct']:.0f} % (goal {GOALS['at10']:.0f})")
+    if cases is None or is_gate:
+        _record(rows, not bad, is_gate)
+    if is_gate:
+        if bad:
+            print("\nFAIL"); [print("   " + b) for b in bad]; sys.exit(1)
+        print("\nPASS  no worse than the recorded build (the goals are another matter)")

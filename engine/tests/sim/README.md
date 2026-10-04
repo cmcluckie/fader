@@ -1,5 +1,8 @@
 # Closed-loop tests against a real room model
 
+> What each test measures and how results are kept: [docs/TESTING.md](../../../docs/TESTING.md).
+> The standard quality and timing test is `quality.py` - a singer in the loop.
+
 `fk-fuzz` generates rings and grows them. It has no phase condition, so it can
 never say *which* frequency will ring; no power amp, so a spike at 5 kHz cannot
 suppress a mode at 77 Hz; and its modes grow independently of one another.

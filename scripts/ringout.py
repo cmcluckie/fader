@@ -379,6 +379,17 @@ def main():
         print("\n   interrupted")
     finally:
         restore(); trials.close()
+        # Keep the result, under the build the engine says it is (results/ledger.jsonl).
+        # After the faders are back and the recorder has stopped, and never allowed
+        # to matter: a logging fault must not be the reason a live run ends badly.
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import results
+            m = results.sweep_metrics(out)
+            if m is not None:
+                results.ledger.record("sweep-" + m.pop("mode"), "live", m, force=True)
+        except Exception as e:
+            print(f"   (result not logged: {e})")
 
 
 if __name__ == "__main__":

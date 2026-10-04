@@ -270,6 +270,19 @@ if __name__ == "__main__":
         json.dump(now, open(BASELINE, "w"), indent=2, sort_keys=True)
         print(f"\nno baseline existed; recorded one -> {os.path.basename(BASELINE)}")
 
+    try:
+        import ledger
+        ledger.record("closed-loop", "simulated",
+                      dict(hf_quieter_3_db=now["margin_3"]["hf_suppression"], hf_quieter_9_db=now["margin_9"]["hf_suppression"],
+                           events_3=now["margin_3"]["events"], events_9=now["margin_9"]["events"],
+                           filters_3=now["margin_3"]["filters"], filters_9=now["margin_9"]["filters"],
+                           disconnected_flagged=dis["not_in_loop"], disconnected_deepest_db=dis["deepest"],
+                           cold20_s_above_m30=cs_on["above_30"], cold20_s_above_m40=cs_on["above_40"],
+                           cold20_noduck_s_above_m40=cs_off["above_40"], cold20_duck_episodes=cs_on["episodes"],
+                           cold20_duck_end_db=cs_on["depth_end"]),
+                      ok=not bad)
+    except ImportError:
+        pass
     if bad:
         print("\nFAIL")
         for b in bad: print(f"   {b}")

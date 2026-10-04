@@ -142,19 +142,30 @@ def preplace_check(kind, raise_db=15.0, verbose=True):
 if __name__ == "__main__":
     gate = "--gate" in sys.argv
     bad = []
+    m = {}
     for kind in ("reverberant", "rig"):
         r = check(kind)
+        m.update({f"{kind}_rungs_found": r["found"], f"{kind}_margin_err_db": r["worst_db"],
+                  f"{kind}_headroom_err_db": r["headroom_err"], f"{kind}_names_the_ring": bool(r["hit"])})
         if r["found"] < 4: bad.append(f"{kind}: only {r['found']} of the first 5 rungs found within 1%")
         if r["worst_db"] > 1.5: bad.append(f"{kind}: a rung's margin is off by {r['worst_db']:.1f} dB")
         if r["headroom_err"] > 1.0: bad.append(f"{kind}: headroom off by {r['headroom_err']:.1f} dB")
         if not r["hit"]: bad.append(f"{kind}: the note that rang was not among the first three predicted")
     for kind in ("reverberant", "rig"):
         p, reactive, pinned = preplace_check(kind)
+        m.update({f"{kind}_net_1k_4k_db": p["net_1k_4k"], f"{kind}_filters": len(p["filters"]),
+                  f"{kind}_reactive_events": reactive["events"], f"{kind}_pinned_events": pinned["events"],
+                  f"{kind}_pinned_rescues": pinned["rescues"]})
         if pinned["events"] > reactive["events"]:
             bad.append(f"{kind}: pinning first made the guard work harder ({pinned['events']} events against {reactive['events']})")
         if pinned["above_50"] > reactive["above_50"] + 0.05:
             bad.append(f"{kind}: pinning first left the room louder for longer")
     print()
+    try:
+        import ledger
+        ledger.record("measure-and-preplace", "simulated", m, ok=not bad)
+    except ImportError:
+        pass
     if bad:
         print("FAIL"); [print("   " + b) for b in bad]
         sys.exit(1 if gate else 0)

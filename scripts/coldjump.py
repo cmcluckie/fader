@@ -79,6 +79,16 @@ def main():
         real = f"really {total - g0:.0f}-{total - g1:.0f} over" if g1 is not None else "edge lost"
         print(f"{over:5.0f} | {g0:+11.1f} {g1s} | {ch:+5.1f} {mn:+5.1f} | {lb[0]:6.1f} dB @ {lb[1]:5.0f} Hz {lb[2]:3.1f}s | {ndet:10d} {nres:7d} {str(bool(js and js.get('killed'))):>6} | "
               f"{'VALID' if ok else 'edge moved'} ({real})")
+        try:
+            sys.path.insert(0, HERE)
+            import results
+            killed = bool(js and js.get("killed"))
+            results.ledger.record("cold-jump", "live",
+                                  dict(over_db=over, edge_before_db=g0, edge_after_db=g1, valid=ok, fader_db=ch, main_db=mn,
+                                       loudest_db=lb[0], loudest_hz=lb[1], loudest_at_s=lb[2], detections=ndet, rescues=nres, killed=killed),
+                                  ok=(lb[0] <= -45.0 and not killed) if ok else None, force=True)
+        except Exception as e:
+            print(f"   (result not logged: {e})")
         guess = g1 if g1 is not None else g0
         time.sleep(12)
 

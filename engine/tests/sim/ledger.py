@@ -57,15 +57,20 @@ def head():
     return _git("rev-parse", "--short", "HEAD") or "unknown"
 
 
+ENGINE_CODE = ("engine/Source", "engine/tests/fk_loopdsp.cpp", "engine/CMakeLists.txt")
+
+
 def dirty():
     """Uncommitted changes to anything that decides a result."""
     return bool(_git("status", "--porcelain", "--", "engine", "scripts"))
 
 
 def engine_version():
-    """The engine under test: FK_VERSION when a past build's library is loaded
-    (measure_version.py), otherwise the checkout."""
-    return os.environ.get("FK_VERSION") or head()
+    """The engine under test. FK_VERSION when a past build's library is loaded
+    (measure_version.py); otherwise the last commit that changed the engine's
+    own code. A commit that only touches tests or documents is the same
+    engine, and gets the same name - the test code is tracked as the ruler."""
+    return os.environ.get("FK_VERSION") or _git("log", "-1", "--format=%h", "--", *ENGINE_CODE) or head()
 
 
 def running_build():
@@ -95,12 +100,12 @@ def record(test, kind, metrics, ok=None, cases=None, version=None, when=None, no
     if not (force or os.environ.get("FK_RECORD") == "1"):
         return None
     live = kind == "live"
-    if not live and not os.environ.get("FK_VERSION") and dirty() and not force:
+    if not live and dirty() and not force:
         print(f"   (not recorded: {test} was measured on uncommitted changes - commit, then record)")
         return None
     row = dict(when=when or datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                version=version or (running_build()[0] if live else engine_version()),
-               ruler=head() + ("+dirty" if dirty() else ""), kind=kind, test=test, ok=ok,
+               ruler=head(), kind=kind, test=test, ok=ok,
                metrics=_clean(metrics), source=source)
     if cases is not None: row["cases"] = _clean(cases)
     if config is not None: row["config"] = _clean(config)

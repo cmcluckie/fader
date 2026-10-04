@@ -35,6 +35,10 @@ BASE = os.path.join(FIX, "gate-baseline.json")
 #     3 dB AND 3 dB up from where it had been - a ring that only ever needed
 #     the dial and reads 2 dB either side of it has not been let go of.
 from fk_in_loop import rig_config
+try:
+    from quality import voice_change          # the whole-phrase voice measure; needs the simulator's dependencies
+except ImportError:
+    voice_change = None
 DIAL_DB   = rig_config()["max_cut_db"]
 MIN_CUT   = DIAL_DB + 2.0
 LET_GO_DB = DIAL_DB + 3.0
@@ -68,7 +72,14 @@ FAST_LANDED_DB = -50.0
 
 def check(fx):
     x, sr = load16(os.path.join(FIX, fx["file"]))
-    r = Replay(sr); r.watch_hz = fx["hz"]; r.run(x)
+    r = Replay(sr); r.watch_hz = fx["hz"]; r.keep = fx["kind"] == "voice"; r.run(x)
+    # A sung fixture used to be judged at one frequency - the needle it was cut
+    # for. Judged as a phrase on 2026-10-04, the same fixtures that read "left
+    # alone" were carrying twenty filters. Both are reported now.
+    phrase = filters = None
+    if r.keep and voice_change is not None:
+        y = np.concatenate(r.out)
+        phrase = voice_change(y, x[:len(y)], sr)["change_pct"]; filters = len(r.g.notches())
     hz = fx["hz"]; near = lambda q: abs(q - hz) / hz <= 0.03
     ev   = [e for e in r.events  if near(e[1]) and fx["onset"] - 0.6 <= e[0] <= fx["end"]]
     wins = [w for w in r.windows if near(w[1]) and fx["onset"] - 0.3 <= w[0] <= fx["end"] + 0.3]
@@ -92,7 +103,7 @@ def check(fx):
     #   than the dial (LET_GO_DB). That is the failure the number was for - the
     #   09-30 hold bug ended at -5 - and it is the one that is gated.
     rescue = r.g.rescue()
-    return dict(rescues=rescue["episodes"], rescue_why=rescue["reason"],
+    return dict(rescues=rescue["episodes"], rescue_why=rescue["reason"], phrase_pct=phrase, filters=filters,
                 landed=landed(x, sr, fx["hz"], r.cuts),
                 detected=bool(ev), latency=(first - fx["onset"]) if first is not None else None,
                 deepest=deepest, last=last, bled=(deepest <= -12.0 and last > deepest + 8.0),
@@ -108,9 +119,16 @@ if __name__ == "__main__":
     base = json.load(open(BASE)) if os.path.exists(BASE) and not update else None
 
     bad, bled, let_go, hits, lats, ducked = [], 0, 0, 0, [], 0
+    cases, phrases, vfilters, fast_landed = [], [], [], []
     print(f"{'fixture':<44} {'kind':<5} {'detected':>10} {'deepest':>8} {'end':>7} {'landed':>7}")
     for fx in manifest:
         c = check(fx)
+        cases.append(dict(file=fx["file"], kind=fx["kind"], hz=fx["hz"], fast=bool(fx.get("fast")),
+                          lead_ms=(-1000 * c["latency"]) if c["latency"] is not None else None, deepest_db=c["deepest"],
+                          end_db=c["last"], landed_db=c["landed"], let_go=c["let_go"], relaxed=c["bled"], hit=c["hit"],
+                          rescues=c["rescues"], phrase_pct=c["phrase_pct"], filters=c["filters"]))
+        if fx["kind"] == "howl" and fx.get("fast") and c["landed"] is not None: fast_landed.append(c["landed"])
+        if fx["kind"] == "voice" and c["phrase_pct"] is not None: phrases.append(c["phrase_pct"]); vfilters.append(c["filters"])
         if fx["kind"] == "howl":
             det = f"{c['latency']*1000:+.0f} ms" if c["detected"] else "NEVER"
             ld = f"{c['landed']:6.1f}" if c["landed"] is not None else "   n/a"
@@ -128,7 +146,8 @@ if __name__ == "__main__":
             bled += int(c["bled"]); let_go += int(c["let_go"]); ducked += int(c["rescues"] > 0)
         else:
             print(f"{fx['file']:<44} voice {'HIT' if c['hit'] else 'left alone':>10} {c['deepest']:>7.1f}"
-                  f"{'  RESCUE DUCK' if c['rescues'] else ''}")
+                  + (f"   whole phrase: {c['phrase_pct']:4.1f} % taken, {c['filters']} filters" if c["phrase_pct"] is not None else "")
+                  + f"{'  RESCUE DUCK' if c['rescues'] else ''}")
             hits += int(c["hit"])
             # Not relative to any baseline: a duck on a voice is a dropout, and
             # the number that is acceptable is none.
@@ -140,12 +159,29 @@ if __name__ == "__main__":
     print(f"\n{now['howls']} real howls: let go {let_go}, relaxed {bled}, voice hits {hits}, median latency {now['median_latency_ms']:+.0f} ms"
           f"; rescue duck on {ducked} howls, 0 voices" if not any('rescue duck fired' in b for b in bad) else "")
 
+    if phrases:
+        print(f"the six sung phrases, whole: {np.mean(phrases):.1f} % of the voice taken on average (worst {max(phrases):.1f} %), "
+              f"{np.mean(vfilters):.0f} filters each - with nothing ringing")
     if base:
         if let_go > base.get("let_go", 0): bad.append(f"howls let go rose {base.get('let_go', 0)} -> {let_go}")
         if hits > base["voice_hits"]: bad.append(f"voice hits rose {base['voice_hits']} -> {hits}")
     if update or base is None:
         json.dump(now, open(BASE, "w"), indent=1); print(f"baseline {'re-' if update else ''}recorded -> gate-baseline.json")
         if update: sys.exit(0)
+    try:
+        import ledger
+        ledger.record("recorded-feedback", "recorded",
+                      dict(howls=now["howls"], detected=sum(1 for c in cases if c["kind"] == "howl" and c["lead_ms"] is not None),
+                           let_go=let_go, relaxed=bled, voice_hits=hits, voices=sum(1 for c in cases if c["kind"] == "voice"),
+                           median_lead_ms=-now["median_latency_ms"] if now["median_latency_ms"] is not None else None,
+                           worst_lead_ms=min((c["lead_ms"] for c in cases if c["kind"] == "howl" and c["lead_ms"] is not None), default=None),
+                           fast_worst_landed_db=max(fast_landed) if fast_landed else None, rescue_on_howls=ducked,
+                           voice_phrase_pct=float(np.mean(phrases)) if phrases else None,
+                           voice_phrase_worst_pct=float(max(phrases)) if phrases else None,
+                           voice_filters=float(np.mean(vfilters)) if vfilters else None),
+                      ok=not bad, cases=cases)
+    except ImportError:
+        pass
     if bad:
         print("\nFAIL"); [print("   " + b) for b in bad]; sys.exit(1)
     print("\nPASS")

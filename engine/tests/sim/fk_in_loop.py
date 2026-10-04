@@ -141,13 +141,22 @@ class FkGuard:
         self.lib.fk_unpin.argtypes = [ctypes.c_void_p]
         self.lib.fk_unpin(self.h)
 
+    def has(self, symbol):
+        """Is this function in the loaded library? A past build's library
+        (measure_version.py) lacks whatever was added after it."""
+        try: getattr(self.lib, symbol); return True
+        except AttributeError: return False
+
     def set_rescue(self, on):
         """The broadband rescue duck (RescueDuck.h): on by default, as in the engine."""
+        if not self.has("fk_set_rescue"): return          # a build from before the duck
         self.lib.fk_set_rescue.argtypes = [ctypes.c_void_p, ctypes.c_int]
         self.lib.fk_set_rescue(self.h, 1 if on else 0)
 
     def rescue(self):
         """What the duck has done: triggers, episodes, deepest and current depth, last cause."""
+        if not self.has("fk_rescue"):
+            return dict(triggers=0, episodes=0, deepest_db=0.0, depth_db=0.0, hz=0.0, level_db=0.0, reason="", futile=0)
         out = (ctypes.c_float * 8)()
         self.lib.fk_rescue.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
         self.lib.fk_rescue(self.h, out)

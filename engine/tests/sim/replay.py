@@ -69,6 +69,9 @@ class Replay:
         # for rings that live and die inside one 250 ms window, "how loud was
         # the line when a real cut landed on it" is the only ruler that works.
         self.watch_hz, self.cuts = None, []
+        # Set to keep what the guard passed on, so a whole phrase can be scored
+        # against what went in (replay_gate.py) instead of one frequency of it.
+        self.keep, self.out = False, []
 
     def _drain(self):
         lib, h = self.g.lib, self.g.h
@@ -84,7 +87,8 @@ class Replay:
         win = np.hanning(WIN); f = np.fft.rfftfreq(WIN, 1 / sr); top = f >= 1000.0; wide = f >= 150.0
         next_win = WIN / sr
         for s in range(0, len(x) - B, B):
-            self.g.process(x[s:s + B])
+            y = self.g.process(x[s:s + B])
+            if self.keep: self.out.append(y)
             self._drain()
             t = (s + B) / sr
             if self.watch_hz:
