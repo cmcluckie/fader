@@ -64,6 +64,24 @@ duck, fenced above 4 kHz, leaves them alone. The detector's low-frequency
 calls are not yet trustworthy enough to hang a dropout on — see "the voice"
 under Parked.
 
+**Status, 2026-10-04 morning - the room, first time:**
+
+- Left running by Chris about 20 dB over the ring point for 4.5 minutes on
+  `f5c5f0b`: 300 catches at a median -74 dB, nothing louder than his voice,
+  **no rescue row, including while he spoke.** Cost at that gain: 20-42
+  filters, 8-14 dB off 4-16 kHz.
+- Cold jumps, each bracketed by a baseline (`scripts/coldjump.py`): one at
+  20 over **failed** - a 10 kHz ring to -28 dB in 160 ms (600 dB/s), duck
+  fired at -37 and -28, kill switch tripped. One at 16-22 over was clean
+  (-52 dB).
+- Cause found and fixed in `d55f580` (the side list of fast risers held
+  twelve, filled low to high; the line that mattered was tracked one frame
+  in two). In replay the cut now lands with that line at -78 dB instead of
+  -40. **Not yet re-run in the room** - `d55f580` is the build sitting there.
+
+Still owed, item 4 below: the 20 and 22 dB jumps again, bracketed, on
+`d55f580`.
+
 **It is built when these are measured, old against new:**
 
 1. Unit: the state machine's timing; T2 fires within 3 frames on a −25 dB
@@ -215,8 +233,16 @@ paper's comparison found best).
   published guidance exists.
 - **Measures to adopt from the survey:** fraction of time spent howling, mean
   time to recover.
-- **The ring point moves.** −12 dB at 18:53, −4 dB at 20:18 the same evening.
-  A guard measurement is only comparable to a baseline taken beside it.
+- **The ring point moves, a lot, and I do not know why.** −12 dB at 18:53 and
+  −4 at 20:18 on 10-03; on 10-04, −15, then −2.5 five minutes later, then −0.5,
+  nothing up to +10, −8.5, −2.5 inside three minutes. The desk has no gate,
+  compressor or EQ in the path (read over OSC). Someone moving in the room at
+  10 kHz (a 3 cm wavelength) explains a few decibels, not twelve. Until the
+  engine's sweep probe (item 2) can measure the loop directly, every jump is
+  bracketed by baselines and only counted if they agree (`coldjump.py`). This
+  makes the probe the next thing to build, ahead of the rest of item 2.
+- **The voice, live.** On 10-04, speaking into the microphone took the filter
+  count from 31 to 42 and put filters on 141, 157 and 234 Hz within 32-75 ms.
 - **The filter pool** (48): un-merged modes cost about ten runaway modes per
   six fuzz seeds, recovered at 96. The rig has shown 14 at most.
 - **The app's `cut_here`** assumes a filter width; the recording's two channels
