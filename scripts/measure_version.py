@@ -41,11 +41,37 @@ DSP = ("engine/tests/fk_loopdsp.cpp", "engine/Source/FeedbackDetector.h", "engin
        "engine/Source/EngineDefaults.h", "engine/Source/RescueDuck.h")
 
 
+# A correction to the ruler, applied to every past build's shim. Until 2026-10-04
+# the shim never set how long a quiet filter is held, so it ran the bank's
+# built-in 2 s while the engine in the room has always held for 10 s
+# (AudioEngine's own start-up value; EngineDefaults.h from then on). The shim is
+# test code - the ruler, not the thing measured - so a past build is measured
+# with the corrected ruler: one line is added after each bank.configure call,
+# in the worktree only. Its detector and filter code are untouched.
+RULER = "hold10"
+HOLD_LINE = "bank.holdSeconds = 10.0;   // ruler correction: the engine's own hold (scripts/measure_version.py)"
+
+
+def patch_shim(path):
+    """Add the engine's hold to a shim that never set it. Returns True if it changed anything."""
+    import re
+    src = open(path).read()
+    if "holdSeconds" in src: return False
+    out, n = [], 0
+    for line in src.splitlines(keepends=True):
+        out.append(line)
+        m = re.match(r"^(\s*)(g(?:->|\.))bank\.configure \(.*\);\s*$", line)
+        if m: out.append(f"{m.group(1)}{m.group(2)}{HOLD_LINE}\n"); n += 1
+    if n: open(path, "w").write("".join(out))
+    return n > 0
+
+
 def source_id(h):
     """What the test library is made of at that commit: the shim and the DSP
-    headers it includes. Not the engine's audio and OSC code - a commit that
-    only changes those has the same library, and is the same DSP."""
-    return "".join((git("rev-parse", "--verify", "-q", f"{h}:{f}") or "-")[:10] for f in DSP)
+    headers it includes (not the engine's audio and OSC code - a commit that
+    only changes those has the same library, and is the same DSP), plus which
+    ruler correction it was built with."""
+    return "".join((git("rev-parse", "--verify", "-q", f"{h}:{f}") or "-")[:10] for f in DSP) + "+" + RULER
 
 
 def md5(path):
@@ -82,7 +108,10 @@ def build(h):
     for root, _, files in os.walk(bd):
         for f in files:
             if f == "fk_loopdsp.cpp.o" or f == "libfk-loopdsp.dylib": os.remove(os.path.join(root, f))
+    shim = os.path.join(wt, "engine", "tests", "fk_loopdsp.cpp")
+    patched = patch_shim(shim)
     b = subprocess.run(["cmake", "--build", bd, "--target", "fk-loopdsp", "-j8"], capture_output=True, text=True)
+    if patched: subprocess.run(["git", "-C", wt, "checkout", "-q", "--", "engine/tests/fk_loopdsp.cpp"])   # leave the worktree as the commit had it
     if b.returncode: print(b.stdout[-800:], b.stderr[-800:]); return None
     built = os.path.join(bd, "libfk-loopdsp.dylib")
     sid, m = source_id(h), md5(built)

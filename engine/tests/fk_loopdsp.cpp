@@ -81,6 +81,8 @@ static void applyEngineDefaults (Guard& g)
     p.inputGateDb   = fk::defaults::inputGateDb;
     g.det.setParams (p);
     g.bank.configure (fk::defaults::notchQ, fk::defaults::initialCutDb, fk::defaults::maxCutDb);
+    // ...and the hold, which AudioEngine sets every block and this library never did.
+    g.bank.holdSeconds = (double) fk::defaults::releaseSeconds;
 }
 
 /** Create a guard. Returns an opaque handle, or null. */
@@ -116,6 +118,7 @@ void fk_configure (void* h, float notchQ, float initialCutDb, float maxCutDb, in
     p.inputGateDb   = inputGateDb;
     g->det.setParams (p);
     g->bank.configure (notchQ, initialCutDb, maxCutDb);
+    g->bank.holdSeconds = (double) fk::defaults::releaseSeconds;   // the app never sends releaseSeconds; the engine's own value stands
 }
 
 void fk_destroy (void* h) { delete static_cast<Guard*> (h); }

@@ -142,11 +142,12 @@ int main (int argc, char* argv[])
     bool noRings = false, plateauPath = false, useProfile = false;
     double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0, stagger = 1.0;
     bool realloc_ = true;
-    // The rig's Attack level 2: four confirm frames and a -18 first strike. The
+    // The rig's Attack level 2: six confirm frames and a -18 first strike. The
     // fuzz ran -6 and six frames for a week, which never narrows a filter to the
     // needle the rig makes of every ring - and the merge failure of 2026-10-03
-    // lives exactly there.
-    double firstDb = -18.0; int frames = 4;
+    // lives exactly there. (Four frames until 2026-10-04: the app's "fast" had
+    // been moved to six a day earlier and this harness had not followed.)
+    double firstDb = -18.0; int frames = 6;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
@@ -201,6 +202,8 @@ int main (int argc, char* argv[])
     // --deep is the operator's max-cut dial, applied the way the engine applies
     // it: normal stops 6 dB short, stubborn reaches it, emergency goes past.
     bank.configure (fk::defaults::notchQ, firstDb, deepDb);
+    // The hold the engine has always run (10 s), not the bank's built-in 2 s.
+    bank.holdSeconds = (double) fk::defaults::releaseSeconds;
 
     // The shipped pitch profile: the fifteen 1/6-octave regions holding 85% of
     // 51,501 real catches. Seeding these is what the engine now does at startup,

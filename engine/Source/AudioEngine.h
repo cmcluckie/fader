@@ -516,7 +516,7 @@ private:
     //
     // A wider filter is also markedly more forgiving of being placed a few hundred
     // Hz off, which is the other bug being fixed alongside this.
-    std::atomic<float> maxCutDb { fk::defaults::maxCutDb }, notchQ { fk::defaults::notchQ }, releaseSeconds { 10.0f };
+    std::atomic<float> maxCutDb { fk::defaults::maxCutDb }, notchQ { fk::defaults::notchQ }, releaseSeconds { fk::defaults::releaseSeconds };
     std::atomic<float> harmBudget { 0.0f };    // 0 = no ceiling
     bool wasBypassed = false, wasWatching = false;
     std::atomic<bool>  analysis { false };     // off unless asked for

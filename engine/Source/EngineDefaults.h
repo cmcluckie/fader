@@ -14,8 +14,15 @@
     The app's Attack levels, for reference (FeedbackController.PushAttack):
         0 gentle  : persistFrames 10, initialCut  -6
         1 normal  : persistFrames  6, initialCut -12
-        2 fast    : persistFrames  4, initialCut -18    <- the rig, 2026-10
+        2 fast    : persistFrames  6, initialCut -18    <- the rig, 2026-10
     and audio.json carries MinHz, MaxHz, FloorDb, MaxCutDb, HarmBudget.
+
+    Found again on 2026-10-04, by reading rather than by a room screaming: how
+    long a quiet filter is held before it starts to leave. The engine has held
+    for 10 s since its first day (its own start-up value); the test library and
+    the fuzz never set it and ran the bank's built-in 2 s. Every gate layer was
+    measuring a guard that let go five times sooner than the one in the room.
+    It lives here now.
 */
 namespace fk::defaults
 {
@@ -38,4 +45,5 @@ namespace fk::defaults
     constexpr float notchQ        = 12.0f;
     constexpr float initialCutDb  = -6.0f;
     constexpr float maxCutDb      = -18.0f;
+    constexpr float releaseSeconds = 10.0f;   // quiet time before a filter starts to leave (NotchBank::holdSeconds)
 }
