@@ -37,9 +37,15 @@ def git(*a):
     return subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True).stdout.strip()
 
 
+DSP = ("engine/tests/fk_loopdsp.cpp", "engine/Source/FeedbackDetector.h", "engine/Source/NotchBank.h",
+       "engine/Source/EngineDefaults.h", "engine/Source/RescueDuck.h")
+
+
 def source_id(h):
-    """What the library is made of at that commit: the engine sources and the shim."""
-    return git("rev-parse", f"{h}:engine/Source") + git("rev-parse", f"{h}:engine/tests/fk_loopdsp.cpp")
+    """What the test library is made of at that commit: the shim and the DSP
+    headers it includes. Not the engine's audio and OSC code - a commit that
+    only changes those has the same library, and is the same DSP."""
+    return "".join((git("rev-parse", "--verify", "-q", f"{h}:{f}") or "-")[:10] for f in DSP)
 
 
 def md5(path):
@@ -123,9 +129,21 @@ if __name__ == "__main__":
         hashes = a
     if not hashes:
         print(__doc__); sys.exit(0)
+    seen = {}                                    # source id -> the first build measured with it
     for h in hashes:
         h = git("rev-parse", "--short", h) or h
         print(f"{h}  {git('show', '-s', '--format=%cd  %s', '--date=format:%m-%d %H:%M', h)}")
+        sid = source_id(h)
+        if sid in seen:
+            # Same detector, same filters: there is nothing new to measure, and
+            # measuring it again would only pretend there were two results.
+            print(f"   same DSP sources as {seen[sid]} - not measured again")
+            if record:
+                sys.path.insert(0, SIM); os.environ["FK_RECORD"] = "1"
+                import ledger
+                ledger.record("same-dsp", "bench", dict(same_as=seen[sid]), version=h)
+            continue
+        seen[sid] = h
         lib = build(h)
         if lib is None: print("   could not build"); continue
         if not has(lib, "fk_configure"):

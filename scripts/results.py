@@ -107,11 +107,14 @@ def build_page():
         return "# Results\n\nNothing has been recorded yet. Run `scripts/preship.sh --record` on a committed tree.\n"
     last = {}
     for r in rows:
-        key = (r["version"], r["test"], r["metrics"].get("room"), r["metrics"].get("voice")) if r["kind"] != "live" else None
-        if key: last[key] = r
+        if r["kind"] == "live" or r["test"] == "same-dsp": continue
+        key = (r["version"], r["test"], r["metrics"].get("room"), r["metrics"].get("voice"))
+        # the latest measurement wins - except that a study with more cases is never replaced by one with fewer
+        if key not in last or len(r.get("cases", [])) >= len(last[key].get("cases", [])): last[key] = r
+    alias = {r["version"]: r["metrics"]["same_as"] for r in rows if r["test"] == "same-dsp"}
     vers = []
     for r in rows:
-        if r["kind"] != "live" and r["version"] not in vers: vers.append(r["version"])
+        if r["kind"] != "live" and r["test"] != "same-dsp" and r["version"] not in vers: vers.append(r["version"])
     date = {v: git("show", "-s", "--format=%cd", "--date=format:%m-%d %H:%M", v) or "?" for v in vers}
     vers.sort(key=lambda v: git("show", "-s", "--format=%ct", v) or "0", reverse=True)
 
@@ -120,7 +123,7 @@ def build_page():
         return r["metrics"] if r else {}
 
     def case(v, room, voice, c):
-        r = last.get((v, "singer-in-loop", room, voice))
+        r = last.get((v, "singer-in-loop", room, voice)) or last.get((v, "singer-gate", room, voice))
         if not r: return {}
         return next((x for x in r.get("cases", []) if x["case"] == str(c) and x["guarded"]), {})
 
@@ -128,7 +131,7 @@ def build_page():
     for r in rows:
         v = r["metrics"].get("voice")
         if r["test"] == "singer-in-loop" and v and v not in voices: voices.append(v)
-    real = next((v for v in voices if v != "synth"), None)
+    voices.sort(key=lambda v: (v != "synth", v))          # the synthetic singer first: it is the one every machine has
 
     L = []
     w = L.append
@@ -166,18 +169,27 @@ def build_page():
 
     # ---- feedback by version
     w("## Feedback, by build\n")
-    w("Rings *heard* are lines the singer did not sing, louder than 20 dB under the voice, that grew. "
-      "\"Held to\" is how far a slow push got before a ring was audible for a quarter of a second.\n")
-    w("| build | date | recorded howls caught | let go | median lead | fast risers: level when cut | rig-like: rings heard +10 / +15 / +20 | rig-like held to | hall: rings heard +6 / +10 | hall held to |")
+    w("Rings *heard* are lines the singer did not sing, louder than 20 dB under the voice, that grew (synthetic singer). "
+      "\"Held to\" is how far a slow push got, in dB over the room's limit, before a ring was audible for a quarter of a second: "
+      "the median of five runs that differ only in the room's noise, with the range beside it, for each voice ("
+      + " / ".join(voices) + "). One run alone moves by 3 dB or more for no reason, so only a difference "
+      "larger than the ranges means anything.\n")
+    w("| build | date | recorded howls caught | let go | median lead | fast risers: level when cut | rig-like: rings heard +10 / +15 / +20 | rig-like held to, dB | hall: rings heard +6 / +10 | hall held to, dB |")
     w("|---|---|---|---|---|---|---|---|---|---|")
     for v in vers:
         g = get(v, "recorded-feedback")
         def heard(room, cs):
             return " / ".join(f(case(v, room, "synth", c).get("audible")) for c in cs)
+        def held(room):
+            out = []
+            for vv in voices:
+                x = case(v, room, vv, "push")
+                if x.get("held_to_db") is None: continue
+                rng = f" ({x['held_to_min_db']:+.0f} to {x['held_to_max_db']:+.0f})" if x.get("held_to_min_db") is not None else ""
+                out.append(f"{x['held_to_db']:+.1f}{rng}")
+            return " / ".join(out) or "-"
         w(f"| `{v}` | {date[v]} | {f(g.get('detected'))} of {f(g.get('howls'))} | {f(g.get('let_go'))} | {f(g.get('median_lead_ms'))} ms | "
-          f"{f(g.get('fast_worst_landed_db'), '{:.0f} dB')} | {heard('rig', (10, 15, 20))} | "
-          f"{f(case(v, 'rig', 'synth', 'push').get('held_to_db'), '{:+.1f} dB')} | {heard('hall', (6, 10))} | "
-          f"{f(case(v, 'hall', 'synth', 'push').get('held_to_db'), '{:+.1f} dB')} |")
+          f"{f(g.get('fast_worst_landed_db'), '{:.0f} dB')} | {heard('rig', (10, 15, 20))} | {held('rig')} | {heard('hall', (6, 10))} | {held('hall')} |")
     w("")
 
     # ---- sound by version
@@ -214,6 +226,7 @@ def build_page():
         w("| when | build | what | result |")
         w("|---|---|---|---|")
         base = None
+        notes_used = dict(stale=False)
         for r in live:
             m = r["metrics"]; t = datetime.datetime.fromisoformat(r["when"])
             when = t.strftime("%m-%d %H:%M")
@@ -228,8 +241,9 @@ def build_page():
                 over = ""
                 if base and (t - base[0]).total_seconds() <= 1800 and m.get("top_db") is not None:
                     over = f" (**{m['top_db'] - base[1]:+.1f} dB over** the last baseline)"
-                res = (f"guard on: reached {f(m.get('top_db'), '{:+.1f}')} dB{over}; loudest line {f(m.get('loudest_db'), '{:.1f}')} dB"
-                       f" at {f(m.get('loudest_hz'))} Hz; {m.get('detections', 0)} catches, {m.get('rescues', 0)} duck actions"
+                loud = (f"; loudest line {m['loudest_db']:.1f} dB at {m.get('loudest_hz', 0):.0f} Hz" if m.get("loudest_db") is not None else "")
+                res = (f"guard on: reached {f(m.get('top_db'), '{:+.1f}')} dB{over}{loud}; "
+                       f"{m.get('detections', 0)} catches, {m.get('rescues', 0)} duck actions"
                        + ("; **kill switch tripped**" if m.get("killed") else ""))
                 what = "guarded sweep"
             elif r["test"] == "cold-jump":
@@ -245,8 +259,20 @@ def build_page():
                 what = "voice in a session"
             else:
                 res = "  ".join(f"{k}={v}" for k, v in list(m.items())[:6]); what = r["test"]
-            w(f"| {when} | `{r['version']}` | {what} | {res}" + (f" *({r['note']})*" if r.get("note") and "stale" in r["note"] else "") + " |")
+            stale = bool(r.get("note") and "stale" in r["note"])
+            notes_used["stale"] |= stale
+            w(f"| {when} | `{r['version']}`{' †' if stale else ''} | {what} | {res} |")
         w("")
+        if notes_used["stale"]:
+            w("† The bundle running at that time carried an engine built at 15:22, older than the fix it was shipped under "
+              "(`docs/wrong-machine-2026-10-03.md`); it is filed under the commit that build came from.\n")
+        w("Live builds are named from the engine's start times (the feedback-log file names); from `d55f580` on the engine "
+          "writes its own build stamp and the tools read it.\n")
+        only_live = sorted({r["version"] for r in live} - set(vers))
+        if only_live:
+            w("Builds with live results and no row in the tables above: "
+              + "; ".join(f"`{v}` has the same detector and filter code as `{alias[v]}`" if v in alias else
+                          f"`{v}` is from before `11fe355` and cannot be re-measured with the rig's settings" for v in only_live) + ".\n")
 
     # ---- every case for the latest build
     w(f"## A singer in the loop: every case, build `{v0}`\n")
@@ -263,6 +289,7 @@ def build_page():
                 name = {"alone": "no loop", "move": "+6, mic moves", "push": "slow push"}.get(x["case"], f"{int(x['case']):+d}" if x["case"].lstrip("-").isdigit() else x["case"])
                 if not x["guarded"]: name += " *no guard*"
                 extra = f" (held to {x['held_to_db']:+.1f} dB)" if x.get("held_to_db") is not None else ""
+                if x.get("held_to_min_db") is not None: extra = extra[:-1] + f", {x['held_to_min_db']:+.1f} to {x['held_to_max_db']:+.1f} over five runs)"
                 w(f"| {name}{extra} | {x['change_pct']:.1f} % | {x['added_pct']:.1f} / {x['removed_pct']:.1f} | {x['filters_mean']:.0f} | {x['audible']} | "
                   f"{x['audible_ms']:.0f} ms | {f(x.get('worst_catch_ms'), '{:+.0f} ms')} | {f(x.get('worst_kill_ms'), '{:.0f} ms')} | "
                   f"{f(x.get('loudest_db'), '{:.1f} dB')} | {x.get('tail_ms', 0):.0f} ms | {x.get('artifact_ms', 0):.0f} ms | {x['duck_episodes']} |")

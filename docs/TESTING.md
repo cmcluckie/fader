@@ -118,3 +118,11 @@ numbers.
    the cuts into the "recording" and flatters the result.
 6. **Judge the voice as a voice.** Six sung fixtures passed for a week judged
    at one frequency each while carrying about thirty filters apiece.
+7. **A rebuilt past build must prove what it is.** Rebuilding seven old builds
+   in a row produced three copies of their neighbours: the compile was
+   skipped and the file was labelled as if it had not been. Each library is
+   now rebuilt from nothing, stamped with its sources, and refused if it is
+   byte-identical to one built from different sources.
+8. **Do not touch the tree while a recording run is in progress.** The log
+   refuses results from uncommitted work, including a new file created half
+   way through.

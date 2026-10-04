@@ -452,26 +452,34 @@ def score(loop, r, closed=True):
 MARGINS = (-6, -3, 0, 3, 6, 10, 15, 20)
 
 
+# The slow push is one trajectory through a room, and where it finally loses its grip is decided by
+# the noise as much as by the guard: the same build, same room, same singer, with only the room-noise
+# seed changed, read 16.8 to 22.7 dB (2026-10-04). One push cannot tell two builds apart. So the
+# figure is the MEDIAN of five, and the range is reported beside it.
+PUSH_SEEDS = (7, 1, 2, 3, 4)
+
+
 def _case(args):
     """One (room, voice, case, guarded) run - a process-pool job."""
-    room, vname, case, guarded, wav = args
+    room, vname, case, guarded, wav = args[:5]
+    seed = args[5] if len(args) > 5 else 7
     x, info = voice(vname)
     src = np.concatenate([np.zeros(int(PREROLL_S * FS)), x])
     if case == "alone":
-        loop = _loop(room); r = run_loop(loop, src, None, guarded)
+        loop = _loop(room); r = run_loop(loop, src, None, guarded, seed=seed)
     elif case == "move":
         # the survey's last phase: held 6 dB over, then the microphone travels
         t0 = PREROLL_S + 8.0; metres = 0.10 if room == "rig" else 0.30
-        loop = _loop(room, (t0, t0 + 4.0, metres)); r = run_loop(loop, src, 6.0, guarded)
+        loop = _loop(room, (t0, t0 + 4.0, metres)); r = run_loop(loop, src, 6.0, guarded, seed=seed)
     elif case == "push":
         # a slow push to failure: half a decibel a second from 6 under, the singer on a loop
         seconds = 64.0; reps = int(np.ceil(seconds * FS / len(x)))
         src = np.tile(x, reps)[:int(seconds * FS)]
-        loop = _loop(room); r = run_loop(loop, src, lambda t: -6.0 + 0.5 * t, guarded)
+        loop = _loop(room); r = run_loop(loop, src, lambda t: -6.0 + 0.5 * t, guarded, seed=seed)
     else:
-        loop = _loop(room); r = run_loop(loop, src, float(case), guarded)
+        loop = _loop(room); r = run_loop(loop, src, float(case), guarded, seed=seed)
     row, eps = score(loop, r, closed=(case != "alone"))
-    row.update(room=room, voice=vname, case=str(case), guarded=bool(guarded), seconds=len(src) / FS)
+    row.update(room=room, voice=vname, case=str(case), guarded=bool(guarded), seconds=len(src) / FS, seed=seed)
     if case == "push":
         # how far it got: the fader setting when the first audible ring began, and when a ring was audible for a quarter second
         aud = sorted((e for e in eps if e["audible_ms"] > 0.0 and e["kind"] == "ring"), key=lambda e: e["t_on"])
@@ -502,6 +510,7 @@ def study(rooms=("rig", "hall"), voices=None, cases=None, wav=None, jobs=None, v
         for v in voices:
             for c in cases:
                 work.append((room, v, c, True, wav))
+                if c == "push": work += [(room, v, c, True, None, sd) for sd in PUSH_SEEDS[1:]]
                 if c in (-6, -3): work.append((room, v, c, False, wav))        # what the loop itself does, no guard
     jobs = jobs or max(1, min(len(work), (os.cpu_count() or 2) - 1))
     if jobs > 1:
@@ -509,7 +518,18 @@ def study(rooms=("rig", "hall"), voices=None, cases=None, wav=None, jobs=None, v
         with mp.get_context("fork").Pool(jobs) as pool: res = pool.map(_case, work, chunksize=1)
     else:
         res = [_case(w) for w in work]
-    return [row for row, _ in res], {(_r["room"], _r["voice"], _r["case"], _r["guarded"]): eps for _r, eps in res}
+    # fold the repeated pushes into one row: the median, and the range beside it
+    pushes = {}
+    for row, _ in res:
+        if row["case"] == "push": pushes.setdefault((row["room"], row["voice"]), []).append(row["held_to_db"])
+    rows, eps = [], {}
+    for row, e in res:
+        if row["case"] == "push":
+            if row["seed"] != PUSH_SEEDS[0]: continue
+            vals = sorted(pushes[(row["room"], row["voice"])])
+            row.update(held_to_db=float(np.median(vals)), held_to_min_db=vals[0], held_to_max_db=vals[-1], held_to_runs=len(vals))
+        rows.append(row); eps[(row["room"], row["voice"], row["case"], row["guarded"])] = e
+    return rows, eps
 
 
 def fmt(v, spec="{:.1f}", none="-"):
@@ -525,7 +545,8 @@ def table(rows):
               f" {r['rings']:5d} {r['audible']:5d} {r['audible_ms']:6.0f}ms {fmt(r['worst_catch_ms'], '{:+.0f}'):>6} {fmt(r['worst_kill_ms'], '{:.0f}'):>6}"
               f" {fmt(r['loudest_db']):>7} {r['artifact_ms']:4.0f}ms {r['tail_ms']:4.0f}ms | {r['filters_mean']:4.1f} {r['filters_max']:3d} {r['duck_episodes']:4d} {r['cut_1k_4k']:5.1f} {r['cut_4k_16k']:5.1f}"
               f" {fmt(r.get('end_margin_db')):>6}"
-              + (f"   first slip {fmt(r.get('first_slip_db'), '{:+.1f}')} dB, held to {fmt(r.get('held_to_db'), '{:+.1f}')} dB" if r["case"] == "push" else ""))
+              + (f"   held to {fmt(r.get('held_to_db'), '{:+.1f}')} dB (median of {r.get('held_to_runs', 1)}: "
+                 f"{fmt(r.get('held_to_min_db'), '{:+.1f}')} to {fmt(r.get('held_to_max_db'), '{:+.1f}')})" if r["case"] == "push" else ""))
 
 
 def headline(rows, room="rig", vname="synth"):
@@ -541,7 +562,8 @@ def headline(rows, room="rig", vname="synth"):
                         f"at{k}_catch_ms": pick[c]["worst_catch_ms"], f"at{k}_kill_ms": pick[c]["worst_kill_ms"],
                         f"at{k}_filters": pick[c]["filters_mean"]})
     if "push" in pick:
-        out.update(first_slip_db=pick["push"].get("first_slip_db"), held_to_db=pick["push"].get("held_to_db"))
+        out.update(held_to_db=pick["push"].get("held_to_db"), held_to_min_db=pick["push"].get("held_to_min_db"),
+                   held_to_max_db=pick["push"].get("held_to_max_db"))
     if "move" in pick:
         out.update(move_audible_ms=pick["move"]["audible_ms"], move_change_pct=pick["move"]["change_pct"])
     return out
@@ -665,7 +687,9 @@ def _record(rows, ok, gate_run):
             sub = [r for r in rows if r["room"] == room and r["voice"] == v]
             if not sub: continue
             _, info = voice(v)
-            ledger.record("singer-in-loop", "simulated", dict(room=room, voice=v, voice_id=info["id"], **headline(rows, room, v)),
+            # the quick gate subset under its own name, so it never stands in for the full study on the results page
+            ledger.record("singer-gate" if gate_run else "singer-in-loop", "simulated",
+                          dict(room=room, voice=v, voice_id=info["id"], **headline(rows, room, v)),
                           ok=ok if gate_run else None, cases=sub)
 
 

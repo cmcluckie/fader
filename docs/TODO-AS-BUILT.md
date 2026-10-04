@@ -315,6 +315,7 @@ the goal: the fault is in what gets called feedback, not in a dial.
 - **Goal.** Flagged within 2 s; no filter dug past the dial.
 - **Stages.** S3: `preship.py` disconnected check - flagged, deepest -18 dB, duck released. S4: found the real fault on the rig 09-30 (the guard was beside the loop).
 - **As built.** 09-28 `bfa5bb9`, `45d1b10`. 09-30 `837947b`. Six hits where a ring got louder under 20 dB of cut; verdict latched 30 s; alarm on the Show screen.
+- **Found 10-04, not fixed.** Singing alone raises it. With no loop at all the alarm comes up 5.6 s into the synthetic singer and 25.5 s into Chris's recorded singing: a held note that swells under a deep cut is, to this test, a ring that will not die. The evidence is right and the conclusion is wrong - it means "this is not feedback", which is 3.3. Until then the alarm can be false while someone is singing.
 
 ### 2.8 Pulsed filters - CANCELLED
 
@@ -333,8 +334,8 @@ the goal: the fault is in what gets called feedback, not in a dial.
   - [x] The measure exists and checks itself against known inputs (`quality.py --selftest`: 25 checks).
   - [x] The loop it runs in matches the algebra (closed-loop colouration within 0.02 dB rms of 1/(1-H)).
   - [x] It reads the live flight recordings (output channel against input channel).
-  - [ ] In the ship gate (8.6).
-  - [ ] Logged per version (8.7).
+  - [x] In the ship gate (8.6).
+  - [x] Logged per version (8.7).
   - [ ] Chris has listened to examples and agrees with the scale (8.11).
 - **As built.** 10-04 `quality.py`, `voices.py`, `make_voices.py`. Singer fed in at the microphone; fader after the guard, as on the rig; clean reference is the same voice through the same amplifier and speaker with no loop and no guard.
 
@@ -344,13 +345,13 @@ the goal: the fault is in what gets called feedback, not in a dial.
 
 | Stage | Threshold to move on | Now | |
 |---|---|---|---|
-| S2 | six sung fixtures, whole phrase: under 5 % each | not yet measured per phrase | open |
+| S2 | six sung fixtures, whole phrase: under 5 % each | 29.7-40.7 %, average 36.8 %; 22-35 filters each | **fail** |
 | S3 | singer, no loop, both voices: under 10 % to move on; **goal 3 %** | 31.9 % (synth), 60.5 % (rig-0927) | **fail** |
 | S3 | no ring caught later than today: 0 heard to +15 rig-like, to +6 hall | (the bar it must not lower) | - |
 | S4 | two minutes of singing at low gain: guard takes under 3 % | 09-27 build took 6-13 % at working gain | open |
 
 - **To do.**
-  - [ ] Add the whole-phrase measure to `replay_gate.py` (S2).
+  - [x] Whole-phrase measure in `replay_gate.py` (S2), 10-04. Reported; gate it once it is under 10 %.
   - [ ] Build 3.3; then re-measure everything above.
   - [ ] Decide the rig's Attack setting with numbers: gentle is 6.9 % / 29.5 % against 32 % / 60.6 %, for 0.1-0.2 s of ring at +10.
 
@@ -578,7 +579,7 @@ the goal: the fault is in what gets called feedback, not in a dial.
 - `docs/studio-session.md`: what to collect, in order.
 
 ### 8.11 Listening check - NEW
-- **Exit.** [ ] Render the same phrase at about 5, 15 and 30 % (`quality.py --wav`). [ ] Chris listens. [ ] The scale, the audible line (-50 dBFS) and the 3 % / 15 % goals are confirmed or moved.
+- **Exit.** [x] The same phrase rendered several ways, each file named with its measured change (`listen.py`, 10-04): clean; today's build with nothing ringing (32 % synthetic, 60 % Chris); the same with gentle attack (7 %, 29 %); one filter (5-7 %); 2 dB quieter (16 %); and what the 09-27 build actually sent to the speakers (8 %). [x] Three of Chris's own sent to him 10-04. [ ] Chris listens. [ ] The scale, the audible line (-50 dBFS) and the 3 % / 15 % goals are confirmed or moved.
 
 ---
 

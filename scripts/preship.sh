@@ -109,4 +109,11 @@ if ! python3 quality.py --gate; then
   echo "FAILED: rings heard, or more of the voice taken, than the recorded build"
   exit 1
 fi
+if [[ "${FK_RECORD:-0}" == "1" ]]; then
+  # A recorded build gets the whole study - both rooms, every voice on this
+  # machine, every gain - not only the gate's five runs. About a minute more.
+  echo "==> recording the full singer study"
+  python3 quality.py > /tmp/fk-quality.out 2>&1 || true
+  grep -E "recorded|runs in" /tmp/fk-quality.out || tail -5 /tmp/fk-quality.out
+fi
 echo "==> preship OK"
