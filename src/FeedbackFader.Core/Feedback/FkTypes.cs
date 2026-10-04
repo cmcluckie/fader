@@ -8,7 +8,8 @@ public enum FkMode { Off = 0, Assist = 1, Auto = 2 }
 public enum FkTelemetry { None = 0, Events = 1, Notches = 2, Spectrum = 4, Status = 8, All = 15 }
 
 /// <summary><c>/fk/status</c> — is the engine's audio callback running, and its CPU load.</summary>
-public sealed record FkStatus(bool EngineOk, float CpuLoad);
+/// <summary>Pid is the engine process that sent it; 0 from an engine too old to say.</summary>
+public sealed record FkStatus(bool EngineOk, float CpuLoad, int Pid = 0);
 
 /// <summary>
 /// What the microphone is hearing, as opposed to what the guard is doing about

@@ -18,6 +18,13 @@
 #include <csignal>
 #include <vector>
 #include <algorithm>
+#if JUCE_WINDOWS
+ #include <process.h>
+ #define fk_getpid _getpid
+#else
+ #include <unistd.h>
+ #define fk_getpid getpid
+#endif
 #include "AudioEngine.h"
 
 // Cleared by SIGINT/SIGTERM or by /fk/quit; main() then stops the engine cleanly.
@@ -482,7 +489,6 @@ private:
     /// log axis, and therefore invisible as movement - is legible as colour.
     void sendTracks()
     {
-        std::fprintf (stderr, "[dbg] sendTracks entered\n");
         for (int ch = 0; ch < 2; ++ch)
         {
             const auto& det = engine.detector (ch);
@@ -499,7 +505,7 @@ private:
                                                live ? t.hiHz  : 0.0f,
                                                live ? t.hops  : 0,
                                                live ? t.heat() : 0.0f));
-                if (! ok) std::fprintf (stderr, "[dbg] track send FAILED ch=%d i=%d\n", ch, i);
+                juce::ignoreUnused (ok);   // a lost telemetry packet heals on the next send
             }
         }
     }
@@ -646,7 +652,11 @@ private:
     }
     std::array<int, 16> lastRescue {};
 
-    void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }
+    // The third argument is this process's id. The app restarts engines, and a
+    // status from the one it has just replaced (answering a last ping on its way
+    // out) used to be taken for the new one's - after which the new engine was
+    // never sent its settings and ran with no channels armed. Found 2026-10-04.
+    void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad(), (int) fk_getpid())); }
     void sendAudioState (const juce::String& d, int sr, int bs)
     {
         juce::OSCMessage msg ("/fk/audio/state"); msg.addString (d); msg.addInt32 (sr); msg.addInt32 (bs);

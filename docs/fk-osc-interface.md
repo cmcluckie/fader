@@ -59,7 +59,7 @@ Everything else in the detector and the filter bank is fixed at build time.
 
 | Address | Args | Meaning | When |
 |---|---|---|---|
-| `/fk/status` | `i f` | audio device running (0/1), CPU load 0..1 | about 2 Hz with bit 3, and on ping |
+| `/fk/status` | `i f i` | audio device running (0/1), CPU load 0..1 (not yet computed: always 0), the engine's process id | about 2 Hz with bit 3, and on ping |
 | `/fk/audio/state` | `s i i i` | device, sample rate, buffer size, running | on change |
 | `/fk/device` | `s` | one input-capable device name | after `/fk/listdevices` |
 | `/fk/channel` | `i s` | input index, name | with the device list |

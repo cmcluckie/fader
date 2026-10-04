@@ -163,7 +163,11 @@ public sealed class FkEngineClient : IAsyncDisposable
     {
         switch (m.Address)
         {
-            case "/fk/status" when m.Arguments is [int ok, float cpu]:
+            case "/fk/status" when m.Arguments is [int ok, float cpu, int pid]:
+                StatusReceived?.Invoke(new FkStatus(ok != 0, cpu, pid));
+                break;
+
+            case "/fk/status" when m.Arguments is [int ok, float cpu]:      // an engine from before 2026-10-04
                 StatusReceived?.Invoke(new FkStatus(ok != 0, cpu));
                 break;
 

@@ -25,6 +25,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
     private long _lastHealthTicks;
     private int _restarts;
     private int _restartPending;      // 1 while a restart has been scheduled and its engine not yet launched
+    private volatile int _procId;     // the engine we launched; a status from any other process is not ours
     private volatile bool _stopping;
 
     // Renew well under the 5 s telemetry timeout; a 6 s status gap means dead.
@@ -62,6 +63,18 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
     private void OnStatus(FkStatus status)
     {
+        // Only the engine we are tracking. One being replaced answers a last ping on its way
+        // out, and that "ok" used to arrive after EngineOk had been set false for the restart:
+        // it flipped it back to true, so the NEW engine's first status was no change at all,
+        // EngineOkChanged never fired, and nothing replayed the device, the armed channels or
+        // the locked filters into it. It then ran with no channels - a silent microphone and
+        // no guard - while the tray said the engine was up. Found on the rig 2026-10-04.
+        var tracked = _procId;
+        if (status.Pid != 0 && tracked != 0 && status.Pid != tracked)
+        {
+            return;
+        }
+
         Interlocked.Exchange(ref _lastStatusTicks, Environment.TickCount64);
         if (status.EngineOk)
         {
@@ -113,6 +126,15 @@ public sealed class EngineSupervisor : IAsyncDisposable
         KillProc();
         KillStrays();
 
+        // A new engine knows nothing. Whatever EngineOk said about the last one, it is false
+        // of this one until this one says otherwise - and that first "ok" has to be an EDGE,
+        // because the edge is what replays the settings into it.
+        if (EngineOk)
+        {
+            EngineOk = false;
+            EngineOkChanged?.Invoke(false);
+        }
+
         lock (_procLock)
         {
             if (_stopping)
@@ -140,6 +162,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 _proc = p;
+                _procId = p.Id;
                 Interlocked.Exchange(ref _lastStatusTicks, Environment.TickCount64);  // grace window
                 Log?.Invoke($"engine launched (pid {p.Id})");
             }
@@ -246,6 +269,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         {
             p = _proc;
             _proc = null;
+            _procId = 0;
         }
         if (p is null)
         {

@@ -169,6 +169,24 @@ public sealed class App : Application
         }
 
         _startupError = null;
+
+        // The app's own log lines - engine launches and restarts, the engine's own output,
+        // alarms - used to go nowhere: nothing subscribed to them. On 2026-10-04 the
+        // supervisor spent an afternoon relaunching the engine and left no trace of why.
+        try
+        {
+            var logDir = Path.Combine(_dataDir, "logs");
+            Directory.CreateDirectory(logDir);
+            var appLog = Path.Combine(logDir, $"app-log-{DateTime.Now:yyyyMMdd-HHmmss}.txt");
+            var logLock = new object();
+            controller.Log += line =>
+            {
+                try { lock (logLock) File.AppendAllText(appLog, $"{DateTime.Now:HH:mm:ss.fff} {line}{Environment.NewLine}"); }
+                catch { /* a log must never be the reason anything stops */ }
+            };
+        }
+        catch { /* no log, then; the app still runs */ }
+
         controller.EngineOkChanged += _ => Dispatcher.UIThread.Post(Render);
         controller.ConsoleAddressChanged += () => Dispatcher.UIThread.Post(Render);
         _feedback = controller;
