@@ -36,7 +36,7 @@ public sealed class FkEventLog : IDisposable
         try
         {
             _writer = new StreamWriter(Path, append: false) { AutoFlush = true };
-            _writer.WriteLine("seconds,channel,frequency_hz,level_db,applied");
+            _writer.WriteLine("seconds,channel,frequency_hz,level_db,applied,gate,filter,cut_here_db,nearest_notch_hz,age_ms");
 
             EqPath = System.IO.Path.Combine(directory, $"eq-log-{stamp}.csv");
             _eq = new StreamWriter(EqPath, append: false) { AutoFlush = true };
@@ -135,14 +135,24 @@ public sealed class FkEventLog : IDisposable
             $"{seconds:F3},{slot},{r.Hz:F1},{r.LevelDb:F1},{r.Why},{r.Frames}"));
     }
 
-    public void Write(FkDetection d, bool applied, double seconds)
+    /// <remarks>
+    /// The last four columns are what the bank DID about the detection: which gate
+    /// let it through, whether a filter was placed or why not, how much cut was
+    /// already on that frequency, and where the nearest filter sat. They used to
+    /// live only in the capture log, behind a button - and on 2026-10-03 the
+    /// button had to be pressed three times in one evening to find out that
+    /// "placed" meant a filter 300 Hz away. Detected and suppressed are separate
+    /// facts; both are written, always.
+    /// </remarks>
+    public void Write(FkDetection d, bool applied, double seconds, double cutHere = 0, double nearestNotchHz = 0)
     {
         if (_writer is null)
         {
             return;
         }
         var line = string.Create(CultureInfo.InvariantCulture,
-            $"{seconds:F3},{ChannelName(d.Channel)},{d.Hz:F2},{d.LevelDb:F2},{(applied ? 1 : 0)}");
+            $"{seconds:F3},{ChannelName(d.Channel)},{d.Hz:F2},{d.LevelDb:F2},{(applied ? 1 : 0)}," +
+            $"{d.Gate},{d.Refusal},{cutHere:F1},{nearestNotchHz:F0},{d.AgeMs:F0}");
         lock (_lock)
         {
             _writer.WriteLine(line);

@@ -170,7 +170,9 @@ def tail_events(path, since_pos):
         for line in chunk.splitlines():
             p = line.split(",")
             if len(p) >= 4 and p[0] != "seconds":
-                try: rows.append((float(p[0]), p[1], float(p[2]), float(p[3])))
+                # newer logs carry what the bank did: gate, filter, cut here, nearest notch
+                why = " ".join(p[5:9]) if len(p) >= 9 else ""
+                try: rows.append((float(p[0]), p[1] + (" " + why if why else ""), float(p[2]), float(p[3])))
                 except ValueError: pass
     except OSError:
         pass

@@ -5,6 +5,10 @@
 #include <cmath>
 #include <algorithm>
 
+#ifndef FLAT_TOP_MIN_HZ
+#define FLAT_TOP_MIN_HZ 4000.0f
+#endif
+
 namespace fk
 {
 /**
@@ -44,6 +48,12 @@ public:
                                         // not silently change when the hop size does
         int    harmonicExtra  = 36;     // extra frames (~190 ms) required if harmonic-related
         float  floorDb        = -70.0f; // ignore bins quieter than this
+        // Three or more contiguous bins within this of a peak's top cannot be
+        // one windowed sinusoid: it is a cluster of modes, and its frequency is
+        // the cluster's centroid - see refineFrequency.
+        float  flatTopDb      = 5.5f;
+        int    flatTopMaxBins = 5;
+        float  flatTopMinHz   = FLAT_TOP_MIN_HZ;
         // Watching and ACTING are different questions, and conflating them is what
         // made the guard audible with no feedback in the room. The floor is dragged
         // low on purpose, so a ring is tracked while it is still tiny - that is the
@@ -915,6 +925,49 @@ private:
 
     float refineFrequency (int k, float levelDb) noexcept
     {
+        // A flat-topped peak is not one sinusoid. Measured at the rig 2026-10-03
+        // on a step straight to 18 dB of margin: a cluster of modes 70 Hz wide
+        // started together, each bin carrying its own component, and the loudest
+        // bin hopped between them frame to frame. The phase estimate below is
+        // exact for each bin, so the suspect read "unstable" - spread 53 Hz
+        // against 15.8 - from -77 dB to -37 dB, and the sustain path took 1.3 s
+        // to call it at -22. On a gentle climb only the top mode exceeds unity,
+        // the peak is clean from the start, and the same mode is caught at -68.
+        //
+        // The discriminator is the window itself. One Hann-windowed sinusoid puts
+        // at most TWO bins within 5.5 dB of its top - the third is 9.5 dB down
+        // by the window's shape, wherever the tone sits between bins. Three or
+        // more contiguous bins within that cannot be one tone. Only then is the
+        // magnitude centroid of the flat top used, as the cluster's centre; it
+        // barely moves while the loudest bin hops. Everything else keeps the
+        // sub-bin phase estimate below, which the vibrato and location tests
+        // depend on: a centroid applied to every flat-ish top notched the
+        // singer in four unit tests at once. Anything wider than flatTopMaxBins
+        // is a formant, not a ring, and keeps the old estimate for the width
+        // gate to refuse.
+        // And only above the voice: a vibrato partial sweeping half a bin inside
+        // one frame smears into three bins too, and the centroid costs the
+        // vibrato test its precision (T4 notched a sung 400 Hz note). Vocal
+        // partials up there are weak and the modes are dense; the cluster was
+        // measured at 9.9 kHz.
+        if ((float) k * binHz >= params.flatTopMinHz
+            && (mag[(size_t) (k - 1)] >= levelDb - params.flatTopDb || mag[(size_t) (k + 1)] >= levelDb - params.flatTopDb))
+        {
+            int lo = k, hi = k;
+            while (lo - 1 >= 1           && mag[(size_t) (lo - 1)] >= levelDb - params.flatTopDb) --lo;
+            while (hi + 1 < numBins - 1  && mag[(size_t) (hi + 1)] >= levelDb - params.flatTopDb) ++hi;
+            if (hi - lo + 1 >= 3 && hi - lo + 1 <= params.flatTopMaxBins)
+            {
+                double num = 0.0, den = 0.0;
+                for (int b = lo; b <= hi; ++b)
+                {
+                    const double w = std::pow (10.0, (double) mag[(size_t) b] / 20.0);
+                    num += w * (double) b; den += w;
+                }
+                if (den > 0.0) return (float) (num / den) * binHz;
+            }
+        }
+
         // parabolic on magnitudes - the fallback, and the sanity check
         const float ym1 = mag[(size_t) (k - 1)], y0 = levelDb, yp1 = mag[(size_t) (k + 1)];
         const float denom = (ym1 - 2.0f * y0 + yp1);

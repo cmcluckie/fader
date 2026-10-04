@@ -879,30 +879,31 @@ public sealed class FeedbackController : IAsyncDisposable
             while (_recentDetections.Count > 200) _recentDetections.Dequeue();
         }
 
+        // What we were actually DOING about this frequency at the moment we
+        // caught it. The eq log records the deepest point in the band, which
+        // is a different question and misled me: during a runaway at 7107 Hz
+        // it reported -24.2 dB, and that cut turned out to be at 7544 Hz - two
+        // bandwidths away, so the ring itself got almost nothing. "Detected"
+        // and "suppressed" are separate facts and only one of them was written
+        // down. Computed for every detection now, not only with capture on.
+        // (An ESTIMATE: the notch table arrives at 10 Hz and carries no Q, so
+        // this assumes a width. The recording's two channels are the truth.)
+        FkNotch[] live;
+        lock (_lock) { live = _latest[d.Channel] ?? Array.Empty<FkNotch>(); }
+        var active = live.Where(n => n.Active && n.CurrentDb < -0.1f)
+                         .Select(n => (n.FreqHz, n.CurrentDb))
+                         .ToArray();
+        var cutHere = NotchResponse.SumDb(active, d.Hz);
+        var nearest = active.Length == 0 ? 0f
+                    : active.OrderBy(n => Math.Abs(n.FreqHz - d.Hz)).First().FreqHz;
+
         // With capture on, detection keeps running while the guard is off, so the
         // guard column is what makes an on/off session comparable.
         if (CaptureEnabled)
-        {
-            // What we were actually DOING about this frequency at the moment we
-            // caught it. The eq log records the deepest point in the band, which
-            // is a different question and misled me: during a runaway at 7107 Hz
-            // it reported -24.2 dB, and that cut turned out to be at 7544 Hz - two
-            // bandwidths away, so the ring itself got almost nothing. "Detected"
-            // and "suppressed" are separate facts and only one of them was written
-            // down.
-            FkNotch[] live;
-            lock (_lock) { live = _latest[d.Channel] ?? Array.Empty<FkNotch>(); }
-            var active = live.Where(n => n.Active && n.CurrentDb < -0.1f)
-                             .Select(n => (n.FreqHz, n.CurrentDb))
-                             .ToArray();
-            var cutHere = NotchResponse.SumDb(active, d.Hz);
-            var nearest = active.Length == 0 ? 0f
-                        : active.OrderBy(n => Math.Abs(n.FreqHz - d.Hz)).First().FreqHz;
             _log.WriteCapture(_clock.Elapsed.TotalSeconds, d.Channel, ! IsBypassed, d, cutHere, nearest);
-        }
 
         // enabled channels always cut, so a detection on an active slot was applied
-        _log.Write(d, applied: ! IsBypassed, _clock.Elapsed.TotalSeconds);
+        _log.Write(d, applied: ! IsBypassed, _clock.Elapsed.TotalSeconds, cutHere, nearest);
         DetectionReceived?.Invoke(d);
     }
 

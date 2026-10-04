@@ -228,5 +228,16 @@
   "peak": 40.8,
   "source": "audio-20260930-142551.wav",
   "source_t0": 0.17
+ },
+ {
+  "file": "howl-20261003-190810-0001s-9878Hz.wav",
+  "kind": "howl",
+  "hz": 9878.0,
+  "onset": 1.17,
+  "end": 1.79,
+  "peak": 44.2,
+  "source": "ringout/20261003-190810-guard/sweep.wav",
+  "source_t0": 0.0,
+  "note": "step straight to +6 dB on the fader, 18 dB over the ring point: a 70 Hz cluster of modes, not one tone"
  }
 ]
