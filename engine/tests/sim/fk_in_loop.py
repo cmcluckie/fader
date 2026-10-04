@@ -131,6 +131,16 @@ class FkGuard:
                                 d.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), cap)
         return list(zip(f[:n].tolist(), d[:n].tolist()))
 
+    def pin(self, hz, depth_db, q):
+        """Place a filter in advance from a loop measurement (NotchBank::placePinned)."""
+        self.lib.fk_pin.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float]
+        self.lib.fk_pin.restype = ctypes.c_int
+        return int(self.lib.fk_pin(self.h, float(hz), float(depth_db), float(q)))
+
+    def unpin(self):
+        self.lib.fk_unpin.argtypes = [ctypes.c_void_p]
+        self.lib.fk_unpin(self.h)
+
     def set_rescue(self, on):
         """The broadband rescue duck (RescueDuck.h): on by default, as in the engine."""
         self.lib.fk_set_rescue.argtypes = [ctypes.c_void_p, ctypes.c_int]

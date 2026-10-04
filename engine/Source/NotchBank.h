@@ -51,6 +51,12 @@ struct NotchSlot
     bool   active   = false;
     bool   locked   = false;   // never auto-released or auto-deepened
     bool   manual   = false;   // placed by hand rather than detected
+    // Placed in advance from a measurement of the loop (plan item 2), at this
+    // depth. A pinned filter is furniture: it never releases, is never stolen,
+    // is never merged onto and never counts as coverage - so if the room
+    // disagrees with the plan, the reactive guard puts its own filter on the
+    // ring exactly as if this one were not there. 0 = not pinned.
+    double pinnedDb = 0.0;
     double freq     = 1000.0;
     double originHz = 0.0;     // where it was placed; tracking may not ratchet away from this
     double q        = 40.0;
@@ -198,7 +204,7 @@ public:
         // four. It cost coverage and bought nothing.
         // ...unless it is running away. A ring climbing five decibels a frame with
         // 15 dB already on it is the definition of not handled.
-        if (! runaway && cutAtDb (f, existing) <= coveredDb)
+        if (! runaway && cutAtDb (f, existing, true) <= coveredDb)
         {
             lastRefusal = Refusal::AlreadyCovered;
             return -1;
@@ -524,6 +530,34 @@ public:
         return returned;
     }
 
+    /**
+        Place a filter in advance, from a measurement of the loop: this wide, this
+        deep, before anything has rung. See NotchSlot::pinnedDb for what it is
+        and is not allowed to do afterwards. The width is the planner's - a loop
+        with one broad hump wants one broad filter, not thirty needles - so it
+        is taken as given, within the widest and narrowest the bank can make.
+    */
+    int placePinned (double f, double depthDb, double q, double nowSeconds) noexcept
+    {
+        if (f <= 0.0 || depthDb > -0.1) return -1;
+        int slot = findFree();
+        if (slot < 0) slot = stealLru();
+        if (slot < 0) return -1;
+        auto& s = slots[(size_t) slot];
+        s = NotchSlot{};
+        s.active   = true;
+        s.freq     = f;
+        s.originHz = f;
+        s.q        = std::clamp (q, qMin, emergencyQ);
+        s.targetDb = std::max (depthDb, emergencyCapDb);
+        s.pinnedDb = s.targetDb;
+        s.currentDb= 0.0;
+        s.lastHitS = nowSeconds;
+        s.lastRelS = nowSeconds;
+        filters[(size_t) slot].reset();
+        return slot;
+    }
+
     int placeManual (double f, double depthDb, double nowSeconds) noexcept
     {
         int slot = findFree();
@@ -554,7 +588,7 @@ public:
     {
         for (auto& s : slots)
         {
-            if (! s.active || s.locked) continue;
+            if (! s.active || s.locked || s.pinnedDb < 0.0) continue;
             if (nowSeconds - s.lastHitS < holdSeconds)               // still holding:
             {
                 s.lastRelS = nowSeconds;                             // bleed clock only
@@ -576,10 +610,24 @@ public:
     {
         for (size_t i = 0; i < slots.size(); ++i)
         {
-            if (slots[i].locked && ! includeLocked) continue;
+            if ((slots[i].locked || slots[i].pinnedDb < 0.0) && ! includeLocked) continue;
             slots[i] = NotchSlot{};
             filters[i].reset();
         }
+    }
+
+    /** Remove the pinned filters and nothing else: the room has changed. */
+    void clearPinned() noexcept
+    {
+        for (size_t i = 0; i < slots.size(); ++i)
+            if (slots[i].active && slots[i].pinnedDb < 0.0) { slots[i] = NotchSlot{}; filters[i].reset(); }
+    }
+
+    int pinnedCount() const noexcept
+    {
+        int n = 0;
+        for (const auto& s : slots) if (s.active && s.pinnedDb < 0.0) ++n;
+        return n;
     }
 
     void removeAt (int index) noexcept
@@ -724,7 +772,7 @@ public:
         for (int i = 0; i < MaxNotches; ++i)
         {
             const auto& s = slots[(size_t) i];
-            if (! s.active) continue;
+            if (! s.active || s.pinnedDb < 0.0) continue;
             // On the fuzz this costs 14 more runaway modes per six seeds (155 -> 169)
             // in the synthetic plateau population of ~300 modes a minute, and ten
             // of those come back with 96 slots: un-merged modes fill the pool and
@@ -935,7 +983,7 @@ private:
         trigonometry is affordable.
     */
 public:
-    double cutAtDb (double f, int skip) const noexcept
+    double cutAtDb (double f, int skip, bool reactiveOnly = false) const noexcept
     {
         if (f <= 0.0) return 0.0;
         const double w = 2.0 * juce::MathConstants<double>::pi * f / fs;
@@ -947,6 +995,8 @@ public:
         for (int i = 0; i < MaxNotches; ++i)
         {
             if (i == skip) continue;        // the filter that will handle f itself
+            // A pinned filter is not an answer to a ring that is ringing anyway.
+            if (reactiveOnly && slots[(size_t) i].pinnedDb < 0.0) continue;
             total += cutOfSlot (i, f);
         }
         return total;
@@ -1000,7 +1050,7 @@ public:
         for (int i = 0; i < MaxNotches; ++i)
         {
             const auto& s = slots[(size_t) i];
-            if (! s.active || s.locked || s.manual) continue;
+            if (! s.active || s.locked || s.manual || s.pinnedDb < 0.0) continue;
             if (s.lastHitS > before) continue;                // still earning its keep
             if (s.lastHitS < oldest) { oldest = s.lastHitS; victim = i; }
         }
@@ -1014,7 +1064,7 @@ public:
         for (int i = 0; i < MaxNotches; ++i)
         {
             const auto& s = slots[(size_t) i];
-            if (! s.active || s.locked) continue;
+            if (! s.active || s.locked || s.pinnedDb < 0.0) continue;
             if (s.lastHitS < oldest) { oldest = s.lastHitS; victim = i; }
         }
         if (victim >= 0) { slots[(size_t) victim] = NotchSlot{}; filters[(size_t) victim].reset(); }

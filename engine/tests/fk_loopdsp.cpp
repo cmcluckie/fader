@@ -185,6 +185,20 @@ int fk_place (void* h, float hz, float depthDb)
     return g->bank.placeManual ((double) hz, (double) depthDb, g->t);
 }
 
+/** Pin a filter from a loop measurement: frequency, depth, width. Returns the
+    slot, or -1. fk_unpin removes every pinned filter and nothing else. */
+int fk_pin (void* h, float hz, float depthDb, float q)
+{
+    auto* g = static_cast<Guard*> (h);
+    return g ? g->bank.placePinned ((double) hz, (double) depthDb, (double) q, g->t) : -1;
+}
+
+void fk_unpin (void* h)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g) g->bank.clearPinned();
+}
+
 /** Drain one detection. Returns 1 if one was written, 0 when empty. */
 int fk_pop_event (void* h, float* hz, float* levelDb, int* growing, int* path, double* t)
 {

@@ -103,6 +103,30 @@ the measurement has to be cheap enough to repeat and honest about going stale.
 cold step); the delay comb measured tonight (lines 100 Hz apart: a 10 ms
 loop); `precut_test.py`.
 
+**Status, 2026-10-03 late:** the arithmetic and the bank's side are built and
+gated (layer 5 of `preship.sh`); the engine's sweep probe and the live tool are
+not, and nothing here has touched the real room.
+
+- `engine/tests/sim/loop_measure.py`: sweep, response estimate, ladder, planner
+  (the engine's own filter shape, one filter at a time, re-ranking after each).
+- `NotchBank::placePinned`: a filter placed in advance that never releases, is
+  never stolen, never merged onto and never counted as coverage - if the room
+  disagrees with the plan the reactive guard works as though it were not there.
+- Against the simulator, where the truth is known (`loop_measure_check.py`):
+  the measured ladder matches the true one rung for rung in both rooms
+  (frequency exact, margin within 0.5 dB, headroom within 0.1 dB) and names
+  the note that rings. Pinned from the measurement and started cold nine
+  decibels over the untreated edge: **no detections, no rescue, quiet from the
+  first frame** - against 19 to 56 detections and a rescue when reacting.
+- And the cost, which is the point: a 15 dB raise nets **+13.6 dB** over
+  1-4 kHz in the rig-like room (the cut lands on the loop's own treble peak),
+  and **+2.6 dB** in the reverberant one, where twelve filters are not even
+  enough. That is the survey's ceiling, measured. The tool must quote NET.
+
+Still to build: the engine's sweep probe (pass-through muted, sample-aligned
+capture), `/fk/pin` and `/fk/unpin`, `scripts/measure_loop.py`, and then the
+room.
+
 **Method.**
 
 1. *Probe, open loop.* Mute the microphone's passthrough for the second or two
