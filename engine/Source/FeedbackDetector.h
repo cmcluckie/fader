@@ -937,26 +937,35 @@ private:
         // The discriminator is the window itself. One Hann-windowed sinusoid puts
         // at most TWO bins within 5.5 dB of its top - the third is 9.5 dB down
         // by the window's shape, wherever the tone sits between bins. Three or
-        // more contiguous bins within that cannot be one tone. Only then is the
-        // magnitude centroid of the flat top used, as the cluster's centre; it
+        // more bins within that cannot be one tone. Only then is the magnitude
+        // centroid of the neighbourhood used, as the cluster's centre; it
         // barely moves while the loudest bin hops. Everything else keeps the
         // sub-bin phase estimate below, which the vibrato and location tests
         // depend on: a centroid applied to every flat-ish top notched the
         // singer in four unit tests at once. Anything wider than flatTopMaxBins
         // is a formant, not a ring, and keeps the old estimate for the width
         // gate to refuse.
-        // And only above the voice: a vibrato partial sweeping half a bin inside
-        // one frame smears into three bins too, and the centroid costs the
-        // vibrato test its precision (T4 notched a sung 400 Hz note). Vocal
-        // partials up there are weak and the modes are dense; the cluster was
-        // measured at 9.9 kHz.
-        if ((float) k * binHz >= params.flatTopMinHz
-            && (mag[(size_t) (k - 1)] >= levelDb - params.flatTopDb || mag[(size_t) (k + 1)] >= levelDb - params.flatTopDb))
+        // And only above the voice (flatTopMinHz): a vibrato partial sweeping
+        // half a bin inside one frame smears into three bins too, and the
+        // centroid costs the vibrato test its precision (T4 notched a sung
+        // 400 Hz note). Vocal partials up there are weak and the modes are
+        // dense; the clusters were measured at 9.9 and 14.6 kHz.
+        // Counted over a neighbourhood, not a contiguous run: the same night a
+        // 14.6 kHz ring came up as a DOUBLET - two modes 47 Hz apart with a 5 dB
+        // dip between them - and the loudest bin hopped across the dip while a
+        // contiguous rule counted two bins and stood aside (1232 ms to call it,
+        // at -31 dB). One sinusoid cannot put three bins within flatTopDb of its
+        // top anywhere within +-3 bins, dip or no dip. The centroid is taken
+        // over the whole neighbourhood so it does not jump when a bin crosses
+        // the threshold.
+        if ((float) k * binHz >= params.flatTopMinHz)
         {
-            int lo = k, hi = k;
-            while (lo - 1 >= 1           && mag[(size_t) (lo - 1)] >= levelDb - params.flatTopDb) --lo;
-            while (hi + 1 < numBins - 1  && mag[(size_t) (hi + 1)] >= levelDb - params.flatTopDb) ++hi;
-            if (hi - lo + 1 >= 3 && hi - lo + 1 <= params.flatTopMaxBins)
+            constexpr int reach = 3;
+            const int lo = juce::jmax (1, k - reach), hi = juce::jmin (numBins - 2, k + reach);
+            int within = 0;
+            for (int b = lo; b <= hi; ++b)
+                if (mag[(size_t) b] >= levelDb - params.flatTopDb) ++within;
+            if (within >= 3 && within <= params.flatTopMaxBins)
             {
                 double num = 0.0, den = 0.0;
                 for (int b = lo; b <= hi; ++b)

@@ -1,6 +1,7 @@
 {
- "howls": 18,
- "bled": 3,
+ "howls": 19,
+ "bled": 6,
+ "let_go": 0,
  "voice_hits": 2,
  "median_latency_ms": -490.66666666666123
 }
