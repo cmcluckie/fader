@@ -37,9 +37,32 @@ def git(*a):
     return subprocess.run(["git", "-C", ROOT, *a], capture_output=True, text=True).stdout.strip()
 
 
+def source_id(h):
+    """What the library is made of at that commit: the engine sources and the shim."""
+    return git("rev-parse", f"{h}:engine/Source") + git("rev-parse", f"{h}:engine/tests/fk_loopdsp.cpp")
+
+
+def md5(path):
+    import hashlib
+    return hashlib.md5(open(path, "rb").read()).hexdigest()
+
+
 def build(h):
+    """The test library of commit h. Returns its path, or None.
+
+    The library is recompiled from nothing every time, and the result is
+    checked against every other library here: two commits with different
+    engine sources must not produce the same file. On 2026-10-04 they did -
+    make compares timestamps to the second, each checkout landed in the same
+    second as the previous object file, and every second "build" was skipped.
+    Three of seven libraries were copies of their neighbour, labelled as
+    something else. A measurement filed under the wrong build is worse than no
+    measurement (docs/wrong-machine-2026-10-03.md was the same mistake, live).
+    """
     lib = os.path.join(VERS, f"libfk-loopdsp.{h}.dylib")
-    if os.path.exists(lib): return lib
+    tag = lib + ".src"
+    if os.path.exists(lib) and os.path.exists(tag) and open(tag).read().split()[0] == source_id(h):
+        return lib
     os.makedirs(VERS, exist_ok=True)
     wt, bd = os.path.join(VERS, "wt"), os.path.join(VERS, "wt-build")
     if not os.path.isdir(wt):
@@ -49,9 +72,22 @@ def build(h):
                           f"-DFETCHCONTENT_SOURCE_DIR_JUCE={JUCE}", "-DFETCHCONTENT_FULLY_DISCONNECTED=ON"],
                          capture_output=True, text=True)
     if cfg.returncode: print(cfg.stdout[-800:], cfg.stderr[-800:]); return None
+    # from nothing: the shim's object and the library itself (JUCE's objects do not depend on our sources)
+    for root, _, files in os.walk(bd):
+        for f in files:
+            if f == "fk_loopdsp.cpp.o" or f == "libfk-loopdsp.dylib": os.remove(os.path.join(root, f))
     b = subprocess.run(["cmake", "--build", bd, "--target", "fk-loopdsp", "-j8"], capture_output=True, text=True)
     if b.returncode: print(b.stdout[-800:], b.stderr[-800:]); return None
-    subprocess.run(["cp", os.path.join(bd, "libfk-loopdsp.dylib"), lib], check=True)
+    built = os.path.join(bd, "libfk-loopdsp.dylib")
+    sid, m = source_id(h), md5(built)
+    for other in os.listdir(VERS):
+        if other.endswith(".src") and other != os.path.basename(tag):
+            osid, om = open(os.path.join(VERS, other)).read().split()
+            if om == m and osid != sid:
+                print(f"   REFUSED: this library is byte-identical to {other[:-4]}, built from different sources - the build was skipped")
+                return None
+    subprocess.run(["cp", built, lib], check=True)
+    open(tag, "w").write(f"{sid} {m}\n")
     return lib
 
 
@@ -69,8 +105,10 @@ def measure(h, lib, record):
     for name, cmd in tests:
         p = subprocess.run([sys.executable] + cmd, cwd=SIM, env=env, capture_output=True, text=True)
         tail = [l for l in p.stdout.splitlines() if l.strip()][-1:] or [""]
-        logged = sum(1 for l in p.stdout.splitlines() if "recorded:" in l)
-        print(f"   {name:<22} {'ok  ' if p.returncode == 0 else 'FAIL'} {logged} row(s) logged   {tail[0][:90]}")
+        logged = sum(1 for l in p.stdout.splitlines() if l.strip().startswith("recorded:"))
+        refused = any("not recorded:" in l for l in p.stdout.splitlines())
+        print(f"   {name:<22} {'ok  ' if p.returncode == 0 else 'FAIL'} {logged} row(s) logged"
+              f"{'  (REFUSED: uncommitted changes)' if refused else ''}   {tail[0][:90]}")
         if p.returncode not in (0, 1): print(p.stderr[-600:])
 
 
