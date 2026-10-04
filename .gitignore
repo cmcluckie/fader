@@ -12,3 +12,6 @@ dist/
 # feedback engine
 engine/build/
 docs/FeedbackKiller.zip
+
+# reference papers: keep the PDFs locally, commit only our own notes
+docs/references/*.pdf
