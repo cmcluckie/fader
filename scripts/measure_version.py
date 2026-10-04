@@ -115,12 +115,15 @@ def build(h):
     if b.returncode: print(b.stdout[-800:], b.stderr[-800:]); return None
     built = os.path.join(bd, "libfk-loopdsp.dylib")
     sid, m = source_id(h), md5(built)
+    # The shim's object was deleted above, so this file was compiled just now from this commit's
+    # sources: a skipped build cannot reach here. If it is still byte-identical to another build's
+    # library, the two commits compile to the same machine - worth saying, not worth refusing.
+    # (9d17858 names the hold in a shared header; d55f580 with the ruler correction is the same bytes.)
     for other in os.listdir(VERS):
         if other.endswith(".src") and other != os.path.basename(tag):
             osid, om = open(os.path.join(VERS, other)).read().split()
             if om == m and osid != sid:
-                print(f"   REFUSED: this library is byte-identical to {other[:-4]}, built from different sources - the build was skipped")
-                return None
+                print(f"   byte-identical to {other[len('libfk-loopdsp.'):-len('.dylib.src')]}: different sources, the same compiled machine")
     subprocess.run(["cp", built, lib], check=True)
     open(tag, "w").write(f"{sid} {m}\n")
     return lib

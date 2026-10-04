@@ -12,11 +12,11 @@ what it takes to make it a product.
 
 ## The three numbers the product is judged on
 
-| | Goal | Today (build `d55f580`) |
+| | Goal | Today (the build in the room, `d55f580`, simulated on the room's settings) |
 |---|---|---|
-| **Caught** | A real cut lands within **10 ms** of a ring becoming audible | Met up to 15 dB past the room's limit in a room like yours, and up to 6 dB in a reverberant one. Beyond that, rings get through. |
-| **Killed** | Inaudible again within **15 ms** of the catch | Not met. When a ring does get loud it lasts 150–800 ms. |
-| **Sound** | Voice changed **under 3 %** when nothing rings, **under 15 %** while holding feedback | Not met, and the furthest from goal: **32 %** on the test singer and **61 %** on your recorded singing, with no feedback at all. |
+| **Caught** | A real cut lands within **10 ms** of a ring becoming audible | Nothing is heard up to 6 dB past the room's limit. From 10 dB over, brief rings get through even though a cut is already on them; a reverberant room is lost by 15. |
+| **Killed** | Inaudible again within **15 ms** of the catch | Not met. A ring that gets through lasts 60–700 ms at 6–10 dB over, and seconds beyond that. |
+| **Sound** | Voice changed **under 3 %** when nothing rings, **under 15 %** while holding feedback | Not met, and the furthest from goal: **37 %** on the test singer and **65 %** on your recorded singing, with no feedback at all. |
 
 "Audible" means louder than 20 dB under the singing voice. "Voice change %" is
 how much of what the ear gets from the voice differs from the clean voice; a
@@ -31,7 +31,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 
 1. **Steady rings — DONE.** A narrow line that holds still and grows is called feedback. *Goal: every recorded howl caught before it is audible (22 of 22).*
 2. **Fast risers — IN PROGRESS.** A ring that climbs faster than the normal test can follow is called within six frames. *Goal: caught within 10 ms of audible on a cold jump 20 dB over. Proven offline; live re-test owed.*
-3. **Low rings — IN PROGRESS.** A second, longer analysis finds rings below 1 kHz. *Goal: no audible ring up to 10 dB over in a reverberant room (holds to 6 today).*
+3. **Low rings — IN PROGRESS.** A second, longer analysis finds rings below 1 kHz. *Goal: no audible ring up to 10 dB over in a reverberant room (holds to about 6 today).*
 4. **Voice or ring — IN PROGRESS.** Harmonic, vibrato and glide tests stop a sung note being called feedback. *Goal: no filter placed on a singer when nothing is ringing (31–42 filters today).*
 5. **A ring hidden under a louder one — NEW.** *Goal: called before it reaches −50 dB (−32 today).*
 6. **Other people's detectors — NEW.** Run the published detectors on our own recordings. *Goal: a side-by-side table, and we adopt anything that beats ours.*
@@ -47,7 +47,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 3. **Rescue duck — IN PROGRESS.** A brief dip of the whole channel when a ring outruns the filters. *Goal: nothing louder than −45 dB on a cold jump 20 dB over, and never on a voice. Live re-test owed.*
 4. **Letting go — NEW.** A filter relaxes to the shallowest depth that still holds, and leaves when its ring is gone. *Goal: filters held never exceed rings present by more than two.*
 5. **One wide filter for a hump — NEW.** *Goal: the same hold with half the filters.*
-6. **Rescue below 4 kHz — NEW.** *Goal: a low howl never passes −30 dB (it reaches −6 in the reverberant test today).*
+6. **Rescue below 4 kHz — NEW.** *Goal: a low howl never passes −30 dB (it reaches −4 in the reverberant test today).*
 7. **Knows when it is not in the loop — DONE.** Stops digging and raises an alarm when its cuts change nothing. *Goal: flagged within 2 s.*
 8. **Pulsed filters — CANCELLED.** Measured much worse than steady ones.
 
@@ -57,9 +57,9 @@ how much of what the ear gets from the voice differs from the clean voice; a
 **Goal:** Voice changed under 3 % with no feedback, and under 15 % while holding feedback.
 
 1. **A number for sound quality — IN PROGRESS.** "Voice change %", measured against the clean voice. *Goal: reported for every version, simulated and live. Built today.*
-2. **Leave the singer alone — NEW.** No cuts on singing when nothing is ringing. *Goal: under 3 % (32 % and 61 % today).*
+2. **Leave the singer alone — NEW.** No cuts on singing when nothing is ringing. *Goal: under 3 % (37 % and 65 % today).*
 3. **Did the cut work? — NEW.** Feedback gets quieter when cut and a voice does not, so a cut that changes nothing is taken back. *Goal: feature 2 met with no ring caught later than today.*
-4. **Cost follows feedback — NEW.** Damage rises only as real rings appear. *Goal: under 5 % at the room's limit, 10 % at 6 dB over, 15 % at 10 dB over (42–62 % at all three today).*
+4. **Cost follows feedback — NEW.** Damage rises only as real rings appear. *Goal: under 5 % at the room's limit, 10 % at 6 dB over, 15 % at 10 dB over (48–65 % at all three today).*
 5. **Cheaper cuts — NEW.** Narrower, shallower, and no "ghost note" left by a deep bass filter. *Goal: half the voice change for the same hold.*
 6. **Cancellation — NEW.** Subtract the speaker-to-microphone path instead of carving the voice. *Goal: 6 dB more gain at under 5 % change, in the simulator first.*
 7. **Voice budget — CANCELLED** *(proposed)*. A cap on total cut protects the voice by refusing real rings; feature 3 replaces it.
@@ -132,7 +132,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 9. **Test voices — IN PROGRESS.** A synthetic singer in the repository, and your recorded singing kept on your machine. *Goal: add clean dry singing from the studio.*
 10. **Second room — NEW.** Collect a studio session. *Goal: every number re-checked in a room the tests have never seen.*
 11. **Listening check — IN PROGRESS.** You listen to the same phrase at several measured levels of change. *Goal: the number means what it says to your ears. Clips sent 4 Oct; waiting on you.*
-12. **One machine — IN PROGRESS.** Every test runs exactly the settings the room runs. *Goal: no setting differs between the engine and any test. Found today: the engine holds a filter 10 s, the tests 2 s.*
+12. **One machine — IN PROGRESS.** Every test runs exactly the settings the room runs. *Goal: no setting differs between the engine and any test. Found and fixed 4 Oct: the engine holds a filter 10 s, the tests held it 2 s. A check that catches the next one is still to build.*
 
 ## 9. Code health — IN PROGRESS
 

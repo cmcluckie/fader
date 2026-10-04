@@ -150,15 +150,21 @@ def build_page():
     w(f"Build `{v0}` ({date[v0]}).\n")
     w("| | Goal | Room like the rig | Reverberant hall |")
     w("|---|---|---|---|")
-    def ring_cell(room, voice_):
+    def ring_cell(room):
+        """The worse of the voices at each gain: a goal is not met because one singer happened to pass."""
         out = []
         for c in (6, 10, 15, 20):
-            x = case(v0, room, voice_, c)
-            if not x: continue
-            out.append(f"+{c}: " + ("none heard" if not x.get("audible") else
-                       f"{x['audible']} heard, catch {f(x.get('worst_catch_ms'), '{:+.0f}')} ms, kill {f(x.get('worst_kill_ms'))} ms"))
+            xs = [(case(v0, room, vv, c), vv) for vv in voices if case(v0, room, vv, c)]
+            if not xs: continue
+            x, vv = max(xs, key=lambda t: (t[0].get("audible", 0), t[0].get("audible_ms", 0)))
+            if not x.get("audible"): out.append(f"+{c}: none heard"); continue
+            ms = x["audible_ms"]
+            if ms > 5000: out.append(f"+{c}: lost ({x['audible']} rings, {ms / 1000:.0f} s, {vv})"); continue
+            cut = "a cut already on it" if (x.get("worst_catch_ms") or 0) <= -100 and not x.get("never_cut") else \
+                  ("never cut" if x.get("never_cut") else f"catch {x['worst_catch_ms']:+.0f} ms")
+            out.append(f"+{c}: {x['audible']} heard for {ms:.0f} ms ({vv}), {cut}, kill {f(x.get('worst_kill_ms'))} ms")
         return "; ".join(out) or "-"
-    w(f"| **Caught / killed** | catch within 10 ms of audible, kill within 15 | {ring_cell('rig', 'synth')} | {ring_cell('hall', 'synth')} |")
+    w(f"| **Caught / killed** | catch within 10 ms of audible, kill within 15 | {ring_cell('rig')} | {ring_cell('hall')} |")
     def sound_cell(room):
         out = []
         for c, label in (("alone", "nothing ringing"), (6, "+6"), (10, "+10")):
@@ -215,7 +221,9 @@ def build_page():
         u, z, c, g, m = get(v, "unit-tests"), get(v, "fuzz"), get(v, "closed-loop"), get(v, "recorded-feedback"), get(v, "measure-and-preplace")
         w(f"| `{v}` | {f(u.get('passing'))} | {f(z.get('runaway_modes'))} | {f(c.get('hf_quieter_3_db'))} / {f(c.get('hf_quieter_9_db'))} dB | "
           f"{f(c.get('cold20_s_above_m40'), '{:.2f}')} | {f(g.get('voice_hits'))} | {f(m.get('rig_names_the_ring'))} | {f(m.get('rig_pinned_events'))} |")
-    w("\nUnit tests and fuzz are each build's own programs and are only recorded from the build that was current when they ran.\n")
+    w("\nUnit tests and fuzz are each build's own programs and are only recorded from the build that was current when they ran. "
+      "The fuzz's own settings were corrected at `9d17858` (six confirm frames and the engine's 10 s hold, where it had run four and 2 s), "
+      "so its counts before and after are not comparable.\n")
 
     # ---- live
     live = sorted((r for r in rows if r["kind"] == "live"), key=lambda r: r["when"])

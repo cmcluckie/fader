@@ -7,12 +7,12 @@ Generated 2026-10-04 from `results/ledger.jsonl` by `scripts/results.py`. **Do n
 
 ## The latest build against the three goals
 
-Build `d55f580` (10-04 09:19).
+Build `9d17858` (10-04 14:51).
 
 | | Goal | Room like the rig | Reverberant hall |
 |---|---|---|---|
-| **Caught / killed** | catch within 10 ms of audible, kill within 15 | +6: none heard; +10: none heard; +15: none heard; +20: 14 heard, catch -582 ms, kill 435 ms | +6: none heard; +10: 2 heard, catch -512 ms, kill 170 ms; +15: 9 heard, catch -272 ms, kill 7091 ms; +20: 7 heard, catch +19 ms, kill 4723 ms |
-| **Sound** (voice change: synth / rig-0927) | under 3 % with nothing ringing, under 15 % holding feedback | nothing ringing: 32 % / 60 %; +6: 42 % / 61 %; +10: 48 % / 62 % | nothing ringing: 32 % / 60 %; +6: 64 % / 65 %; +10: 68 % / 69 % |
+| **Caught / killed** | catch within 10 ms of audible, kill within 15 | +6: none heard; +10: 1 heard for 40 ms (rig-0927), a cut already on it, kill 57 ms; +15: 2 heard for 103 ms (rig-0927), a cut already on it, kill 110 ms; +20: lost (50 rings, 7 s, rig-0927) | +6: 1 heard for 72 ms (synth), a cut already on it, kill 354 ms; +10: 9 heard for 2559 ms (rig-0927), never cut, kill 695 ms; +15: lost (28 rings, 24 s, rig-0927); +20: lost (15 rings, 18 s, rig-0927) |
+| **Sound** (voice change: synth / rig-0927) | under 3 % with nothing ringing, under 15 % holding feedback | nothing ringing: 37 % / 65 %; +6: 48 % / 64 %; +10: 50 % / 64 % | nothing ringing: 37 % / 65 %; +6: 67 % / 69 %; +10: 69 % / 71 % |
 
 ## Feedback, by build
 
@@ -20,13 +20,14 @@ Rings *heard* are lines the singer did not sing, louder than 20 dB under the voi
 
 | build | date | recorded howls caught | let go | median lead | fast risers: level when cut | rig-like: rings heard +10 / +15 / +20 | rig-like held to, dB | hall: rings heard +6 / +10 | hall held to, dB |
 |---|---|---|---|---|---|---|---|---|---|
-| `d55f580` | 10-04 09:19 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 14 | +21.2 (16.8 to 22.7) / +19.6 (17.9 to 20.4) | 0 / 2 | +11.4 (9.9 to 14.7) / +14.4 (13.6 to 15.0) |
-| `4b1c88c` | 10-03 22:27 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 22 | +20.0 (19.9 to 21.1) / +20.3 (19.6 to 21.8) | 0 / 3 | +11.4 (10.7 to 14.2) / +14.0 (12.7 to 14.9) |
-| `f5c5f0b` | 10-03 22:17 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 22 | +20.0 (19.9 to 21.1) / +20.3 (19.6 to 21.8) | 0 / 3 | +11.4 (10.7 to 14.2) / +14.0 (12.7 to 14.9) |
-| `294bcc8` | 10-03 21:24 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 33 | +19.8 (18.9 to 20.9) / +20.4 (19.7 to 21.7) | 0 / 3 | +11.4 (10.7 to 14.2) / +14.0 (12.7 to 14.9) |
-| `fce3790` | 10-03 20:14 | 21 of 22 | 0 | 475 ms | -28 dB | 0 / 1 / 11 | +19.4 (18.7 to 20.8) / +20.0 (19.2 to 20.4) | 1 / 9 | +10.0 (7.9 to 11.4) / +14.5 (13.9 to 16.2) |
-| `69f6ef0` | 10-03 19:33 | 22 of 22 | 0 | 459 ms | -35 dB | 0 / 0 / 28 | +19.5 (18.8 to 19.8) / +20.4 (18.0 to 20.7) | 0 / 5 | +12.6 (10.0 to 14.1) / +13.9 (13.8 to 15.0) |
-| `11fe355` | 10-03 18:12 | 22 of 22 | 0 | 459 ms | -29 dB | 0 / 3 / 35 | +20.3 (16.7 to 20.9) / +18.5 (16.2 to 19.9) | 1 / 3 | +13.4 (7.9 to 14.6) / +14.5 (13.5 to 15.0) |
+| `9d17858` | 10-04 14:51 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 29 | +19.5 (17.3 to 22.6) / +19.1 (17.4 to 20.5) | 1 / 2 | +11.4 (9.4 to 15.1) / +14.1 (12.6 to 15.5) |
+| `d55f580` | 10-04 09:19 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 29 | +19.5 (17.3 to 22.6) / +19.1 (17.4 to 20.5) | 1 / 2 | +11.4 (9.4 to 15.1) / +14.1 (12.6 to 15.5) |
+| `4b1c88c` | 10-03 22:27 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 16 | +19.4 (17.9 to 22.3) / +19.8 (15.9 to 23.4) | 1 / 2 | +12.5 (10.7 to 14.1) / +13.8 (10.9 to 15.0) |
+| `f5c5f0b` | 10-03 22:17 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 16 | +19.4 (17.9 to 22.3) / +19.8 (15.9 to 23.4) | 1 / 2 | +12.5 (10.7 to 14.1) / +13.8 (10.9 to 15.0) |
+| `294bcc8` | 10-03 21:24 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 20 | +19.4 (18.8 to 20.9) / +20.5 (16.6 to 21.8) | 1 / 2 | +12.5 (10.7 to 14.1) / +13.8 (10.9 to 15.0) |
+| `fce3790` | 10-03 20:14 | 21 of 22 | 0 | 475 ms | -28 dB | 0 / 1 / 7 | +18.8 (17.3 to 20.3) / +19.1 (17.8 to 21.0) | 0 / 5 | +12.9 (9.9 to 14.3) / +14.9 (12.4 to 15.8) |
+| `69f6ef0` | 10-03 19:33 | 22 of 22 | 0 | 459 ms | -35 dB | 0 / 0 / 24 | +19.4 (18.8 to 20.8) / +19.8 (18.0 to 20.4) | 0 / 5 | +14.2 (7.9 to 14.9) / +14.0 (12.0 to 15.0) |
+| `11fe355` | 10-03 18:12 | 22 of 22 | 0 | 459 ms | -29 dB | 0 / 0 / 17 | +20.2 (17.3 to 20.9) / +19.9 (19.1 to 21.1) | 0 / 3 | +13.4 (10.0 to 14.7) / +13.8 (11.7 to 15.2) |
 
 ## Sound, by build
 
@@ -34,27 +35,29 @@ Voice change: how much of what the ear gets from the voice differs from the clea
 
 | build | six recorded sung phrases: taken, filters | synth: nothing ringing | rig-0927: nothing ringing | synth: +6 / +10 | rig-0927: +6 / +10 | filters on a singer, nothing ringing |
 |---|---|---|---|---|---|---|
-| `d55f580` | 37 %, 29 | 32 % | 60 % | 42 % / 48 % | 61 % / 62 % | 31 / 42 |
-| `4b1c88c` | 37 %, 29 | 32 % | 60 % | 42 % / 46 % | 61 % / 59 % | 31 / 42 |
-| `f5c5f0b` | 37 %, 29 | 32 % | 60 % | 42 % / 46 % | 61 % / 59 % | 31 / 42 |
-| `294bcc8` | 37 %, 29 | 32 % | 60 % | 42 % / 46 % | 61 % / 59 % | 31 / 42 |
-| `fce3790` | 36 %, 27 | 32 % | 61 % | 43 % / 47 % | 60 % / 58 % | 29 / 42 |
-| `69f6ef0` | 36 %, 28 | 31 % | 60 % | 43 % / 47 % | 57 % / 60 % | 28 / 41 |
-| `11fe355` | 36 %, 28 | 32 % | 60 % | 42 % / 46 % | 60 % / 60 % | 30 / 42 |
+| `9d17858` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 64 % / 64 % | 31 / 42 |
+| `d55f580` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 64 % / 64 % | 31 / 42 |
+| `4b1c88c` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 63 % / 63 % | 31 / 42 |
+| `f5c5f0b` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 63 % / 63 % | 31 / 42 |
+| `294bcc8` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 63 % / 63 % | 31 / 42 |
+| `fce3790` | 36 %, 27 | 38 % | 66 % | 49 % / 51 % | 63 % / 64 % | 30 / 42 |
+| `69f6ef0` | 36 %, 28 | 36 % | 65 % | 49 % / 53 % | 64 % / 65 % | 28 / 42 |
+| `11fe355` | 36 %, 28 | 38 % | 65 % | 49 % / 50 % | 65 % / 68 % | 30 / 42 |
 
 ## The other gates, by build
 
 | build | unit tests | fuzz: runaway modes | simulated room: top end quieter at 3 / 9 dB over | cold start 20 over: seconds above -40 dB | sung fixtures hit (of 6) | measured loop names the ring | started cold with pinned filters: detections |
 |---|---|---|---|---|---|---|---|
-| `d55f580` | 58 | 144 | 61 / 61 dB | 0.06 | 2 | yes | 0 |
-| `4b1c88c` | - | - | 61 / 61 dB | 0.06 | 2 | yes | 0 |
-| `f5c5f0b` | - | - | 61 / 61 dB | 0.06 | 2 | - | - |
-| `294bcc8` | - | - | 61 / 61 dB | 0.36 | 2 | - | - |
-| `fce3790` | - | - | 60 / 61 dB | 1.22 | 2 | - | - |
-| `69f6ef0` | - | - | 60 / 61 dB | 0.74 | 2 | - | - |
-| `11fe355` | - | - | 61 / 61 dB | 1.02 | 2 | - | - |
+| `9d17858` | 58 | 111 | 62 / 62 dB | 0.06 | 2 | yes | 0 |
+| `d55f580` | 58 | 144 | 62 / 62 dB | 0.06 | 2 | yes | 0 |
+| `4b1c88c` | - | - | 62 / 62 dB | 0.06 | 2 | yes | 0 |
+| `f5c5f0b` | - | - | 62 / 62 dB | 0.06 | 2 | - | - |
+| `294bcc8` | - | - | 62 / 62 dB | 0.36 | 2 | - | - |
+| `fce3790` | - | - | 61 / 62 dB | 1.22 | 2 | - | - |
+| `69f6ef0` | - | - | 61 / 62 dB | 0.74 | 2 | - | - |
+| `11fe355` | - | - | 62 / 62 dB | 1.02 | 2 | - | - |
 
-Unit tests and fuzz are each build's own programs and are only recorded from the build that was current when they ran.
+Unit tests and fuzz are each build's own programs and are only recorded from the build that was current when they ran. The fuzz's own settings were corrected at `9d17858` (six confirm frames and the engine's 10 s hold, where it had run four and 2 s), so its counts before and after are not comparable.
 
 ## In the room
 
@@ -107,7 +110,7 @@ Live builds are named from the engine's start times (the feedback-log file names
 
 Builds with live results and no row in the tables above: `3629b7f` is from before `11fe355` and cannot be re-measured with the rig's settings; `b71ce6f` has the same detector and filter code as `11fe355`; `e2a52c2` is from before `11fe355` and cannot be re-measured with the rig's settings.
 
-## A singer in the loop: every case, build `d55f580`
+## A singer in the loop: every case, build `9d17858`
 
 Gain is dB over the untreated room's limit. *no guard* rows show what the loop itself does to the sound. Tails are the stable room hanging on to a note; ghosts are a filter sounding its own note after the singer stops.
 
@@ -115,74 +118,74 @@ Gain is dB over the untreated room's limit. *no guard* rows show what the loop i
 
 | gain | voice change | added / taken | filters | rings heard | heard for | worst catch | worst kill | loudest | tails | ghosts | duck |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no loop | 31.9 % | 0.0 / 31.9 | 31 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -6 | 35.2 % | 0.1 / 35.1 | 34 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| no loop | 37.0 % | 0.0 / 37.0 | 31 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -6 | 41.4 % | 0.1 / 41.3 | 35 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
 | -6 *no guard* | 1.1 % | 0.7 / 0.4 | 0 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -3 | 39.6 % | 0.1 / 39.5 | 36 | 0 | 0 ms | - | - | - | 0 ms | 32 ms | 0 |
+| -3 | 44.2 % | 0.1 / 44.1 | 37 | 0 | 0 ms | - | - | - | 0 ms | 29 ms | 0 |
 | -3 *no guard* | 1.6 % | 1.0 / 0.6 | 0 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +0 | 41.9 % | 0.2 / 41.7 | 36 | 0 | 0 ms | - | - | - | 0 ms | 32 ms | 0 |
-| +3 | 38.6 % | 0.3 / 38.3 | 39 | 0 | 0 ms | - | - | - | 0 ms | 31 ms | 0 |
-| +6 | 42.2 % | 0.5 / 41.7 | 40 | 0 | 0 ms | - | - | - | 0 ms | 34 ms | 0 |
-| +10 | 47.6 % | 0.7 / 46.9 | 43 | 0 | 0 ms | - | - | - | 0 ms | 40 ms | 0 |
-| +15 | 49.5 % | 1.0 / 48.5 | 45 | 0 | 0 ms | - | - | - | 186 ms | 32 ms | 0 |
-| +20 | 60.0 % | 5.2 / 54.7 | 47 | 14 | 2626 ms | -582 ms | 435 ms | -18.0 dB | 931 ms | 23 ms | 3 |
-| +6, mic moves | 40.4 % | 0.5 / 39.9 | 40 | 0 | 0 ms | - | - | - | 0 ms | 34 ms | 0 |
-| slow push (held to +21.2 dB, +16.8 to +22.7 over five runs) | 49.2 % | 5.5 / 43.8 | 45 | 37 | 9303 ms | +685 ms | 1447 ms | -13.5 dB | 1185 ms | 72 ms | 7 |
+| +0 | 48.6 % | 0.1 / 48.5 | 38 | 0 | 0 ms | - | - | - | 0 ms | 29 ms | 0 |
+| +3 | 49.2 % | 0.2 / 49.0 | 39 | 0 | 0 ms | - | - | - | 0 ms | 28 ms | 0 |
+| +6 | 47.6 % | 0.4 / 47.1 | 40 | 0 | 0 ms | - | - | - | 0 ms | 32 ms | 0 |
+| +10 | 49.7 % | 0.8 / 49.0 | 42 | 0 | 0 ms | - | - | - | 0 ms | 29 ms | 0 |
+| +15 | 52.9 % | 1.3 / 51.5 | 45 | 0 | 0 ms | - | - | - | 100 ms | 0 ms | 0 |
+| +20 | 55.5 % | 8.5 / 47.0 | 47 | 29 | 4954 ms | +266 ms | 757 ms | -11.3 dB | 538 ms | 0 ms | 2 |
+| +6, mic moves | 45.5 % | 0.4 / 45.1 | 40 | 0 | 0 ms | - | - | - | 0 ms | 32 ms | 0 |
+| slow push (held to +19.5 dB, +17.3 to +22.6 over five runs) | 52.7 % | 3.4 / 49.3 | 45 | 33 | 4805 ms | -143 ms | 541 ms | -12.8 dB | 757 ms | 10 ms | 6 |
 
 **Room like the rig, rig-0927**
 
 | gain | voice change | added / taken | filters | rings heard | heard for | worst catch | worst kill | loudest | tails | ghosts | duck |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no loop | 60.5 % | 0.0 / 60.5 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -6 | 57.5 % | 0.0 / 57.5 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| no loop | 64.8 % | 0.0 / 64.7 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -6 | 62.9 % | 0.0 / 62.9 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
 | -6 *no guard* | 0.9 % | 0.6 / 0.3 | 0 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -3 | 58.9 % | 0.0 / 58.9 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -3 | 63.9 % | 0.0 / 63.9 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
 | -3 *no guard* | 1.4 % | 1.0 / 0.4 | 0 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +0 | 56.9 % | 0.0 / 56.9 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +3 | 60.0 % | 0.0 / 59.9 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +6 | 61.3 % | 0.1 / 61.2 | 43 | 0 | 0 ms | - | - | - | 1 ms | 0 ms | 0 |
-| +10 | 62.2 % | 0.3 / 61.9 | 44 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +15 | 62.1 % | 0.6 / 61.5 | 45 | 0 | 0 ms | - | - | - | 74 ms | 0 ms | 0 |
-| +20 | 71.1 % | 5.2 / 65.9 | 47 | 39 | 5717 ms | +245 ms | 548 ms | -13.5 dB | 1199 ms | 0 ms | 12 |
-| +6, mic moves | 56.3 % | 0.1 / 56.2 | 43 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| slow push (held to +19.6 dB, +17.9 to +20.4 over five runs) | 63.6 % | 2.0 / 61.6 | 46 | 37 | 4093 ms | +159 ms | 1046 ms | -12.6 dB | 993 ms | 0 ms | 7 |
+| +0 | 62.9 % | 0.0 / 62.9 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| +3 | 65.7 % | 0.0 / 65.6 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| +6 | 63.9 % | 0.1 / 63.8 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| +10 | 64.2 % | 0.2 / 64.0 | 44 | 1 | 40 ms | -597 ms | 57 ms | -45.5 dB | 0 ms | 0 ms | 0 |
+| +15 | 62.8 % | 0.8 / 62.0 | 45 | 2 | 103 ms | -643 ms | 110 ms | -31.1 dB | 103 ms | 0 ms | 1 |
+| +20 | 77.9 % | 5.3 / 72.6 | 47 | 50 | 6658 ms | +192 ms | 539 ms | -12.3 dB | 1097 ms | 0 ms | 12 |
+| +6, mic moves | 61.7 % | 0.1 / 61.6 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| slow push (held to +19.1 dB, +17.4 to +20.5 over five runs) | 68.4 % | 2.8 / 65.6 | 46 | 47 | 6415 ms | +267 ms | 504 ms | -13.8 dB | 1241 ms | 65 ms | 8 |
 
 **Reverberant hall, synth**
 
 | gain | voice change | added / taken | filters | rings heard | heard for | worst catch | worst kill | loudest | tails | ghosts | duck |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no loop | 31.9 % | 0.0 / 31.9 | 31 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -6 | 44.5 % | 0.8 / 43.7 | 37 | 0 | 0 ms | - | - | - | 160 ms | 0 ms | 0 |
+| no loop | 37.0 % | 0.0 / 37.0 | 31 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -6 | 50.6 % | 0.7 / 49.9 | 36 | 0 | 0 ms | - | - | - | 152 ms | 0 ms | 0 |
 | -6 *no guard* | 6.9 % | 4.7 / 2.3 | 0 | 0 | 0 ms | - | - | - | 315 ms | 0 ms | 0 |
-| -3 | 53.8 % | 0.8 / 52.9 | 39 | 0 | 0 ms | - | - | - | 160 ms | 0 ms | 0 |
+| -3 | 58.2 % | 0.8 / 57.4 | 38 | 0 | 0 ms | - | - | - | 155 ms | 0 ms | 0 |
 | -3 *no guard* | 10.6 % | 7.5 / 3.1 | 0 | 0 | 0 ms | - | - | - | 879 ms | 0 ms | 0 |
-| +0 | 57.6 % | 1.8 / 55.8 | 40 | 0 | 0 ms | - | - | - | 497 ms | 0 ms | 0 |
-| +3 | 62.0 % | 1.2 / 60.8 | 42 | 0 | 0 ms | - | - | - | 182 ms | 0 ms | 0 |
-| +6 | 64.0 % | 1.7 / 62.4 | 43 | 0 | 0 ms | - | - | - | 828 ms | 0 ms | 0 |
-| +10 | 68.5 % | 5.9 / 62.5 | 45 | 2 | 154 ms | -512 ms | 170 ms | -18.6 dB | 1669 ms | 0 ms | 0 |
-| +15 | 124.1 % | 73.3 / 50.8 | 48 | 9 | 11009 ms | -272 ms | 7091 ms | -7.0 dB | 137 ms | 0 ms | 1 |
-| +20 | 187.3 % | 152.4 / 34.9 | 48 | 7 | 13400 ms | +19 ms | 4723 ms | -9.2 dB | 0 ms | 0 ms | 8 |
-| +6, mic moves | 60.1 % | 1.7 / 58.4 | 43 | 0 | 0 ms | - | - | - | 798 ms | 0 ms | 0 |
-| slow push (held to +11.4 dB, +9.9 to +14.7 over five runs) | 151.0 % | 111.2 / 39.8 | 43 | 3 | 22973 ms | -584 ms | 22478 ms | -6.2 dB | 911 ms | 0 ms | 0 |
+| +0 | 59.8 % | 1.8 / 58.0 | 40 | 0 | 0 ms | - | - | - | 482 ms | 0 ms | 0 |
+| +3 | 61.9 % | 1.1 / 60.8 | 42 | 0 | 0 ms | - | - | - | 137 ms | 0 ms | 0 |
+| +6 | 67.3 % | 1.4 / 65.8 | 43 | 1 | 72 ms | -590 ms | 354 ms | -44.6 dB | 796 ms | 0 ms | 0 |
+| +10 | 69.4 % | 7.7 / 61.7 | 45 | 2 | 234 ms | -510 ms | 158 ms | -33.0 dB | 1984 ms | 0 ms | 0 |
+| +15 | 108.1 % | 50.7 / 57.4 | 48 | 12 | 7071 ms | -272 ms | 4915 ms | -7.0 dB | 613 ms | 0 ms | 4 |
+| +20 | 167.7 % | 126.7 / 41.0 | 48 | 6 | 13949 ms | +19 ms | 7903 ms | -8.3 dB | 0 ms | 0 ms | 6 |
+| +6, mic moves | 67.1 % | 1.4 / 65.7 | 43 | 0 | 0 ms | - | - | - | 766 ms | 0 ms | 0 |
+| slow push (held to +11.4 dB, +9.4 to +15.1 over five runs) | 121.3 % | 74.3 / 47.0 | 47 | 3 | 18226 ms | -575 ms | 14793 ms | -7.1 dB | 1438 ms | 0 ms | 2 |
 
 **Reverberant hall, rig-0927**
 
 | gain | voice change | added / taken | filters | rings heard | heard for | worst catch | worst kill | loudest | tails | ghosts | duck |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| no loop | 60.5 % | 0.0 / 60.5 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -6 | 58.2 % | 0.1 / 58.1 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| no loop | 64.8 % | 0.0 / 64.7 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -6 | 61.7 % | 0.1 / 61.6 | 41 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
 | -6 *no guard* | 5.0 % | 3.4 / 1.6 | 0 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| -3 | 62.4 % | 0.2 / 62.2 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| -3 | 68.4 % | 0.2 / 68.2 | 42 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
 | -3 *no guard* | 7.7 % | 5.8 / 2.0 | 0 | 0 | 0 ms | - | - | - | 1 ms | 0 ms | 0 |
-| +0 | 60.2 % | 0.5 / 59.7 | 43 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
-| +3 | 61.7 % | 0.8 / 60.9 | 43 | 0 | 0 ms | - | - | - | 247 ms | 0 ms | 0 |
-| +6 | 65.2 % | 1.3 / 63.9 | 45 | 0 | 0 ms | - | - | - | 54 ms | 0 ms | 0 |
-| +10 | 68.5 % | 2.4 / 66.1 | 46 | 7 | 2409 ms | +805 ms | 805 ms | -29.0 dB | 2176 ms | 0 ms | 0 |
-| +15 | 94.5 % | 41.9 / 52.5 | 48 | 33 | 12845 ms | -252 ms | 3705 ms | -6.0 dB | 406 ms | 0 ms | 4 |
-| +20 | 214.7 % | 169.5 / 45.2 | 48 | 9 | 24753 ms | -591 ms | 16927 ms | -4.3 dB | 0 ms | 0 ms | 7 |
-| +6, mic moves | 61.8 % | 1.0 / 60.9 | 45 | 0 | 0 ms | - | - | - | 120 ms | 0 ms | 0 |
-| slow push (held to +14.4 dB, +13.6 to +15.0 over five runs) | 96.4 % | 39.8 / 56.6 | 47 | 8 | 11564 ms | -536 ms | 4383 ms | -8.9 dB | 92 ms | 0 ms | 7 |
+| +0 | 65.2 % | 0.4 / 64.9 | 43 | 0 | 0 ms | - | - | - | 0 ms | 0 ms | 0 |
+| +3 | 66.8 % | 0.7 / 66.1 | 43 | 0 | 0 ms | - | - | - | 199 ms | 0 ms | 0 |
+| +6 | 68.7 % | 1.2 / 67.5 | 44 | 0 | 0 ms | - | - | - | 2 ms | 0 ms | 0 |
+| +10 | 70.6 % | 3.6 / 67.1 | 46 | 9 | 2559 ms | +461 ms | 695 ms | -26.9 dB | 2694 ms | 0 ms | 0 |
+| +15 | 194.7 % | 142.1 / 52.6 | 48 | 28 | 24384 ms | -272 ms | 19208 ms | -4.0 dB | 224 ms | 0 ms | 4 |
+| +20 | 167.5 % | 115.9 / 51.5 | 48 | 15 | 17988 ms | -578 ms | 3855 ms | -8.8 dB | 0 ms | 0 ms | 15 |
+| +6, mic moves | 69.4 % | 1.0 / 68.4 | 44 | 0 | 0 ms | - | - | - | 3 ms | 0 ms | 0 |
+| slow push (held to +14.1 dB, +12.6 to +15.5 over five runs) | 92.2 % | 30.5 / 61.7 | 46 | 13 | 10454 ms | -578 ms | 2896 ms | -9.1 dB | 91 ms | 0 ms | 10 |
 
 ## Rulers
 
-Which test code measured which build: `11fe355` by `1416d5b`; `11fe355` by `f81455d`; `294bcc8` by `1416d5b`; `294bcc8` by `f81455d`; `4b1c88c` by `1416d5b`; `4b1c88c` by `f81455d`; `69f6ef0` by `1416d5b`; `69f6ef0` by `f81455d`; `b71ce6f` by `1416d5b`; `d55f580` by `1416d5b`; `d55f580` by `f81455d`; `f5c5f0b` by `1416d5b`; `f5c5f0b` by `f81455d`; `fce3790` by `1416d5b`; `fce3790` by `f81455d`.
+Which test code measured which build: `11fe355` by `1416d5b`; `11fe355` by `9d17858`; `11fe355` by `f81455d`; `294bcc8` by `1416d5b`; `294bcc8` by `9d17858`; `294bcc8` by `f81455d`; `4b1c88c` by `1416d5b`; `4b1c88c` by `9d17858`; `4b1c88c` by `f81455d`; `69f6ef0` by `1416d5b`; `69f6ef0` by `9d17858`; `69f6ef0` by `f81455d`; `9d17858` by `9d17858`; `b71ce6f` by `1416d5b`; `b71ce6f` by `9d17858`; `d55f580` by `1416d5b`; `d55f580` by `9d17858`; `d55f580` by `f81455d`; `f5c5f0b` by `1416d5b`; `f5c5f0b` by `9d17858`; `f5c5f0b` by `f81455d`; `fce3790` by `1416d5b`; `fce3790` by `9d17858`; `fce3790` by `f81455d`.
