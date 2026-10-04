@@ -499,7 +499,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Now.** One line: "guard is removing x dB of 4-16k".
 
 ### 5.4 Alarms - IN PROGRESS
-- **Exit.** [x] Engine down. [x] NOT IN THE LOOP. [ ] Rescue duck: the engine reports it and the app only logs it. [ ] The app's own log lines are shown nowhere.
+- **Exit.** [x] Engine down. [x] NOT IN THE LOOP. [ ] Rescue duck: the engine reports it and the app only logs it. [x] The app's own log lines - launches, restarts, the engine's output, alarms - are written to `logs/app-log-*.txt` (10-04; they had no reader at all before). [ ] ...and shown somewhere in the app.
 
 ### 5.5 Setup screen - DONE
 - **As built.** Device, console address, listen band with draggable edges and floor, low-edge presets, Attack, Max cut, Voice budget, signal-path check, capture, ring-out, channel strips (arm, name, input, return, level, filters), filters in place (`SetupView.cs`).
@@ -546,8 +546,17 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 **Goal:** one buffer of delay, a wiring fault flagged within 2 s, a dead engine never a dead microphone.
 
-### 7.1 Engine supervision - DONE
-- **As built.** 08-20 `124a974` supervisor: starts the engine, restarts it if status stops for 6 s, re-sends every setting and locked filter. 08-21 `dae52ba` a busy telemetry port no longer takes the app down. 08-20 `5b61c15` on/off remembered.
+### 7.1 Engine supervision - DONE (rebuilt 10-04)
+
+- **Goal.** Exactly one engine, always; back within 6 s of a crash; its settings replayed every time.
+- **Exit.** [x] `scripts/watchdog_check.sh` passes on the deployed build, five ways: the engine crashes; the app is starved for 10 s; the engine and its replacement both crash; a second engine is started by hand; a stray engine is running when the app starts. Each ends with one engine, launched by the app, holding the port, configured. Passed on `3f3992c`, 10-04 16:51. [ ] An engine that is alive but hung - cannot be faked from outside (see below).
+- **What was found, 10-04, with the desk off and the room silent.** The app was launching a new engine about seven times a minute beside one it had lost track of an hour before. Each new one opened the audio device, could not bind the port the old one held, and exited; each cycle ended with the settings replayed into the old engine, which reset its audio and emptied its filters. In a show: a dropout and a disarmed guard every minute. Nobody heard anything; the input had been digital silence since the morning.
+- **Three faults, one trigger.**
+  1. *The trigger.* This Mac runs both the rig and the tests. Three times that day a test run on every core starved the app for more than six seconds; the app took its own deafness for the engine's silence and restarted an engine that had been fine.
+  2. *The race.* The health check ran every 2 s and asked for a restart on every tick, including while one was already waiting out its backoff. Several engines were launched; the first took the port, the rest died, and the app was left tracking a dead one while the live one ran on where it could not be reached.
+  3. *The stale answer.* An engine being replaced answers a last ping on its way out. That "ok" re-raised the flag the restart had lowered, so the new engine's first status was no change, nothing replayed its settings, and it ran with no channels: a silent microphone and no guard, with the tray saying the engine was up.
+- **As built.** 08-20 `124a974` supervisor: starts the engine, restarts it if status stops for 6 s, re-sends every setting and locked filter. 08-21 `dae52ba` a busy telemetry port no longer takes the app down. 08-20 `5b61c15` on/off remembered. 10-04 `540b261`, `3f3992c`: one restart at a time; a late health tick means the app was starved, so the clock restarts instead; before any launch the tracked engine is ended and waited for, then any other engine from the same binary; the engine takes its port before it opens the audio device and leaves at once if the port is taken; `/fk/status` carries the engine's process id and only the launched engine's status counts; launching lowers the "ok" flag so the first status from a new engine is an edge. The app writes `logs/app-log-*.txt`. Test runs leave two cores free and run at low priority.
+- **Known limit.** A stopped engine (SIGSTOP, or a debugger attached) sends .NET's child-process bookkeeping into a spin on macOS, which blocks the restart until the engine continues. A real hang is a different state and is expected to be killed and replaced, but that has not been demonstrated.
 
 ### 7.2 Devices and channels - DONE
 - **As built.** 08-20 `906b705`, `e562920`, `0a3677a`, `125677e`: device picker, up to eight inputs. 08-21 `6b90290` a return per input. 48 kHz, 64-sample buffer, fixed.
@@ -649,7 +658,8 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Caution agreed 10-04.** The tests are a good memory and a poor crystal ball: switch off rather than delete anything uncertain until the studio data is in; one removal per commit, with its numbers.
 
 ### 9.3 Remove the dead - NEW
-- **Safe now (dead by the inventory, no behaviour change):** the chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz`, `histTopHz`; the two unused accessors; the engine's debug prints; in the app `FkMode`, `CorrelationMonitor` and the unused controller properties. One per commit, gate numbers unchanged before and after.
+- **Done.** The engine's debug prints (10-04, `3f3992c`).
+- **Safe now (dead by the inventory, no behaviour change):** the chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz`, `histTopHz`; the two unused accessors; in the app `FkMode`, `CorrelationMonitor` and the unused controller properties. One per commit, gate numbers unchanged before and after.
 - **Waiting on a decision:** pulsing (2.8, cancelled); the plateau path, the comb and T42 (1.7); the voice budget (3.7); `RingOutSession` and `X32Geq` (4.8).
 - **Either wire it or remove it:** the CPU figure behind the LOAD readout; the pitch-profile seed.
 - **Old test tools, checked 10-04.** Removed: `precut_test.py` (its question is gate layer 5 now) and `recall.py` (broken since 09-30, when the replay code it borrowed from changed; nobody had noticed, which is the argument for 9.5). Kept, and they run: `timeline.py` (a howl's story from a flight recording), `merge_audit.py` (2.2's check), `make_fixtures.py`, `scripts/fuzz-sweep.py`.
@@ -765,7 +775,7 @@ thresholds. (5) Should each algorithm be its own engine, switched from the UI?
   tree while it ran. Rule 9 in TESTING.md.
 - A 3 dB "regression" in the newest build turned out to be noise. Rule 8.
 
-**Commits.** `72c9ef3` the plan, this file, the singer test. `81f896a` the results
+**Commits (morning to mid-afternoon).** `72c9ef3` the plan, this file, the singer test. `81f896a` the results
 log and gate layer 6. `f81455d` past builds must prove what they are; `listen.py`.
 `1416d5b` first rows; the slow push as a median. `769083c` seven builds on one
 ruler; the inventories; the documents made true. `9d17858` the tests hold a
@@ -775,13 +785,19 @@ build and this entry.
 **Where the plan stands at the end of the day.** 73 features: 23 done, 15 in
 progress, 31 not started, 4 cancelled (three of them proposals).
 
-**Not done.** The engine's behaviour was not changed (one start-up value moved
-into the shared header, same value). Nothing was run in the room: the
+**On the rig, late afternoon.** The app was found relaunching its engine seven
+times a minute (7.1). Desk off, input silent, nothing heard. Fixed, deployed
+(`3f3992c`), and checked five ways with `scripts/watchdog_check.sh`. The app in
+the room was restarted for this, several times, between 16:33 and 16:51.
+
+**Not done.** The guard's behaviour was not changed: the detector and the
+filter bank are as they were in `d55f580`. Nothing was run in the room: the
 engine there is `d55f580`, untouched. The diagnostics were not run (they talk
 to the live engine's ports).
 
 ## Waiting on Chris
 
+0. **Know that the app on the rig was restarted on 10-04** and is now build `3f3992c` (the same guard as `d55f580`; a rebuilt watchdog). See 7.1.
 1. **The room, when you are back:** cold jumps at 20 and 22 on `d55f580` (1.2, 2.3); two minutes of singing at low gain for a live voice-change figure (3.2); and the same two minutes with Attack set to Gentle in Setup - the tests say it halves what is taken from the voice at working gains on a rig like yours.
 2. **Three proposed cancellations:** 1.7 wide flat feedback, 3.7 voice budget, 4.8 desk-EQ ring-out.
 3. **The goals themselves:** 10 ms, 15 ms and 15 % are yours; 3 % with no feedback, the -50 dBFS audible line and "up to 20 dB over" are mine. Change any of them and the thresholds above move with it.

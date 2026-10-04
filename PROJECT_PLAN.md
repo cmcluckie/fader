@@ -86,7 +86,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 1. **Show screen — DONE.** Guard state, level, what it hears, channels, last catch, panic. *Goal: state readable at arm's length.*
 2. **Where feedback is — IN PROGRESS.** Spectrum with filters marked; only the four deepest are labelled and a narrow high ring can be missing from the trace. *Goal: every active filter and the latest ring labelled with its frequency.*
 3. **What it is costing — NEW.** Show the voice change % live. *Goal: within 3 points of the measured figure.*
-4. **Alarms — IN PROGRESS.** Engine down and not-in-the-loop are shown; the rescue duck is not. *Goal: every protective action visible within half a second.*
+4. **Alarms — IN PROGRESS.** Engine down and not-in-the-loop are shown; the rescue duck is not; the app now keeps its own log file. *Goal: every protective action visible within half a second.*
 5. **Setup screen — DONE.** Device, channels, returns, listen band, signal-path check, ring-out, filter list. *Goal: a rig set up without editing a file.*
 6. **One dial — NEW.** Hide or remove settings a normal user does not need. *Goal: guarding in three choices or fewer.*
 7. **Stage switches — NEW.** One on/off and one readout per algorithm stage (epic 6). *Goal: any stage off in one tap.*
@@ -108,7 +108,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 **Problem:** The guard has to be in the audio path, stay there, and fail safe.
 **Goal:** One buffer of delay, a wiring fault flagged within 2 s, and a dead engine never means a dead microphone.
 
-1. **Engine supervision — DONE.** The app starts, watches and restarts the engine. *Goal: back within 6 s of a crash.*
+1. **Engine supervision — DONE.** The app starts, watches and restarts the engine. *Goal: exactly one engine, always, back within 6 s of a crash. Rebuilt 4 Oct after it was found relaunching the engine in a loop; now checked five ways.*
 2. **Devices and channels — DONE.** Pick the interface, up to eight inputs, and where each returns. *Goal: remembered across restarts.*
 3. **Signal-path check — DONE.** Asks the desk whether our audio actually arrives. *Goal: a wrong return found at soundcheck.*
 4. **Build stamp — DONE.** The running engine says exactly which build it is. *Goal: no measurement filed under the wrong build again.*
