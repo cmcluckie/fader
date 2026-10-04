@@ -37,6 +37,10 @@ LEDGER="$ENGINE/tests/sim/ledger.py"
 
 if [[ "${1:-}" == "--record" ]]; then export FK_RECORD=1; fi
 
+# This machine is also the rig. Everything below runs at low priority so the
+# live engine and its app are never starved by a test run (2026-10-04: they were).
+renice -n 10 $$ >/dev/null 2>&1 || true
+
 if [[ "${SKIP_PRESHIP:-0}" == "1" ]]; then
   echo "==> preship SKIPPED (SKIP_PRESHIP=1) - do not ship this"
   exit 0

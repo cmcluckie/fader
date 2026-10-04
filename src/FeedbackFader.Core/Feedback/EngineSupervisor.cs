@@ -22,7 +22,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
     private Timer? _health;
     private CancellationTokenSource? _cts;
     private long _lastStatusTicks;
+    private long _lastHealthTicks;
     private int _restarts;
+    private int _restartPending;      // 1 while a restart has been scheduled and its engine not yet launched
     private volatile bool _stopping;
 
     // Renew well under the 5 s telemetry timeout; a 6 s status gap means dead.
@@ -54,6 +56,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         _client.Start(_cts.Token);
 
         Spawn();
+        Interlocked.Exchange(ref _lastHealthTicks, Environment.TickCount64);
         _health = new Timer(_ => Health(), null, HealthInterval, HealthInterval);
     }
 
@@ -71,8 +74,45 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// No engine but ours. Before launching, end every other engine started from this same
+    /// binary: one left over from a restart that went wrong, or from an app that crashed and
+    /// left its engine running. Two engines on one audio device is the one state this class
+    /// exists to prevent, and the second cannot bind the OSC port, so nothing can ask it to stop.
+    /// </summary>
+    private void KillStrays()
+    {
+        try
+        {
+            var mine = Path.GetFullPath(_binaryPath);
+            foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(_binaryPath)))
+            {
+                try
+                {
+                    string? path = null;
+                    try { path = p.MainModule?.FileName; } catch { /* not ours to read: leave it alone */ }
+                    if (path is null || !string.Equals(Path.GetFullPath(path), mine, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;   // some other build's engine (a dev run, a diagnostic): not ours to end
+                    }
+                    Log?.Invoke($"ending a stray engine (pid {p.Id})");
+                    p.Kill();
+                    p.WaitForExit(2000);
+                }
+                catch { /* gone already */ }
+                finally { p.Dispose(); }
+            }
+        }
+        catch { /* enumeration is best effort */ }
+    }
+
     private void Spawn()
     {
+        // Whatever we were tracking, and anything we were not. KillProc first so the engine
+        // gets its polite /fk/quit; KillStrays for the ones that can no longer hear it.
+        KillProc();
+        KillStrays();
+
         lock (_procLock)
         {
             if (_stopping)
@@ -127,13 +167,34 @@ public sealed class EngineSupervisor : IAsyncDisposable
         _client.Subscribe(FkTelemetry.All);
         _client.Ping();
 
+        // Were WE the ones who went away? This timer fires every 2 s. If it has not run for
+        // far longer than that, this process was starved of CPU (or the machine slept), and
+        // the engine's status messages went unread for exactly as long. That is not the
+        // engine being silent. Start the clock again rather than shoot a healthy engine:
+        // on 2026-10-04 heavy test runs on the rig's own computer did this three times, and
+        // each "silent engine" was a restart of one that had been passing audio throughout.
+        var now = Environment.TickCount64;
+        var sinceHealth = now - Interlocked.Exchange(ref _lastHealthTicks, now);
+        if (sinceHealth > 3 * (long) HealthInterval.TotalMilliseconds)
+        {
+            Interlocked.Exchange(ref _lastStatusTicks, now);
+            Log?.Invoke($"supervisor stalled for {sinceHealth} ms; not judging the engine on that");
+            return;
+        }
+
+        // One restart at a time - see Restart().
+        if (Volatile.Read(ref _restartPending) != 0)
+        {
+            return;
+        }
+
         var procDead = false;
         lock (_procLock)
         {
             procDead = _proc is null || _proc.HasExited;
         }
 
-        var since = Environment.TickCount64 - Interlocked.Read(ref _lastStatusTicks);
+        var since = now - Interlocked.Read(ref _lastStatusTicks);
         if (procDead || since > StatusTtlMs)
         {
             Log?.Invoke(procDead ? "engine process gone; restarting" : $"engine silent {since} ms; restarting");
@@ -144,6 +205,21 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
     private void Restart()
     {
+        // One at a time. Health() runs every 2 s and used to call this on every tick for as
+        // long as the engine was down - including the seconds a restart was already waiting
+        // out its backoff. Each call scheduled another Spawn. The first engine to start took
+        // the OSC port; the later ones could not bind it and exited; and because Spawn
+        // overwrote _proc, the supervisor was left holding a dead process while the live
+        // engine ran on untracked, where KillProc could never reach it. From then on it
+        // "restarted the engine" for ever: seven doomed launches a minute, each opening the
+        // audio device, each followed by a replay of the settings that reset the live
+        // engine's audio and emptied its filters. Found on the rig 2026-10-04, with the desk
+        // off; in a show it would have been a dropout and a disarmed guard every minute.
+        if (Interlocked.Exchange(ref _restartPending, 1) != 0)
+        {
+            return;
+        }
+
         KillProc();
 
         var backoffMs = (int) Math.Min(30_000, 1000 * Math.Pow(2, Math.Min(_restarts, 5)));
@@ -152,7 +228,14 @@ public sealed class EngineSupervisor : IAsyncDisposable
 
         _ = Task.Delay(backoffMs).ContinueWith(_ =>
         {
-            if (!_stopping) Spawn();
+            try
+            {
+                if (!_stopping) Spawn();
+            }
+            finally
+            {
+                Volatile.Write(ref _restartPending, 0);
+            }
         }, TaskScheduler.Default);
     }
 
@@ -189,6 +272,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 if (!p.HasExited)
                 {
                     p.Kill();
+                    p.WaitForExit(2000);   // gone before anything else is launched in its place
                 }
             }
         }

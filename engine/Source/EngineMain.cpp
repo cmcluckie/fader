@@ -34,6 +34,21 @@ class Engine : private juce::OSCReceiver::Listener<juce::OSCReceiver::RealtimeCa
 public:
     bool start (const juce::String& preferredDevice, int sampleRate, int bufferSize)
     {
+        // ---- osc port, FIRST -------------------------------------------------
+        // If the port is taken there is already an engine on this machine. Leave
+        // now, before the audio device is opened: a second engine on the same
+        // device writes the same outputs as the first, and since it cannot hear
+        // OSC nothing can tell it to stop. (The bind used to come after the
+        // audio was running. On 2026-10-04 the app launched seven of these a
+        // minute beside a live engine; each opened the device and then found
+        // the port taken.) The listener is attached once the audio is up.
+        if (! receiver.connect (kEngineListenPort))
+        {
+            juce::Logger::writeToLog ("could not bind OSC " + juce::String (kEngineListenPort)
+                                      + ": another engine is running; not starting");
+            return false;
+        }
+
         // ---- audio -----------------------------------------------------------
         juce::AudioDeviceManager::AudioDeviceSetup setup;
         setup.outputDeviceName = preferredDevice;
@@ -56,11 +71,6 @@ public:
         devices.addAudioCallback (&engine);
 
         // ---- osc -------------------------------------------------------------
-        if (! receiver.connect (kEngineListenPort))
-        {
-            juce::Logger::writeToLog ("could not bind OSC " + juce::String (kEngineListenPort));
-            return false;
-        }
         receiver.addListener (this);
         sender.connect (kLoopback, kAppTelemetryPort);
 

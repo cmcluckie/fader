@@ -13,6 +13,9 @@
 # the .csproj lets a net8.0 build run on a newer runtime.
 set -euo pipefail
 
+# Low priority: this machine is also the rig, and a build must not starve a running engine.
+renice -n 10 $$ >/dev/null 2>&1 || true
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT="$ROOT/src/FeedbackFader.App/FeedbackFader.App.csproj"
 RID="osx-arm64"

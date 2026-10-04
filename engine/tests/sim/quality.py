@@ -495,6 +495,11 @@ def _case(args):
     return row, eps
 
 
+def _be_polite():
+    try: os.nice(10)
+    except OSError: pass
+
+
 _LOOPS = {}
 def _loop(room, move=None):
     key = (room, move)
@@ -512,10 +517,13 @@ def study(rooms=("rig", "hall"), voices=None, cases=None, wav=None, jobs=None, v
                 work.append((room, v, c, True, wav))
                 if c == "push": work += [(room, v, c, True, None, sd) for sd in PUSH_SEEDS[1:]]
                 if c in (-6, -3): work.append((room, v, c, False, wav))        # what the loop itself does, no guard
-    jobs = jobs or max(1, min(len(work), (os.cpu_count() or 2) - 1))
+    # This machine is also the rig. Sixty-eight runs across every core starved the live engine's
+    # app of CPU for more than six seconds, three times, on 2026-10-04 (see EngineSupervisor.cs).
+    # So: leave two cores alone, and run at low priority - the engine and its app come first.
+    jobs = jobs or max(1, min(len(work), (os.cpu_count() or 4) - 2))
     if jobs > 1:
         import multiprocessing as mp
-        with mp.get_context("fork").Pool(jobs) as pool: res = pool.map(_case, work, chunksize=1)
+        with mp.get_context("fork").Pool(jobs, initializer=_be_polite) as pool: res = pool.map(_case, work, chunksize=1)
     else:
         res = [_case(w) for w in work]
     # fold the repeated pushes into one row: the median, and the range beside it

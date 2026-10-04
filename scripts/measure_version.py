@@ -151,6 +151,8 @@ def measure(h, lib, record):
 
 
 if __name__ == "__main__":
+    try: os.nice(10)          # this machine is also the rig: never starve the live engine
+    except OSError: pass
     a = sys.argv[1:]
     record = "--no-record" not in a
     a = [x for x in a if x != "--no-record"]

@@ -129,6 +129,12 @@ numbers.
    the same build reads 16.8 to 22.7. Anything decided by a single trajectory
    is reported as the median of five with its range, and a difference inside
    the range is not a difference.
-9. **Do not touch the tree while a recording run is in progress.** The log
+9. **The test machine is the rig.** The Mac that runs the tests is the Mac
+   that runs the engine in the room. A full study on every core starved the
+   live app three times in one afternoon and tripped a restart bug that left
+   the engine being relaunched seven times a minute (desk off; nobody heard
+   it). Test runs now leave two cores free and run at low priority. Do not
+   start a heavy run during a show.
+10. **Do not touch the tree while a recording run is in progress.** The log
    refuses results from uncommitted work, including a new file created half
    way through.
