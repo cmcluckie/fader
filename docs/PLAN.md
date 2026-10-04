@@ -153,6 +153,46 @@ costs in the 1–4 and 4–16 kHz averages.
 
 ---
 
+## 3. From the survey — proposed, order not yet agreed
+
+Put to Chris on 2026-10-03; he asked for the list. Nothing here is started.
+The reference is `docs/references/van-waterschoot-moonen-2011.md`. Most of the
+paper is either what the engine already does or needs hardware we do not have;
+these are what is left, in the order I would do them.
+
+1. **Two measures, before anything else.** *Reliability:* the fraction of time
+   spent howling and the mean time to recover, in the gate and in
+   `ringout.py`. *Sound quality:* a frequency-weighted spectral distance
+   between what went in and what came out. The second is the "how badly did we
+   hurt the voice" number this project does not have, and the parked voice
+   problem cannot be fixed until it can be measured. Cheap.
+2. **Release that depends on recurrence.** Hold a filter longer on a frequency
+   that keeps coming back, let go sooner of one that never returns. The only
+   release idea the paper records, and release is where most of our trouble
+   has been. Small; the offender memory already counts recurrences.
+3. **A margin readout.** From the loop measurement (item 2 above): how many
+   decibels before the first ring, and at which note. The paper's guidance is
+   to sit 2-3 dB under. Small once item 2 is live.
+4. **Cancellation.** Model the loudspeaker-to-microphone path with an adaptive
+   filter and subtract it, rather than notching. The only family the paper
+   credits with 15-20 dB, and it does not carve the voice. Weeks, not days:
+   it needs the source and loudspeaker signals decorrelated (prediction-error
+   prefilters are the paper's recommendation) and it is the most expensive
+   thing here by far. Prototype in the simulator first; keep the notches and
+   the duck underneath as the safety net, as the paper advises. Its running
+   estimate of the path would also give item 2's pre-placement continuously,
+   with no sweep. Decide on this with the numbers from 1 in hand.
+5. **Rescue below 4 kHz.** Only after 1 gives a voice measure worth trusting.
+6. **A speech-only mode with a 5 Hz frequency shift.** About 6 dB for
+   talking. The paper is clear it is unsuitable for sustained musical tones,
+   so never for singing. Optional, last.
+
+Not worth doing: spatial filtering (needs microphone or loudspeaker arrays);
+more detection features (the detector already ended up with the pair the
+paper's comparison found best).
+
+---
+
 ## Parked — known, measured, not being worked
 
 - **The voice, under the rig's settings.** Every build ends a 3–4 s sung
