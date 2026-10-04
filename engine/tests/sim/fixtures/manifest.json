@@ -238,7 +238,8 @@
   "peak": 44.2,
   "source": "ringout/20261003-190810-guard/sweep.wav",
   "source_t0": 0.0,
-  "note": "step straight to +6 dB on the fader, 18 dB over the ring point: a 70 Hz cluster of modes, not one tone"
+  "note": "step straight to +6 dB on the fader, 18 dB over the ring point: a 70 Hz cluster of modes, not one tone",
+  "fast": true
  },
  {
   "file": "howl-20261003-195851-0001s-14640Hz.wav",
@@ -249,7 +250,8 @@
   "peak": 24.5,
   "source": "ringout/20261003-195851-guard/sweep.wav",
   "source_t0": 0.0,
-  "note": "cold step to +10 dB, 22 dB over the ring point: a doublet, two modes 47 Hz apart with a dip between"
+  "note": "cold step to +10 dB, 22 dB over the ring point: a doublet, two modes 47 Hz apart with a dip between",
+  "fast": true
  },
  {
   "file": "howl-20261003-202218-0000s-9980Hz.wav",
@@ -260,7 +262,8 @@
   "peak": 0.0,
   "source": "ringout/20261003-202218-guard/sweep.wav",
   "source_t0": 0.0,
-  "note": "cold step to 22 dB over the ring point: a tooth of the loop's delay comb, 3.7 dB a frame"
+  "note": "cold step to 22 dB over the ring point: a tooth of the loop's delay comb, 3.7 dB a frame",
+  "fast": true
  },
  {
   "file": "howl-20261003-202138-0000s-9980Hz.wav",
@@ -271,6 +274,19 @@
   "peak": 0.0,
   "source": "ringout/20261003-202138-guard/sweep.wav",
   "source_t0": 0.0,
-  "note": "cold step to 22 dB over the ring point: the same comb, a different frame alignment"
+  "note": "cold step to 22 dB over the ring point: the same comb, a different frame alignment",
+  "fast": true
+ },
+ {
+  "file": "howl-20261004-085408-0000s-10031Hz.wav",
+  "kind": "howl",
+  "hz": 10031.0,
+  "onset": 0.74,
+  "end": 0.95,
+  "peak": 27.5,
+  "source": "ringout/20261004-085408-guard/sweep.wav",
+  "source_t0": 0.0,
+  "note": "cold jump 20 dB over, bracketed by baselines: two modes 40 Hz apart climbing 600 dB/s with a dozen others; reached -28 dB live and tripped the kill switch",
+  "fast": true
  }
 ]

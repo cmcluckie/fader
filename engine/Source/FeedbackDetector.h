@@ -656,11 +656,28 @@ private:
                                           && rippleDb (wlo, whi) <= params.plateauRipple;
                         if (! plateau)
                         {
-                            if (risePerFrame >= params.fastRiseDbPerFrame && risingCount < maxRising)
+                            if (risePerFrame >= params.fastRiseDbPerFrame)
                             {
-                                risingFreq[(size_t) risingCount]  = freq;
-                                risingLevel[(size_t) risingCount] = here;
-                                ++risingCount;
+                                // Full? Then the quietest goes, not the newcomer. This
+                                // scan runs low to high, and with a dozen modes taking
+                                // off at once (the room, 2026-10-04, a cold jump 20 dB
+                                // over) a list filled in scan order was full before it
+                                // reached 10 kHz: the line that mattered was tracked on
+                                // one frame in two and first named at -28 dB. The same
+                                // frequency guillotine the main list once had.
+                                int at = risingCount < maxRising ? risingCount++ : -1;
+                                if (at < 0)
+                                {
+                                    int weakest = 0;
+                                    for (int j = 1; j < maxRising; ++j)
+                                        if (risingLevel[(size_t) j] < risingLevel[(size_t) weakest]) weakest = j;
+                                    if (here > risingLevel[(size_t) weakest]) at = weakest;
+                                }
+                                if (at >= 0)
+                                {
+                                    risingFreq[(size_t) at]  = freq;
+                                    risingLevel[(size_t) at] = here;
+                                }
                             }
                             continue;
                         }
@@ -1522,7 +1539,25 @@ private:
             // between two bins: no straight line survives that, and the runaway
             // path went blind to exactly the clusters it was written for. Below
             // runawayMinHz nothing changes.
-            if (freq >= params.runawayMinHz && s.seenFrame == framesAnalysed) return;
+            if (freq >= params.runawayMinHz && s.seenFrame == framesAnalysed)
+            {
+                // ...and of the two, the LOUDER is the cluster's level this frame.
+                // Peaks arrive low to high, so "first one wins" gave the suspect
+                // the lower mode of a pair whenever both were maxima and the
+                // upper one when only it was: a sawtooth. Measured in the room
+                // 2026-10-04, a cold jump 20 dB over: two modes 40 Hz apart at
+                // 10 kHz climbing 600 dB/s, the suspect's level reading -82.8,
+                // -83.6, -78.7, -71.8, -68.7, -69.7 ... - no straight line, no
+                // runaway call, and the pair was first named at -28 dB.
+                if (levelDb > s.lastLevel)
+                {
+                    const int idx = (s.windowPos - 1 + windowSize) % windowSize;
+                    s.wLevel[(size_t) idx] = levelDb;
+                    s.wFreq[(size_t) idx]  = freq;
+                    s.lastLevel = levelDb;
+                }
+                return;
+            }
             s.seenFrame = framesAnalysed;
 
             s.missed    = 0;
@@ -2086,7 +2121,7 @@ private:
     std::array<float, (size_t) numBins>*   prevIm = &imB;
     bool hasPrevFrame = false;
     float frameRmsDb  = -120.0f;   // this frame's total level, for the runaway path
-    static constexpr int maxRising = 12;
+    static constexpr int maxRising = 32;
     std::array<float, maxRising> risingFreq {}, risingLevel {};
     int risingCount = 0;
     int harmonicPeaksThisFrame = 0;   // peaks judged part of a series so far this frame

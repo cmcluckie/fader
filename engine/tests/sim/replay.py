@@ -65,6 +65,10 @@ class Replay:
         lib.fk_set_loop_verdict(self.g.h, 0)
         self.block, self.sr = block, sr
         self.events, self.rejects, self.windows = [], [], []
+        # Set to a frequency to have the bank's cut THERE sampled every block:
+        # for rings that live and die inside one 250 ms window, "how loud was
+        # the line when a real cut landed on it" is the only ruler that works.
+        self.watch_hz, self.cuts = None, []
 
     def _drain(self):
         lib, h = self.g.lib, self.g.h
@@ -83,6 +87,8 @@ class Replay:
             self.g.process(x[s:s + B])
             self._drain()
             t = (s + B) / sr
+            if self.watch_hz:
+                self.cuts.append((t, float(self.g.lib.fk_cut_at(self.g.h, ctypes.c_float(self.watch_hz)))))
             if t >= next_win:
                 next_win += HOP
                 P = np.abs(np.fft.rfft(x[s + B - WIN:s + B] * win)) ** 2

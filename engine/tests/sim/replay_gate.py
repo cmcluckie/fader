@@ -46,9 +46,29 @@ def load16(path):
     return x, sr
 
 
+def landed(x, sr, hz, cuts, need_db=-12.0):
+    """How loud the line was when the bank first had `need_db` of cut on its own
+    frequency. Read from the recording itself, in the detector's units."""
+    hit = next((t for t, c in cuts if c <= need_db), None)
+    if hit is None: return None
+    N = 2048; i = max(0, int(hit * sr) - N)
+    seg = x[i:i + N]
+    if len(seg) < N: return None
+    S = 20 * np.log10(np.abs(np.fft.rfft(seg * np.hanning(N))) * 2 / N + 1e-12)
+    f = np.fft.rfftfreq(N, 1 / sr); sel = (f >= hz * 0.985) & (f <= hz * 1.015)
+    return float(S[sel].max())
+
+
+# A fast riser - a ring that goes from the floor to howl level inside a fifth of
+# a second - must have a real cut on its own frequency before it is this loud.
+# The cold jumps of 2026-10-03/04 reached -21 to -29 dB in the room on builds
+# that named the line late; called on time they are stopped near -70.
+FAST_LANDED_DB = -50.0
+
+
 def check(fx):
     x, sr = load16(os.path.join(FIX, fx["file"]))
-    r = Replay(sr); r.run(x)
+    r = Replay(sr); r.watch_hz = fx["hz"]; r.run(x)
     hz = fx["hz"]; near = lambda q: abs(q - hz) / hz <= 0.03
     ev   = [e for e in r.events  if near(e[1]) and fx["onset"] - 0.6 <= e[0] <= fx["end"]]
     wins = [w for w in r.windows if near(w[1]) and fx["onset"] - 0.3 <= w[0] <= fx["end"] + 0.3]
@@ -73,6 +93,7 @@ def check(fx):
     #   09-30 hold bug ended at -5 - and it is the one that is gated.
     rescue = r.g.rescue()
     return dict(rescues=rescue["episodes"], rescue_why=rescue["reason"],
+                landed=landed(x, sr, fx["hz"], r.cuts),
                 detected=bool(ev), latency=(first - fx["onset"]) if first is not None else None,
                 deepest=deepest, last=last, bled=(deepest <= -12.0 and last > deepest + 8.0),
                 let_go=(deepest <= -12.0 and last > LET_GO_DB and last > deepest + 3.0),
@@ -87,13 +108,20 @@ if __name__ == "__main__":
     base = json.load(open(BASE)) if os.path.exists(BASE) and not update else None
 
     bad, bled, let_go, hits, lats, ducked = [], 0, 0, 0, [], 0
-    print(f"{'fixture':<44} {'kind':<5} {'detected':>10} {'deepest':>8} {'end':>7}")
+    print(f"{'fixture':<44} {'kind':<5} {'detected':>10} {'deepest':>8} {'end':>7} {'landed':>7}")
     for fx in manifest:
         c = check(fx)
         if fx["kind"] == "howl":
             det = f"{c['latency']*1000:+.0f} ms" if c["detected"] else "NEVER"
-            print(f"{fx['file']:<44} howl  {det:>10} {c['deepest']:>7.1f}  {c['last']:>6.1f}"
+            ld = f"{c['landed']:6.1f}" if c["landed"] is not None else "   n/a"
+            print(f"{fx['file']:<44} howl  {det:>10} {c['deepest']:>7.1f}  {c['last']:>6.1f}  {ld}"
+                  f"{'  fast' if fx.get('fast') else ''}"
                   f"{'  LET GO' if c['let_go'] else ('  relaxed' if c['bled'] else '')}")
+            if fx.get("fast"):
+                if c["landed"] is None:
+                    bad.append(f"{fx['file']}: a fast riser never got 12 dB on its own frequency")
+                elif c["landed"] > FAST_LANDED_DB:
+                    bad.append(f"{fx['file']}: fast riser was already at {c['landed']:.1f} dB when the cut landed (limit {FAST_LANDED_DB:.0f})")
             if not c["detected"]:      bad.append(f"{fx['file']}: real howl not detected")
             elif c["deepest"] > MIN_CUT: bad.append(f"{fx['file']}: only {c['deepest']:.1f} dB of cut on a real howl (dial {DIAL_DB:.0f})")
             if c["detected"]: lats.append(c["latency"])

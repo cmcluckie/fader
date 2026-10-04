@@ -252,8 +252,9 @@ def main():
     first = True
 
     def restore():
-        if not a.use_capture: eng.stop_recording(); eng.analysis(False)
+        # Guard back in FIRST, then the faders: the same reason, in reverse.
         eng.bypass(False)
+        if not a.use_capture: eng.stop_recording(); eng.analysis(False)
         eng.send("/fk/param", "rescue", 1.0)        # never leave the rescue duck off
         for addr, v in was.items():
             try: x32.set(addr, v)
@@ -267,6 +268,11 @@ def main():
         if not a.use_capture: eng.record(rec); time.sleep(0.5)
         eng.send("/fk/param", "rescue", 0.0 if a.no_rescue else 1.0)
         if a.no_rescue: print("   rescue duck OFF for this run")
+        # The swept fader is parked LOW before the guard is taken out. The other
+        # order leaves the room unguarded at whatever gain it was found at - and
+        # on 2026-10-04 it was found 20 dB over its ring point, held only by
+        # the guard. (The main fader happened to have been pulled down.)
+        x32.set(a.fader, fader_pos(a.safe_db))
         if a.mode == "baseline" and not a.dry_run:
             if not a.use_capture: eng.analysis(True)
             eng.bypass(True); print("   guard BYPASSED (detector still watching)")
