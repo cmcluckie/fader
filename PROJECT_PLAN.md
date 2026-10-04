@@ -126,22 +126,24 @@ how much of what the ear gets from the voice differs from the clean voice; a
 3. **Simulated-room gate — DONE.** The real guard inside a simulated room that can fight back. *Goal: no build ships that is worse in a loop.*
 4. **Real-recording gate — DONE.** 22 recorded howls and 6 sung phrases replayed through the guard. *Goal: no build ships that is worse on real feedback.*
 5. **Loop-measurement gate — DONE.** *Goal: the measured loop names the note that rings.*
-6. **Singer in the loop — IN PROGRESS.** A singer fed through the simulated room and the guard, scored on catch, kill and voice change at every gain. *Goal: part of the ship gate. Built today.*
-7. **Results log — IN PROGRESS.** Every result kept with its version, date, and whether it was simulated, recorded or live. *Goal: any version's numbers found in one place.*
+6. **Singer in the loop — DONE.** A singer fed through the simulated room and the guard, scored on catch, kill and voice change at every gain. *Goal: part of the ship gate (it is layer 6).*
+7. **Results log — IN PROGRESS.** Every result kept with its version, date, and whether it was simulated, recorded or live. *Goal: any version's numbers found in one place. Seven builds and 32 live runs are in; the live tools log themselves from the next session.*
 8. **Live test tools — DONE.** Fader sweep and bracketed cold jumps. *Goal: a live number is never taken without a baseline either side.*
 9. **Test voices — IN PROGRESS.** A synthetic singer in the repository, and your recorded singing kept on your machine. *Goal: add clean dry singing from the studio.*
 10. **Second room — NEW.** Collect a studio session. *Goal: every number re-checked in a room the tests have never seen.*
-11. **Listening check — NEW.** You listen to examples at 5, 15 and 30 %. *Goal: the number means what it says to your ears.*
+11. **Listening check — IN PROGRESS.** You listen to the same phrase at several measured levels of change. *Goal: the number means what it says to your ears. Clips sent 4 Oct; waiting on you.*
+12. **One machine — IN PROGRESS.** Every test runs exactly the settings the room runs. *Goal: no setting differs between the engine and any test. Found today: the engine holds a filter 10 s, the tests 2 s.*
 
-## 9. Code health — NEW
+## 9. Code health — IN PROGRESS
 
 **Problem:** Only code that measurably earns its place should stay.
 **Goal:** Every mechanism has a measured effect on record, or is gone.
 
-1. **Inventory — IN PROGRESS.** Every mechanism and setting listed as proven, unmeasured, disabled or dead. *Goal: nothing unlisted. App done today, engine next.*
+1. **Inventory — DONE.** Every mechanism and setting in the app and the engine listed as live, switched off, unreachable or dead. *Goal: nothing unlisted.*
 2. **On/off table — NEW.** Switch each unmeasured mechanism off and run the full tests. *Goal: a number beside each one.*
-3. **Remove the dead — NEW.** Unused modes, the unconnected desk ring-out, the unused probe, debug prints. *Goal: none left.*
-4. **Documents match the code — NEW.** The README and the interface document are stale in about fifteen places. *Goal: no claim the code contradicts.*
+3. **Remove the dead — NEW.** The unused probe, unused modes, a readout that always shows zero, debug prints, room memory that is loaded and then erased. *Goal: none left.*
+4. **Documents match the code — IN PROGRESS.** The README and the interface document were stale in about fifteen places; both are corrected, stale comments in the source are not yet. *Goal: no claim the code contradicts.*
+5. **Test tools in one place — NEW.** The 23 Python test tools folded under one command, leftovers removed. *Goal: one entry point, and no file nobody runs.*
 
 ## 10. Release — NEW
 

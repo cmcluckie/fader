@@ -77,14 +77,15 @@ everything is scored against it.
 
 ```bash
 cd engine/tests/sim
-python3 quality.py                    # everything: 52 runs, about 70 s
+python3 quality.py                    # everything: 68 runs, about 100 s
 python3 quality.py --gate             # the quick subset the ship gate runs
 python3 quality.py --selftest         # the ruler against known inputs
 python3 quality.py --room rig --voice synth --case 10 -v --wav out/    # one case, rings listed, audio written
 ```
 
 `--wav` writes what came out on the left and the clean reference on the right,
-so a number can be listened to.
+so a number can be listened to. `listen.py` renders one phrase several ways,
+each file named with its measured voice change, for checking the scale by ear.
 
 ## Measuring a past build
 
@@ -123,6 +124,11 @@ numbers.
    skipped and the file was labelled as if it had not been. Each library is
    now rebuilt from nothing, stamped with its sources, and refused if it is
    byte-identical to one built from different sources.
-8. **Do not touch the tree while a recording run is in progress.** The log
+8. **One run is not a measurement.** The slow push read 16.8 dB on one build
+   and 19.9 on the one before. With nothing changed but the room-noise seed,
+   the same build reads 16.8 to 22.7. Anything decided by a single trajectory
+   is reported as the median of five with its range, and a difference inside
+   the range is not a difference.
+9. **Do not touch the tree while a recording run is in progress.** The log
    refuses results from uncommitted work, including a new file created half
    way through.

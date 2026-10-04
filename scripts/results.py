@@ -185,7 +185,7 @@ def build_page():
             for vv in voices:
                 x = case(v, room, vv, "push")
                 if x.get("held_to_db") is None: continue
-                rng = f" ({x['held_to_min_db']:+.0f} to {x['held_to_max_db']:+.0f})" if x.get("held_to_min_db") is not None else ""
+                rng = f" ({x['held_to_min_db']:.1f} to {x['held_to_max_db']:.1f})" if x.get("held_to_min_db") is not None else ""
                 out.append(f"{x['held_to_db']:+.1f}{rng}")
             return " / ".join(out) or "-"
         w(f"| `{v}` | {date[v]} | {f(g.get('detected'))} of {f(g.get('howls'))} | {f(g.get('let_go'))} | {f(g.get('median_lead_ms'))} ms | "

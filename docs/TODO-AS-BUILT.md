@@ -101,9 +101,11 @@ the kill time is zero.
 | hall | rig-0927 | +10 | 68.5 % | 46 | 7, 2.4 s | never cut | 805 ms | -29 dB |
 | hall | rig-0927 | +15 | 94.5 % | 48 | 33, 12.8 s | lost | lost | -6 dB |
 
-Slow push (half a decibel a second from 6 under, singer on a loop): rig-like
-room held to **+16.8** (synth) and **+19.6** (rig-0927); hall to **+11.4** and
-**+14.9**.
+Slow push (half a decibel a second from 6 under, singer on a loop; the median of
+five runs that differ only in the room's noise, range in brackets): rig-like
+room held to **+21.2** (16.8 to 22.7, synth) and **+19.6** (17.9 to 20.4,
+rig-0927); hall to **+11.4** (9.9 to 14.7) and **+14.4** (13.6 to 15.0). One run
+alone moves 3 dB or more for no reason.
 
 Read: detection holds. Nothing is heard up to 15 dB over in a room like the
 rig and up to 6 dB over in the hall. The voice is where it fails, at every
@@ -358,10 +360,23 @@ the goal: the fault is in what gets called feedback, not in a dial.
 ### 3.3 Did the cut work? - NEW
 
 - **Goal.** 3.2 met with no ring caught later than today.
-- **Idea.** The guard is in the loop, so it can do what a listener cannot: cut, and watch. A real ring gets quieter *at the guard's input* when it is cut, because the cut lowers the loop gain. A sung note does not. The bank already counts exactly this ("louder under 20 dB of cut") and uses it only to raise the not-in-the-loop alarm. Used per filter: a cut that changed nothing is released at once and that frequency is left alone for a while.
-- **Why first.** Replayed with no loop, the voice never answers a cut, so the ladder climbs to emergency depth on it: -30 to -45 dB on Chris's fundamentals. That is most of the 60 %.
-- **Stages.** S1: a steady tone that ignores cuts is released within 150 ms; a growing tone that answers is held. S2: 0 of 6 sung fixtures hit, 22 of 22 howls unchanged. S3: as 3.2. S4: as 3.2.
-- **Risk.** A ring far over the edge also stays loud under a first cut. The rule must look at whether the *growth* changed, not only the level; S1 has to include that case before anything else is built.
+- **Idea.** The guard is in the loop, so it can do what a listener cannot: cut, and watch. A real ring is the loop's own output coming round, so cutting it changes what arrives at the guard's *input*: it falls, or it goes on climbing more slowly. A sung note is not coming round the loop and does not care. A line that is cut by 12 dB or more, keeps being re-detected, and is neither falling nor climbing has not answered the cut - so it is not feedback.
+- **Where the evidence already is.** `NotchBank::trigger` already compares the level at each re-trigger with the last one (`lastLevelDb`), and counts the case "louder under 20 dB of cut" (`futileHits`). It uses that count for one thing only: the NOT IN THE LOOP alarm. The case next to it - "the same, under a deep cut" - is the singer, and today it is answered by cutting deeper: first cut past -30 dB within 0.8-1.4 s of singing, 18 of 48 filters deeper than -30 dB on Chris's recorded voice.
+- **Design, to be built behind a switch that ships off.**
+  1. *Not answering:* a filter with 12 dB or more applied, re-triggered three times over at least 100 ms, input level within 2 dB of where it stood when the cut landed.
+  2. *Then:* release that filter quickly (100 ms, not the 2 s hold and slow bleed) and ignore that line for as long as it stays, plus a second.
+  3. *If that was wrong* - it was a ring sitting just over the edge - letting go is itself the test: a ring jumps the moment it is released, the growth path catches it within a few frames, and the filter goes back marked proven, not to be challenged again for ten seconds. Cost of a wrong release: one blip of about 2 dB.
+  4. *Not in the loop* stays as it is: louder under a deep cut, six times.
+- **Why first.** It is most of the 60 %, and most of the full pool that then gets in the way of real rings (1.2 S3c, 1.3).
+
+| Stage | Threshold to move on | Now |
+|---|---|---|
+| S1 | (a) a steady voice-like tone that ignores cuts is released within 300 ms and not re-cut while it lasts; (b) a ring in a closed loop that dies under its cut is not released early; (c) a ring 20 dB over, still climbing under its first cut, is never released; (d) a ring left just over the edge by its cut: released once, re-caught within 100 ms, then held | none of these tests exist |
+| S2 | cannot be tested on recordings: a recorded howl does not answer a cut either. The rule is switched off in replay, like the loop verdict. 22 of 22 howls unchanged with it off. | - |
+| S3 | singer, no loop: under 10 % on both voices (goal 3 %), 5 filters or fewer; no ring heard up to +15 rig-like and +6 hall; slow push not lower than today's range; NOT IN THE LOOP not raised by singing | 32 % / 60 %; 31 / 42 filters; alarm raised at 5.6 s / 25.5 s |
+| S4 | two minutes of singing at low gain: guard takes under 3 %; bracketed cold jumps no worse | not run |
+
+- **Risk.** (d) above is the one that can hurt: if the re-catch is slow, a marginal ring pumps. S1(d) has to pass before anything else is built, and S3's slow push is the check that it holds in a room.
 
 ### 3.4 Cost follows feedback - NEW
 
@@ -436,7 +451,7 @@ the goal: the fault is in what gets called feedback, not in a dial.
 - **Goal.** Within 1 dB of the measured ring point. **Needs** 4.3 live.
 
 ### 4.6 Room memory - NEW
-- **Goal.** A stale map is detected, not used. **Now.** `pitch-profile.csv` remembers where a room has rung and seeds those regions at start; its effect has never been measured on its own (9.2).
+- **Goal.** A stale map is detected, not used. **Now.** `pitch-profile.csv` remembers where a room has rung and is meant to seed those regions at start. Found 10-04 by reading the source: the seed is erased when the audio device is configured, a moment after it is loaded, so it has no effect in the engine (it does in the fuzz, which seeds later). Confirm with a test, then wire it properly or remove it.
 
 ### 4.7 One-button setup - NEW
 - **Goal.** Under 60 s, no audible ring. **Needs** 4.3-4.6.
@@ -480,7 +495,7 @@ the goal: the fault is in what gets called feedback, not in a dial.
 - **Goal.** Any stage off in one tap. **Needs** epic 6.
 
 ### 5.8 Truthful picture - NEW
-- **Exit.** [ ] The drawn curve uses the engine's filter width (it assumes Q 25; the engine uses 12 and per-ring widths, and does not report them). [ ] The "Detector - advanced" cards show live values (they say prominence 10 dB, Q 25, band 200 Hz-16 kHz; the engine runs 12, 12, and the user's band). [ ] A disarmed channel's trace and filters are cleared.
+- **Exit.** [ ] The LOAD readout shows a real figure (the engine never computes it; it is always 0). [ ] The drawn curve uses the engine's filter width (it assumes Q 25; the engine uses 12 and per-ring widths, and does not report them). [ ] The "Detector - advanced" cards show live values (they say prominence 10 dB, Q 25, band 200 Hz-16 kHz; the engine runs 12, 12, and the user's band). [ ] A disarmed channel's trace and filters are cleared.
 
 ### 5.9 Desk analyser overlay - DONE
 - **As built.** 08-20 `6f52c68`, `dbd7a35`. Engine spectrum, X32 RTA, filters, detections coloured by whether the desk's analyser agrees. Display only.
@@ -559,14 +574,16 @@ the goal: the fault is in what gets called feedback, not in a dial.
 ### 8.5 Loop-measurement gate - DONE
 - `loop_measure_check.py` (10-03 `4b1c88c`). See 4.3, 4.4.
 
-### 8.6 Singer in the loop - IN PROGRESS
+### 8.6 Singer in the loop - DONE
 - **Goal.** Part of the ship gate.
-- **Exit.** [x] Singer as the source inside the loop. [x] Two rooms, two voices, nine gains, a moving microphone, a slow push: 52 runs in 70 s. [x] Self-check of the ruler. [x] Rings, tails and ghosts told apart. [ ] A quick subset in `preship.sh` with regression thresholds. [ ] Logged (8.7). [ ] Works against past builds' libraries (done by hand for seven builds on 10-04: voice change identical, 32 % / 60 %, back to `11fe355`).
+- **Exit.** [x] Singer as the source inside the loop. [x] Two rooms, two voices, nine gains, a moving microphone, a slow push (median of five): 68 runs in about 100 s. [x] Self-check of the ruler (25 checks). [x] Rings, tails and ghosts told apart. [x] A quick subset in `preship.sh` as layer 6, with regression thresholds: 5 runs, 4 s. [x] Logged (8.7). [x] Works against past builds' libraries: seven builds back to `11fe355`, each rebuilt from nothing.
+- **Regression thresholds in the gate** (rig-like room, synthetic singer; "no worse than `d55f580`", not the goals): voice change with nothing ringing 35 % or less; no duck on a voice alone; no ring heard at 6 under, +6 or +10; voice change at +10 51 % or less.
 - **Method.** As the published comparisons do it (`docs/references/`): the voice is the loop's source, the clean reference is the voice with no loop, scores are gain held, distance from the clean voice, time ringing, and time to recover.
 
 ### 8.7 Results log - IN PROGRESS
 - **Goal.** Any version's numbers found in one place.
-- **Exit.** [x] `ledger.py`: one line per result with version, date, kind (bench, recorded, simulated, live), which test, pass or fail. [ ] Every gate layer writes to it. [ ] `ringout.py` and `coldjump.py` write to it with the running engine's build. [ ] `docs/RESULTS.md` generated from it. [ ] Backfill: seven builds from `11fe355` re-measured with today's tests; the live runs of 10-03 and 10-04 imported from their own files.
+- **Exit.** [x] `ledger.py`: one line per result with build, ruler, date, kind (bench, recorded, simulated, live), which test, pass or fail. [x] Every gate layer writes to it (`preship.sh --record`). [x] `docs/RESULTS.md` generated from it (`scripts/results.py`). [x] Backfill: seven builds from `11fe355` rebuilt and re-measured with today's tests; 32 live sweeps of 10-03 and 10-04 imported from their own folders; the voice scored in two live recordings (`session_score.py`). [ ] `ringout.py` and `coldjump.py` log themselves under the running engine's build - written, never yet run: the first live session proves it.
+- **Two mistakes made and caught on the day, both now impossible.** The first backfill was refused by the log because a new file had appeared in the tree half way through (rule 8 in TESTING.md). And the past builds it would have recorded were wrong: three of seven libraries were copies of their neighbour, because the compile had been skipped (rule 7). Had the log not refused, three builds would have been filed with another build's numbers.
 
 ### 8.8 Live test tools - DONE
 - See 4.2. Rule since 10-04: a live number counts only between two baselines that agree.
@@ -581,25 +598,49 @@ the goal: the fault is in what gets called feedback, not in a dial.
 ### 8.11 Listening check - NEW
 - **Exit.** [x] The same phrase rendered several ways, each file named with its measured change (`listen.py`, 10-04): clean; today's build with nothing ringing (32 % synthetic, 60 % Chris); the same with gentle attack (7 %, 29 %); one filter (5-7 %); 2 dB quieter (16 %); and what the 09-27 build actually sent to the speakers (8 %). [x] Three of Chris's own sent to him 10-04. [ ] Chris listens. [ ] The scale, the audible line (-50 dBFS) and the 3 % / 15 % goals are confirmed or moved.
 
+### 8.12 One machine - IN PROGRESS
+- **Goal.** No setting differs between the engine in the room and any test.
+- **Exit.** [x] The detector's and the bank's settings come from one header and one `configure` call, and the tests read the rig's own settings file (`11fe355`, after a week of gating a machine the room had never heard). [ ] The hold time: 10 s in the engine, 2 s in the test library and the fuzz (found 10-04). [ ] The fuzz confirms in 4 frames; the app sends 6. The fuzz has no rescue duck. [ ] A check that fails the gate when the two drift: the engine and the test library each print their full effective settings, and the gate compares them.
+- **Why it keeps happening.** A setting can be given in four places - the app, the engine's own start-up values, the shared header, and a class's built-in default - and a test that forgets one silently runs the last.
+
 ---
 
-# 9. Code health - NEW
+# 9. Code health - IN PROGRESS
 
 **Goal:** every mechanism has a measured effect on record, or is gone.
 
-### 9.1 Inventory - IN PROGRESS
-- **Exit.** [x] App, 10-04 (findings below and in epics 5, 7, 10). [ ] Engine: every detector parameter (45), bank knob (about 40) and mechanism marked proven, unmeasured, disabled or dead.
-- **App findings not filed elsewhere.** Unused: `FkMode`, `RingOutSession`, `CorrelationMonitor`, several controller properties. Debug prints left on in the engine (five lines a second). "Release all" sends 48 messages per channel into a queue of 128. A second window survives the engine being switched off.
+### 9.1 Inventory - DONE
+- **Exit.** [x] App (10-04): [inventory/app-2026-10-04.md](inventory/app-2026-10-04.md). [x] Engine (10-04): [inventory/engine-2026-10-04.md](inventory/engine-2026-10-04.md) - all 43 detector parameters, every bank knob, every mechanism, each marked live, off by its value, unreachable or dead, with file and line.
+- **What the engine inventory found.**
+  - **The tests still do not run the room's machine.** The engine holds a quiet filter for **10 s** before letting it go (`AudioEngine.h:519`); the test library and the fuzz hold it for **2 s** (the bank's own default). Every gate layer has been measuring a guard that lets go five times sooner than the one in the room. The fuzz also confirms a ring in 4 frames where the app sends 6, and has no rescue duck. Tracked as 8.12.
+  - **Room memory does nothing.** The remembered ring frequencies (`pitch-profile.csv`) are loaded once at start and erased when the audio device is configured a moment later (read in the source; not yet run). 4.6.
+  - **Off by its value, and unreachable while it is:** the plateau path and its comb filters; the voice budget and everything under it; pulsing.
+  - **Dead:** the 10 ms chirp probe (nothing can start it); `qMaxHigh`, `qWidenAboveHz` and the function that reads them; `histTopHz`; the CPU figure (never written, so the app's LOAD readout is always 0); two unused accessors.
+  - **Read but never decisive at the shipping values:** `reopenMarginDb`, `minReleaseGap`, `plateauMinHz`.
+  - **Live, with nothing testing it:** the runaway path has no unit test (1.2 S1); the "drifting" veto, cluster matching and the rising-line list are reached only through the simulator; nothing fills the pool of 48 to test stealing.
+  - **Telemetry only, no effect on audio:** the track layer.
+  - **Debug printing left on** in the engine, five lines a second.
+  - Comments in four places describe a machine that no longer exists (paths 1-3 only, Q 40, "ASSIST").
+- **App findings not filed elsewhere.** Unused: `FkMode`, `RingOutSession`, `CorrelationMonitor`, several controller properties. "Release all" sends 48 messages per channel into a queue of 128. A second window survives the engine being switched off.
 
 ### 9.2 On/off table - NEW
-- **Exit.** [ ] Each unmeasured mechanism switched off in turn, all gate layers plus 20 fuzz seeds plus the singer test, one row each. Candidates: offender memory, depth memory, the track layer, pitch-profile seeding, `qMaxHigh`, the comb, fast-track.
+- **Exit.** [ ] Each live mechanism whose effect has never been measured on its own switched off in turn - all six gate layers, 20 fuzz seeds, the full singer study - one row each. Candidates, from the inventory: offender memory and fast-track; depth memory; filter tracking; the coverage test; the harmonic family test; the low-band analyser; the sustain hold; cluster matching; the rising-line list; each veto.
+- **Needs** a switch per mechanism in the test library, which is what epic 6 builds; until then each needs a hand-made build.
 - **Caution agreed 10-04.** The tests are a good memory and a poor crystal ball: switch off rather than delete anything uncertain until the studio data is in; one removal per commit, with its numbers.
 
 ### 9.3 Remove the dead - NEW
-- **List.** Pulsing (2.8). The plateau path and T42 (1.7, if cancelled). The 10 ms chirp probe. The voice budget (3.7, if cancelled). `FkMode`, `RingOutSession`, `CorrelationMonitor`. Engine debug prints.
+- **Safe now (dead by the inventory, no behaviour change):** the chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz`, `histTopHz`; the two unused accessors; the engine's debug prints; in the app `FkMode`, `CorrelationMonitor` and the unused controller properties. One per commit, gate numbers unchanged before and after.
+- **Waiting on a decision:** pulsing (2.8, cancelled); the plateau path, the comb and T42 (1.7); the voice budget (3.7); `RingOutSession` and `X32Geq` (4.8).
+- **Either wire it or remove it:** the CPU figure behind the LOAD readout; the pitch-profile seed.
+- **Old test tools to check and retire:** `precut_test.py` (superseded by `loop_measure_check.py`), `recall.py`, `timeline.py`, `scripts/fuzz-sweep.py`; `merge_audit.py` stays (it is 2.2's check).
 
-### 9.4 Documents match the code - NEW
-- **List.** README: two channels (it is eight); OFF / ASSIST / AUTO modes (retired 08-20); desk-EQ ring-out (not connected); a five-column log (it has ten); buffer 32 or 64 (fixed 64). `docs/fk-osc-interface.md`: `/fk/mode` (gone), twelve OSC addresses undocumented, event has eight arguments not three, 48 slots not 12. Stale comments in six source files. `diagnostics/FeedbackSelfTest` still asserts the old log header.
+### 9.4 Documents match the code - IN PROGRESS
+- **Exit.** [x] README, feedback section (10-04): eight channels not two; the OFF / ASSIST / AUTO modes replaced by what exists (engine, arm, guard, capture, panic); the desk-EQ ring-out stated as not connected; the log's ten columns; buffer fixed at 64; "audio bypassed" explained as a warning, not a bypass; the stale "nothing was run on a PA" table rows removed. [x] `docs/fk-osc-interface.md` rewritten against `EngineMain.cpp` (10-04): `/fk/mode` gone, twelve addresses added, the event's eight arguments, 48 filter slots, which parameters the app actually sends. [ ] Stale comments in six source files (list in 9.1's app findings). [ ] `diagnostics/FeedbackSelfTest` still asserts the old five-column log header - not run on 10-04 because the diagnostics talk to the live engine's ports. [ ] The app's "Detector - advanced" cards (5.8).
+
+### 9.5 Test tools in one place - NEW
+- **Goal.** One command, and no file nobody runs.
+- **Now.** 23 Python files: the ship gate (7), the singer test and its voices (4), the results log (4), the live tools (2), and leftovers from past investigations (4-5). Eight were added on 10-04. None of it ships in the product.
+- **Exit.** [ ] One entry point (`fk test ...`, `fk results`, `fk live ...`) over one package. [ ] The leftovers in 9.3 removed. [ ] `docs/TESTING.md` lists every file and nothing else exists.
 
 ---
 
@@ -625,6 +666,80 @@ the goal: the fault is in what gets called feedback, not in a dial.
 ### 10.6 User guide - NEW
 
 ---
+
+## Log
+
+One entry per working day: what was asked, what was built, what was measured,
+what was found, what went wrong. Newest first.
+
+### 2026-10-04
+
+**Asked.** (1) Standardise the test results - simulated, live, which version,
+when; log every version's tests; make sound quality one of them; use sample
+singing. (2) The singing cannot be laid on top; it has to be in the loop.
+(3) Look at how the research does it, and at other algorithms. (4) Turn this
+into a real project: a plan of epics and features with four statuses and a
+goal on each, and a detailed to-do and as-built list with exit criteria and
+thresholds. (5) Should each algorithm be its own engine, switched from the UI?
+
+**Built.**
+- `PROJECT_PLAN.md` (10 epics, 73 features) and this file.
+- `quality.py`: a singer inside a simulated loop, scored against the same
+  voice with no loop. Two rooms, two voices, nine gains, a moving microphone, a
+  slow push (median of five). 68 runs in about 100 s. Self-check: 25 known
+  answers. The loop matches 1/(1-H) within 0.02 dB.
+- `voices.py` (a synthetic singer, in the repository), `make_voices.py` (real
+  singing cut from the recordings, kept local), `listen.py` (the same phrase
+  rendered several ways, named with its measured change).
+- `ledger.py`, `scripts/results.py`, `scripts/measure_version.py`,
+  `scripts/session_score.py`; every gate layer and both live tools write to
+  the log; `preship.sh --record`.
+- Gate layer 6 (singer in the loop, 4 s). The recorded-feedback gate scores
+  each sung fixture as a whole phrase.
+- `docs/TESTING.md`, `docs/RESULTS.md` (generated),
+  `docs/references/other-work-2026-10-04.md`; `docs/fk-osc-interface.md` and
+  the README's feedback section rewritten against the code.
+
+**Measured, for the first time.**
+- Voice change with nothing ringing: 32 % (synthetic), 60 % (Chris, recorded),
+  31-42 filters. Identical on seven builds back to `11fe355`. In the room on
+  09-27 the build of the day took 6-13 % of the same singing; on 10-04 at about
+  20 dB over the guard took 70 % of his speaking voice.
+- The six sung fixtures, whole phrase: 30-41 % taken, 22-35 filters each. Four
+  of them have read "left alone" since 09-30.
+- Rings heard: none up to +15 in the rig-like room, none up to +6 in the hall;
+  the hall loses between +10 and +15, low (0.2-1.3 kHz).
+- Slow push holds to about +20 (rig-like) and +11 to +14 (hall), median of five.
+- The fast-riser fixture across builds: the cut lands at -29 dB (`11fe355`),
+  -40 (`294bcc8` to `4b1c88c`), -78 (`d55f580`); `fce3790` missed one of the 22
+  howls outright.
+
+**Found.**
+- Singing alone raises the NOT IN THE LOOP alarm (5.6 s and 25.5 s in).
+- A voice does not answer a cut, so the ladder climbs to emergency depth on
+  it: 18 of 48 filters deeper than -30 dB on Chris's singing.
+- A deep narrow filter near 300 Hz leaves a 23-34 ms ghost of the note.
+- Attack "fast" against "gentle" is 32 % against 7 % of the voice (synthetic),
+  61 % against 30 % (recorded); the voice budget buys voice by letting rings
+  through for over a second.
+- The slow push moves 3-6 dB between runs that differ only in noise.
+
+**Went wrong, and what changed because of it.**
+- The plan Chris asked for came an hour late, behind tool work he had not
+  asked for first, and he had to ask twice. The plan and this file now move in
+  the same commit as the work, and a direct request is delivered before
+  anything else continues.
+- Three of seven rebuilt past libraries were copies of their neighbour (the
+  compile was skipped). Caught by checksum before anything was logged. The
+  tool now rebuilds from nothing, stamps each library with its sources and
+  refuses a duplicate.
+- The first backfill was refused by the log because a file was created in the
+  tree while it ran. Rule 9 in TESTING.md.
+- A 3 dB "regression" in the newest build turned out to be noise. Rule 8.
+
+**Not done.** No engine code was changed. Nothing was run in the room: the
+engine there is `d55f580`, untouched. The diagnostics were not run (they talk
+to the live engine's ports).
 
 ## Waiting on Chris
 

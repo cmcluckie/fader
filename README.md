@@ -11,8 +11,8 @@ other installed.
   or WinMM, selected at startup).
 - **Feedback Fader** ([Feedback suppression](#feedback-suppression)) — a
   headless JUCE audio process the tray app supervises, notching microphone
-  feedback, plus an X32 RTA-assisted ring-out for the room. macOS, and Windows
-  with an ASIO interface ([Windows](#windows)).
+  feedback on up to eight channels. macOS, and Windows with an ASIO interface
+  ([Windows](#windows)). Its plan is [PROJECT_PLAN.md](PROJECT_PLAN.md).
 
 They began as one binary. The split cost almost nothing because the seam was
 already there: the feedback code never referenced MIDI, and the feedback views
@@ -178,13 +178,18 @@ the script does not need `iconutil` and runs off a Mac too.
 
 ## Feedback suppression
 
-A two-channel acoustic feedback suppressor for the lead and backup vocal mics,
-plus a system ring-out that drives the X32's own GEQ. The DSP (a spectral
-detector and a notch bank, ported verbatim from the FeedbackKiller plugin) runs
-in a **separate headless process**, `fk-engine`; the menu-bar app supervises it
-and talks to it over OSC on loopback. See
+An acoustic feedback suppressor for up to eight microphones. The DSP (a
+spectral detector, a bank of 48 notch filters per channel and a rescue duck)
+runs in a **separate headless process**, `fk-engine`; the menu-bar app
+supervises it and talks to it over OSC on loopback. See
 [docs/adr/0001](docs/adr/0001-feedback-engine-architecture.md) for why, and
 [docs/fk-osc-interface.md](docs/fk-osc-interface.md) for the wire contract.
+
+Where the project stands and where it is going:
+[PROJECT_PLAN.md](PROJECT_PLAN.md) (epics, features, goals),
+[docs/TODO-AS-BUILT.md](docs/TODO-AS-BUILT.md) (what was built, what is left,
+pass thresholds), [docs/TESTING.md](docs/TESTING.md) (the standard tests) and
+[docs/RESULTS.md](docs/RESULTS.md) (every build's numbers).
 
 The audio path has **no managed code anywhere near it** — a GC pause in an audio
 callback produces the kind of dropout that only ever happens on stage. That
@@ -268,9 +273,9 @@ and 4 (set their output destination to *none*). If you leave the direct-out
 running you will hear the un-notched vocal doubling with the engine's return.
 Confirm ADAT 3/4 are still **post-insert** so the engine receives the vocal after
 the 610-B and 1176. In the engine's audio settings choose the Apollo and enable
-**ADAT 3 and 4 for input and output**, buffer **32 or 64 samples** — anything
-larger is wasted latency (analysis runs on a ring buffer beside the signal, so
-audio latency is only the buffer).
+**ADAT 3 and 4 for input and output**. The buffer is fixed at **64 samples**
+(analysis runs on a ring buffer beside the signal, so audio latency is only the
+buffer).
 
 ### Keep a bypass path
 
@@ -278,39 +283,55 @@ The Mac is now in your audio path, so before you trust it live, wire a fallback:
 send the same mics to a **spare pair of ADAT channels** with a Console
 direct-out, land them on **two muted X32 channels**, and keep those in reach. If
 the laptop sleeps or the engine dies, unmute and carry on with the clean vocal —
-one unmute from recovery. The app also never fails to silence *quietly*: if the
-engine stops, the menu reads **"engine down — audio bypassed"**.
+one unmute from recovery. If the engine stops, the menu reads **"engine down —
+audio bypassed"** — but the engine *is* the pass-through, so a dead engine is a
+silent channel until you unmute the spare: that label is a warning, not a
+bypass.
 
-### Modes and the workflow
+### Controls and the workflow
 
-`OFF` analyses and displays but passes audio untouched. `ASSIST` detects and
-logs but never cuts — **this is the default, and where you start.** `AUTO`
-deploys notches. Pick the mode from the tray's **Feedback mode** submenu.
+There are no modes. (OFF / ASSIST / AUTO were retired in August.) What there is:
 
-1. Run **ASSIST** for a full rehearsal. Every detection is logged to
-   `~/Documents/FeedbackKiller/logs/feedback-log-*.csv`
-   (`seconds,channel,frequency_hz,level_db,applied`).
-2. Read the log against what actually rang. If the frequencies match, the
-   detector is tuned for your room; if it flagged you *singing*, raise
-   `prominenceDb` or `persistFrames` (via `/fk/param`).
-3. Ring-out: **AUTO**, push the mains until things ring, let it find them, then
-   **Lock all feedback filters** (tray). Locked filters are persisted to
-   `~/Documents/FeedbackKiller/notches.json` and **replayed on every restart** —
+- **Feedback engine** (tray): the audio process on or off.
+- **Arm** (Setup, per channel): this input is guarded. Nothing is cut until a
+  channel is armed.
+- **Guard on / off** (Show): off passes audio untouched and lets the filters
+  fade out.
+- **Capture** (Show or Setup): logs every catch and records the microphone
+  before and after the filters. With the guard off it still detects and logs,
+  and places nothing — the way to watch without acting.
+- **Panic** (Show, hold one second): clears every filter, locked ones included.
+
+Every detection is logged to
+`~/Documents/FeedbackKiller/logs/feedback-log-*.csv`
+(`seconds,channel,frequency_hz,level_db,applied,gate,filter,cut_here_db,nearest_notch_hz,age_ms`),
+every declined candidate to `reject-log-*.csv`, and what the filters were doing
+each second to `eq-log-*.csv`.
+
+1. Arm the microphones, guard off, Capture on, and run a rehearsal. Read the
+   log against what actually rang.
+2. Ring-out (Setup): **Start ring-out**, push the monitors until things ring,
+   let it find them, then **Lock found filters**. Locked filters are saved to
+   `~/Documents/FeedbackKiller/notches.json` and **replaced on every restart** —
    they survive the engine, or the app, dying.
-4. For the show, leave it in **AUTO** with the locked filters in place; anything
-   new it finds is a live filter that releases on its own.
+3. For the show, guard on with the locked filters in place; anything new it
+   finds is a live filter that releases on its own.
 
-### System ring-out (the X32 side)
+Know before you rely on it: measured on 2026-10-04, the current build with the
+"fast" attack setting places filters on a singing voice even when nothing is
+ringing ([docs/RESULTS.md](docs/RESULTS.md)). That is the top item in the plan.
 
-The engine handles the *microphones*; the X32's own RTA + GEQ handle the
-*system*. The 31-band GEQs on insert FX slots 5–8 are individually addressable,
-and the console's 100-band RTA is readable over OSC, so the app can push the
-mains, read the RTA, and cut the offending GEQ band — a second tool for a
-different problem. Set the RTA source to the main mix and insert a GEQ on the
-main LR for this. The paths are verified against the console; **cutting during a
-real ring needs the PA up**, so that step is done at the rig.
+### The X32 side
 
-Verify the RTA/GEQ path (read-only, no console changes) with:
+The app reads the console in two places: the **X32 RTA overlay** (tray) draws
+the console's own analyser over the engine's spectrum and marks rings both can
+see, and **Check signal path** (Setup) plays a brief tone and asks the
+console's meters whether it arrived.
+
+A ring-out that cuts the X32's own GEQ was written in August
+(`RingOutSession`, `X32Geq`) and its console paths were verified, but **it is
+not connected to the app**: nothing in the app writes the GEQ. The read-only
+check still runs:
 
 ```bash
 dotnet run --project diagnostics/RingOut -- <x32-ip> 5
@@ -468,20 +489,17 @@ assumptions but cannot prove the assumptions match the devices. Outstanding:
 | `/-stat/solosw/NN` and `/-stat/selidx` on Rack firmware | Low-medium | solo/select do nothing; `OscPing` can probe them |
 | `/ch/NN/...` fader, mix/on, config/name | Low | `OscPing` already exercises fader |
 | Surface → console direction on this Mac | Low | move fader 1, watch channel 1 move — not yet eyes-verified here |
-| **Feedback: Apollo/ADAT audio path & channel mapping** | High | no signal reaches the engine, or the wrong ADAT pair is used |
-| **Feedback: detection tuning for your room** | Medium | ASSIST log flags you *singing*, or misses real rings |
-| **Feedback: RTA band-centre frequencies** | Low-med | a ring-out cut lands on a neighbouring 1/3-octave band |
-| **Feedback: GEQ ±15 dB endpoints** | Low | a cut lands at a slightly wrong depth |
-| **Feedback: cutting GEQ / notching during a real ring** | — | needs the PA up; confirm at soundcheck |
 
 Touch reporting matters more than it looks: fader-touch gating is what stops
 incoming OSC fighting your hand. If those notes are wrong, the gating silently
 never engages.
 
-The feedback rows are the deliverable-5 list: everything the engine does was
-proven on the bench against the default audio device and the live console, but
-nothing was run against the Apollo, real mics, or a PA. The `RingOut` and
-`FkPing` diagnostics are the tools to check each at the rig.
+The table above is FaderBridge's. Feedback Fader has since been run on the
+Apollo, real microphones and a PA; what is proven and what is not, with the
+threshold each feature has to pass, is kept in
+[docs/TODO-AS-BUILT.md](docs/TODO-AS-BUILT.md), and every build's numbers in
+[docs/RESULTS.md](docs/RESULTS.md). The findings listed above this table are
+the record of August and September and are not maintained.
 
 ## Open decisions
 
