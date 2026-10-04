@@ -143,7 +143,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 2. **On/off table — NEW.** Switch each unmeasured mechanism off and run the full tests. *Goal: a number beside each one.*
 3. **Remove the dead — NEW.** The unused probe, unused modes, a readout that always shows zero, debug prints, room memory that is loaded and then erased. *Goal: none left.*
 4. **Documents match the code — IN PROGRESS.** The README and the interface document were stale in about fifteen places; both are corrected, stale comments in the source are not yet. *Goal: no claim the code contradicts.*
-5. **Test tools in one place — NEW.** The 23 Python test tools folded under one command, leftovers removed. *Goal: one entry point, and no file nobody runs.*
+5. **Test tools in one place — NEW.** The 22 Python test tools folded under one command. *Goal: one entry point, and no file nobody runs. Two leftovers removed 4 Oct, one of which had been broken for days unnoticed.*
 
 ## 10. Release — NEW
 

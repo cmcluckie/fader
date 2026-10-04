@@ -26,7 +26,12 @@ on the path.
 
     cmake --build build --target fk-loopdsp
     python3 fk_in_loop.py      # guard off vs guard on, in the loop
-    python3 precut_test.py     # does predicting the ladder beat reacting?
+    python3 loop_measure_check.py   # does measuring the loop and pinning filters beat reacting? (gate layer 5)
+
+(`precut_test.py`, which first asked that question with hand-armed filters, and
+`recall.py`, which had been broken since 09-30, were removed on 2026-10-04;
+both are in the git history. What they found is below and in
+`docs/fresh-eyes-2026-09-30.md`.)
 
 ## What these found
 

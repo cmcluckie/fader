@@ -652,14 +652,14 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Safe now (dead by the inventory, no behaviour change):** the chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz`, `histTopHz`; the two unused accessors; the engine's debug prints; in the app `FkMode`, `CorrelationMonitor` and the unused controller properties. One per commit, gate numbers unchanged before and after.
 - **Waiting on a decision:** pulsing (2.8, cancelled); the plateau path, the comb and T42 (1.7); the voice budget (3.7); `RingOutSession` and `X32Geq` (4.8).
 - **Either wire it or remove it:** the CPU figure behind the LOAD readout; the pitch-profile seed.
-- **Old test tools to check and retire:** `precut_test.py` (superseded by `loop_measure_check.py`), `recall.py`, `timeline.py`, `scripts/fuzz-sweep.py`; `merge_audit.py` stays (it is 2.2's check).
+- **Old test tools, checked 10-04.** Removed: `precut_test.py` (its question is gate layer 5 now) and `recall.py` (broken since 09-30, when the replay code it borrowed from changed; nobody had noticed, which is the argument for 9.5). Kept, and they run: `timeline.py` (a howl's story from a flight recording), `merge_audit.py` (2.2's check), `make_fixtures.py`, `scripts/fuzz-sweep.py`.
 
 ### 9.4 Documents match the code - IN PROGRESS
 - **Exit.** [x] README, feedback section (10-04): eight channels not two; the OFF / ASSIST / AUTO modes replaced by what exists (engine, arm, guard, capture, panic); the desk-EQ ring-out stated as not connected; the log's ten columns; buffer fixed at 64; "audio bypassed" explained as a warning, not a bypass; the stale "nothing was run on a PA" table rows removed. [x] `docs/fk-osc-interface.md` rewritten against `EngineMain.cpp` (10-04): `/fk/mode` gone, twelve addresses added, the event's eight arguments, 48 filter slots, which parameters the app actually sends. [ ] Stale comments in six source files (list in 9.1's app findings). [ ] `diagnostics/FeedbackSelfTest` still asserts the old five-column log header - not run on 10-04 because the diagnostics talk to the live engine's ports. [ ] The app's "Detector - advanced" cards (5.8).
 
 ### 9.5 Test tools in one place - NEW
 - **Goal.** One command, and no file nobody runs.
-- **Now.** 23 Python files: the ship gate (7), the singer test and its voices (4), the results log (4), the live tools (2), and leftovers from past investigations (4-5). Eight were added on 10-04. None of it ships in the product.
+- **Now.** 22 Python files (two leftovers removed 10-04): the ship gate (7), the singer test and its voices (4), the results log (4), the live tools (2), tools for studying a recording or sweeping settings (4), and the icon maker. Eight were added on 10-04. None of it ships in the product.
 - **Exit.** [ ] One entry point (`fk test ...`, `fk results`, `fk live ...`) over one package. [ ] The leftovers in 9.3 removed. [ ] `docs/TESTING.md` lists every file and nothing else exists.
 
 ---
