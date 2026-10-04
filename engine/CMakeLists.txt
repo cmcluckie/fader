@@ -27,12 +27,24 @@ target_sources(fk-engine PRIVATE
     Source/EngineMain.cpp
 )
 
+# The build id the engine writes beside its logs at startup, so that what is
+# RUNNING can be checked against what was built. The bundle shipped a 15:22
+# engine at 18:14 once, under a commit message describing a fix it did not
+# contain, and three hours of measurements were of the wrong binary.
+if(NOT DEFINED FK_BUILD_ID)
+    execute_process(COMMAND git rev-parse --short HEAD WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+                    OUTPUT_VARIABLE FK_GIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    string(TIMESTAMP FK_BUILD_TIME "%Y-%m-%d %H:%M")
+    set(FK_BUILD_ID "${FK_GIT_HASH} built ${FK_BUILD_TIME}")
+endif()
+
 target_compile_definitions(fk-engine PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_STANDALONE_APPLICATION=1
     # No GUI event loop needed.
     JUCE_MODAL_LOOPS_PERMITTED=0
+    FK_BUILD_ID="${FK_BUILD_ID}"
 )
 
 # Windows: ASIO for a low-latency insert (a Focusrite Scarlett's own driver),

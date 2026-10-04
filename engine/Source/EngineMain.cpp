@@ -650,6 +650,10 @@ private:
 
 } // namespace fk
 
+#ifndef FK_BUILD_ID
+#define FK_BUILD_ID "unstamped"
+#endif
+
 int main (int argc, char* argv[])
 {
     juce::ScopedJuceInitialiser_GUI juceInit;   // creates the MessageManager AudioDeviceManager wants
@@ -667,6 +671,16 @@ int main (int argc, char* argv[])
 
     juce::Logger::writeToLog ("fk-engine up: OSC in " + juce::String (fk::kEngineListenPort)
                               + ", telemetry -> " + juce::String (fk::kAppTelemetryPort));
+
+    // Which build is actually running, beside the logs it writes. Overwritten
+    // on every start; read it before believing a measurement.
+    {
+        const auto dir = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("FeedbackKiller");
+        dir.createDirectory();
+        dir.getChildFile ("engine-build.txt").replaceWithText (
+            juce::String (FK_BUILD_ID) + "\nstarted " + juce::Time::getCurrentTime().toString (true, true) + "\n");
+        juce::Logger::writeToLog ("fk-engine build " + juce::String (FK_BUILD_ID));
+    }
 
     while (gRun.load()) juce::Thread::sleep (200);
 

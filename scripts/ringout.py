@@ -111,6 +111,7 @@ class Engine:
     def record(self, path): self.send("/fk/record", path)
     def stop_recording(self): self.send("/fk/record", "")
     def bypass(self, on): self.send("/fk/bypass", 1 if on else 0)
+    def analysis(self, on): self.send("/fk/analysis", 1 if on else 0)   # keep detecting while bypassed
 
 
 # ---- the meter: read the engine's own recording as it grows ----------------
@@ -148,6 +149,9 @@ class Meter:
         spec = 20 * np.log10(2 * np.abs(np.fft.rfft(seg)) / self.w.sum() + 1e-12)
         return spec, rms
 
+    def at(self, spec, hz):
+        b = int(round(hz / self.f[1])); return float(spec[max(0, b - 1):b + 2].max())
+
     def peak(self, spec, lo_hz=200.0):
         lo = np.searchsorted(self.f, lo_hz)
         b = lo + int(np.argmax(spec[lo:]))
@@ -173,6 +177,11 @@ def tail_events(path, since_pos):
     return rows, since_pos
 
 
+def glob_mtime(pattern):
+    import glob
+    return [(os.path.getmtime(f), f) for f in glob.glob(pattern)]
+
+
 def newest(prefix):
     fs = sorted((os.path.getmtime(os.path.join(LOGS, f)), f) for f in os.listdir(LOGS) if f.startswith(prefix))
     return os.path.join(LOGS, fs[-1][1]) if fs else None
@@ -194,15 +203,21 @@ def main():
     ap.add_argument("--kill-db", type=float, default=-30.0, help="any bin this loud: kill at once")
     ap.add_argument("--loud-db", type=float, default=-40.0, help="a bin this loud for --loud-s: kill")
     ap.add_argument("--loud-s", type=float, default=1.5)
-    ap.add_argument("--onset-db", type=float, default=-60.0, help="a prominent bin this loud and rising = a ring")
+    ap.add_argument("--onset-db", type=float, default=-70.0, help="a detector event this loud starts a ring candidate")
     ap.add_argument("--rings", type=int, default=12, help="guard mode: stop after this many rings")
     ap.add_argument("--settle-s", type=float, default=3.0)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--use-capture", action="store_true",
+                    help="the app's Capture is on: meter from its recording and leave its recorder alone")
     a = ap.parse_args()
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     out = os.path.join(OUT, f"{stamp}-{a.mode}"); os.makedirs(out, exist_ok=True)
     x32 = X32(a.dry_run); eng = Engine()
+    try:
+        print("   engine: " + open(os.path.expanduser("~/Documents/FeedbackKiller/engine-build.txt")).read().replace("\n", "; ").strip("; "))
+    except OSError:
+        print("   engine: build unknown (no engine-build.txt - an engine older than the stamp)")
 
     # where everything was, written down before anything moves
     was = {a.fader: x32.get(a.fader), a.main: x32.get(a.main)}
@@ -212,6 +227,15 @@ def main():
     if a.dry_run: print("   DRY RUN: no fader will move")
 
     rec = os.path.join(out, "sweep.wav")
+    if a.use_capture:
+        # The app's Capture mode records to logs/audio-<stamp>.wav and writes the
+        # capture log (refusal reason, nearest filter, cut here) per detection -
+        # the one record of WHY the bank did what it did. Meter from that file.
+        cands = sorted(glob_mtime(os.path.join(LOGS, "audio-*.wav")))
+        if not cands: sys.exit("no capture recording in logs - turn Capture on in Setup first")
+        rec = cands[-1][1]; size0 = os.path.getsize(rec); time.sleep(1.0)
+        if os.path.getsize(rec) == size0: sys.exit(f"{os.path.basename(rec)} is not growing - is Capture on?")
+        print(f"   metering the app's capture recording {os.path.basename(rec)}")
     trials = open(os.path.join(out, "trials.csv"), "w", newline="")
     tw = csv.writer(trials); tw.writerow(["t", "fader_db", "event", "hz", "level_db", "prom_db", "rms_db", "note"])
     t0 = time.time()
@@ -225,7 +249,8 @@ def main():
     first = True
 
     def restore():
-        eng.stop_recording(); eng.bypass(False)
+        if not a.use_capture: eng.stop_recording(); eng.analysis(False)
+        eng.bypass(False)
         for addr, v in was.items():
             try: x32.set(addr, v)
             except Exception as e: print(f"   RESTORE FAILED {addr}: {e} - set it by hand to {v:.4f}")
@@ -235,8 +260,10 @@ def main():
     signal.signal(signal.SIGINT, on_signal); signal.signal(signal.SIGTERM, on_signal)
 
     try:
-        eng.record(rec); time.sleep(0.5)
-        if a.mode == "baseline" and not a.dry_run: eng.bypass(True); print("   guard BYPASSED (detector still watching)")
+        if not a.use_capture: eng.record(rec); time.sleep(0.5)
+        if a.mode == "baseline" and not a.dry_run:
+            if not a.use_capture: eng.analysis(True)
+            eng.bypass(True); print("   guard BYPASSED (detector still watching)")
         elif a.mode == "baseline": print("   [dry] guard would be bypassed")
         else: eng.bypass(False)
         x32.set(a.fader, fader_pos(a.start_db)); x32.set(a.main, fader_pos(a.main_db))
@@ -248,13 +275,12 @@ def main():
             if first: first = False
             else: cur_db = min(a.max_db, cur_db + a.step_db)
             x32.set(a.fader, fader_pos(cur_db)); log("step", db=cur_db)
-            step_end = time.time() + a.hold_s; ring_here = None
+            step_end = time.time() + a.hold_s; ring_here = None; candidate = None
             while time.time() < step_end:
                 time.sleep(0.1)
                 m = meter.read(0.1)
                 if m is None: continue
                 spec, rms = m; hz, lvl, prom = meter.peak(spec)
-                prev_peaks.append((time.time(), hz, lvl)); prev_peaks = prev_peaks[-6:]
                 # --- kill switch, before anything else
                 if lvl >= a.kill_db or rms >= a.kill_db - 3:
                     log("KILL", hz, lvl, prom, rms, "instant"); killed = True
@@ -266,21 +292,35 @@ def main():
                     x32.set(a.fader, fader_pos(a.safe_db)); cur_db = a.safe_db
                     print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {hz:8.0f} {lvl:6.1f} {prom:5.1f} {rms:6.1f}  KILL -> fader to {a.safe_db:+.0f} dB")
                     break
-                # --- ring onset: prominent, above onset level, rising over the last 0.5 s
-                rising = len(prev_peaks) >= 5 and abs(prev_peaks[0][1] - hz) / hz < 0.02 and lvl - prev_peaks[0][2] >= 3.0
-                if prom >= 15.0 and lvl >= a.onset_db and rising and ring_here is None:
-                    ring_here = (hz, lvl, time.time())
-                    log("ring", hz, lvl, prom, rms, "onset"); rings.append(dict(db=cur_db, hz=hz, onset=lvl, peak=lvl, t=time.time()))
-                    print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {hz:8.0f} {lvl:6.1f} {prom:5.1f} {rms:6.1f}  RING #{len(rings)}")
-                    if a.mode == "baseline":
-                        # that is the number; get out before it is loud
-                        x32.set(a.fader, fader_pos(a.safe_db)); log("backoff", db=a.safe_db); cur_db = a.safe_db
-                        break
-                if ring_here is not None and abs(hz - ring_here[0]) / hz < 0.02:
-                    rings[-1]["peak"] = max(rings[-1]["peak"], lvl)
-                    if lvl <= rings[-1]["peak"] - 10 and "fell10" not in rings[-1]:
+                # --- the ring signal is the DETECTOR's. The meter alone called a
+                # voice harmonic at 305 Hz a ring on the first live run; the
+                # detector knows a voice from a ring, so it starts the candidate
+                # and the meter only confirms that the tone is still rising.
+                if ev_path:
+                    rows, ev_pos = tail_events(ev_path, ev_pos)
+                    for (ts, ch, hz_, lv_) in rows:
+                        log("detector", hz_, lv_, 0, rms, ch)
+                        if candidate is None and ring_here is None and lv_ >= a.onset_db:
+                            candidate = (hz_, meter.at(spec, hz_), time.time())
+                            print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {hz_:8.0f} {lv_:6.1f} {'':>5} {rms:6.1f}  detector: candidate")
+                if candidate is not None:
+                    chz, c0, ct = candidate; now_lvl = meter.at(spec, chz)
+                    if (now_lvl >= c0 + 2.0 and now_lvl >= -65.0) or now_lvl >= -50.0:
+                        ring_here = (chz, now_lvl, time.time()); candidate = None
+                        log("ring", chz, now_lvl, prom, rms, "confirmed"); rings.append(dict(db=cur_db, hz=chz, onset=now_lvl, peak=now_lvl, t=time.time()))
+                        print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {chz:8.0f} {now_lvl:6.1f} {prom:5.1f} {rms:6.1f}  RING #{len(rings)} confirmed")
+                        if a.mode == "baseline":
+                            # that is the number; get out before it is loud
+                            x32.set(a.fader, fader_pos(a.safe_db)); log("backoff", db=a.safe_db); cur_db = a.safe_db
+                            break
+                    elif time.time() - ct > 0.6:
+                        log("unconfirmed", chz, now_lvl, prom, rms, f"was {c0:.1f}"); candidate = None
+                if ring_here is not None:
+                    now_lvl = meter.at(spec, ring_here[0])
+                    rings[-1]["peak"] = max(rings[-1]["peak"], now_lvl)
+                    if now_lvl <= rings[-1]["peak"] - 10 and "fell10" not in rings[-1]:
                         rings[-1]["fell10"] = time.time() - ring_here[2]
-                        print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {hz:8.0f} {lvl:6.1f} {prom:5.1f} {rms:6.1f}  fell 10 dB from {rings[-1]['peak']:.1f} in {rings[-1]['fell10']:.2f} s")
+                        print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {ring_here[0]:8.0f} {now_lvl:6.1f} {prom:5.1f} {rms:6.1f}  fell 10 dB from {rings[-1]['peak']:.1f} in {rings[-1]['fell10']:.2f} s")
             # detector's view, appended to the log
             if ev_path:
                 rows, ev_pos = tail_events(ev_path, ev_pos)

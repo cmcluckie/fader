@@ -36,6 +36,12 @@ cp -R "$PUB"/* "$APP/Contents/MacOS/"
 chmod +x "$APP/Contents/MacOS/$EXE"
 cp "$ROOT/assets/FeedbackFader.icns" "$APP/Contents/Resources/"
 
+# Build the engine HERE, every time. The gate builds only the test targets, and
+# this script used to copy whatever fk-engine artefact was lying about - which
+# on 2026-10-03 was three hours older than the fix the bundle was named for.
+echo "==> Building fk-engine"
+cmake -S "$ROOT/engine" -B "$ROOT/engine/build" -DFK_BUILD_ID="$(git -C "$ROOT" rev-parse --short HEAD)$(git -C "$ROOT" diff --quiet || echo '+dirty') built $(date '+%Y-%m-%d %H:%M')" >/dev/null
+cmake --build "$ROOT/engine/build" --target fk-engine -j8 | grep -E 'error|warning: unused' || true
 ENGINE="$ROOT/engine/build/fk-engine_artefacts/Release/fk-engine"
 if [ -x "$ENGINE" ]; then
   cp "$ENGINE" "$APP/Contents/MacOS/fk-engine"
