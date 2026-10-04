@@ -106,6 +106,25 @@ public:
     void reset() noexcept { for (auto& b : filters) b.reset(); }
 
     /**
+        The operator's controls, applied the way the engine applies them. One
+        function, because the engine and the test library had drifted: the engine
+        set these every block from its own atomics while the library ran the
+        bank's built-in defaults, and the two machines were not the same - merge
+        window Q 12 against 25, first strike -18 against -12, caps -12/-18 against
+        -18/-24. The gate passed on one and the room screamed on the other.
+    */
+    void configure (double notchQ, double firstStrikeDb, double maxCutDb) noexcept
+    {
+        defaultQ       = notchQ;
+        initialCutDb   = firstStrikeDb;
+        fastTrackCutDb = firstStrikeDb - 6.0;
+        // The user's "max cut" is the REAL ceiling: normal stops 6 dB short of
+        // it, a stubborn tone reaches it, emergency goes past it.
+        softCapDb      = maxCutDb + 6.0;
+        hardCapDb      = maxCutDb;
+    }
+
+    /**
         A detector hit at f. Deepen the coalesced notch if one already covers f,
         otherwise open a fresh one (deeper if f is a known repeat offender).
         Returns the slot index, or -1 only if every slot is locked. `nowSeconds`
@@ -657,30 +676,44 @@ public:
     NotchSlot  getSlot (int i) const noexcept { return slots[(size_t) i]; }
     NotchSlot& slotRef  (int i)       noexcept { return slots[(size_t) i]; }
 
-    /** Index of the active notch within `tolOctaves` of f, closest first, or -1. */
+    /** The active filter a trigger at f should deepen, or -1 to open a new one. */
     int findNear (double f) const noexcept
     {
         if (f <= 0.0) return -1;
-        // The merge window is the filter's own half-bandwidth (f / 2Q), not a fixed
-        // musical interval. A tone further away than that is barely attenuated by
-        // this notch, so merging onto it would deepen a filter that misses the tone
-        // while the ring grows beside it. Anything outside gets its own slot.
-        const double window = std::max (10.0, f / (2.0 * defaultQ));
+        // Merge onto a filter only if the tone is inside that filter's bandwidth
+        // NOW - half a bandwidth either side of where it sits, which is the
+        // half-depth point. Tracking keeps a drifting ring centred; a tone
+        // outside gets its own slot. With 48 of them, it can. Not "could reach
+        // if it moved": that is a fresh Q 20 filter claiming ±5%, measured as
+        // three of thirty simultaneous tones losing their filter (T19).
+        //
+        // The window used to be f / 2·defaultQ, and defaultQ is overwritten every
+        // block by the engine's notchQ - 12, which nothing in the app ever sets -
+        // so live it was ±4.2%, while filters open at Q 20 (±2.5%) and narrow to
+        // Q 80 (±0.6%) in emergency. Measured 2026-10-03, the first session with
+        // the guard in series: a 9399 Hz ring merged onto a filter at 9780, which
+        // slid 50 Hz, hit its leash, and deepened to -45 where the ring was not.
+        // The ring sat at -27 dB for two seconds under 2.4 dB of cut while the
+        // log said "placed" a hundred times. Four of the day's 21 howls died
+        // that way, and none of the harnesses could have seen it: every one ran
+        // the bank with its own defaultQ of 25.
         int    best = -1;
-        double bestErr = window;
+        double bestErr = 1.0e18;
         for (int i = 0; i < MaxNotches; ++i)
         {
             const auto& s = slots[(size_t) i];
             if (! s.active) continue;
-            // Each filter now has its own width, so the window that decides "is this
-            // the same tone" is that filter's, not one global figure.
+            // On the fuzz this costs 14 more runaway modes per six seeds (155 -> 169)
+            // in the synthetic plateau population of ~300 modes a minute, and ten
+            // of those come back with 96 slots: un-merged modes fill the pool and
+            // the LRU steal starts taking filters off live rings. The rig has
+            // never shown more than nine filters at once; the two HF spikes per
+            // seed, which are what the rig actually rings with, score the same
+            // under either rule. A cap on the merge distance was tried (1-4%) and
+            // measured nothing (166-171), so there is none.
             const double own = std::max (10.0, s.freq / (2.0 * s.q));
-            if (std::abs (s.freq - f) > own && std::abs (s.freq - f) > window) continue;
-            // Must be near the filter AND reachable from its anchor. Merging onto a
-            // tone the notch is leashed away from would deepen a filter that cannot
-            // move to cover it - the exact failure this window exists to prevent.
-            if (std::abs (s.originHz - f) > 2.0 * window) continue;
             const double err = std::abs (s.freq - f);
+            if (err > own) continue;                              // not covered: not this filter
             if (err < bestErr) { bestErr = err; best = i; }
         }
         return best;

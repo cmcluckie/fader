@@ -37,6 +37,7 @@
 #include <functional>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
+#include "../Source/EngineDefaults.h"
 
 namespace
 {
@@ -141,6 +142,11 @@ int main (int argc, char* argv[])
     bool noRings = false, plateauPath = false, useProfile = false;
     double duty = 1.0, periodMs = 12.0, deepDb = -18.0, budget = 0.0, stagger = 1.0;
     bool realloc_ = true;
+    // The rig's Attack level 2: four confirm frames and a -18 first strike. The
+    // fuzz ran -6 and six frames for a week, which never narrows a filter to the
+    // needle the rig makes of every ring - and the merge failure of 2026-10-03
+    // lives exactly there.
+    double firstDb = -18.0; int frames = 4;
     for (int i = 1; i < argc; ++i)
     {
         if (std::string (argv[i]) == "--no-rings") noRings = true;
@@ -159,6 +165,8 @@ int main (int argc, char* argv[])
         if (std::string (argv[i]) == "--deep" && i + 1 < argc) deepDb = -std::abs (std::atof (argv[i + 1]));
         if (std::string (argv[i]) == "--budget" && i + 1 < argc) budget = std::atof (argv[i + 1]);
         if (std::string (argv[i]) == "--no-realloc") realloc_ = false;
+        if (std::string (argv[i]) == "--first" && i + 1 < argc) firstDb = -std::abs (std::atof (argv[i + 1]));
+        if (std::string (argv[i]) == "--frames" && i + 1 < argc) frames = std::atoi (argv[i + 1]);
         if (std::string (argv[i]) == "--sync") stagger = 0.0;      // all filters pulse together
     }
     std::mt19937 rng (seed);
@@ -170,6 +178,9 @@ int main (int argc, char* argv[])
     };
 
     fk::FeedbackDetector::Params p;
+    p.prominenceDb  = fk::defaults::prominenceDb;
+    p.inputGateDb   = fk::defaults::inputGateDb;
+    p.persistFrames = frames;
     p.floorDb = -95.0f;
     p.minFreq = 40.0f;
     if (plateauPath) p.plateauRiseDb = 10.0f;
@@ -179,7 +190,6 @@ int main (int argc, char* argv[])
 
     fk::NotchBank<48> bank;
     bank.prepare (kSR, kBlock);
-    bank.defaultQ    = 12.0;
     bank.harmBudget  = budget;
     // Pulsing lives in the BANK now, not in this harness. The loop model reads
     // effectiveCutAtDb, so what is scored here is the code that will run on the
@@ -188,9 +198,9 @@ int main (int argc, char* argv[])
     bank.pulseHz     = 1000.0 / periodMs;
     bank.pulseStagger = stagger;
     bank.budgetReallocates = realloc_;
-    bank.softCapDb   = deepDb;
-    bank.hardCapDb   = deepDb * 1.35;
-    bank.initialCutDb = -6.0;
+    // --deep is the operator's max-cut dial, applied the way the engine applies
+    // it: normal stops 6 dB short, stubborn reaches it, emergency goes past.
+    bank.configure (fk::defaults::notchQ, firstDb, deepDb);
 
     // The shipped pitch profile: the fifteen 1/6-octave regions holding 85% of
     // 51,501 real catches. Seeding these is what the engine now does at startup,

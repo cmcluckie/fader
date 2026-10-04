@@ -4,6 +4,7 @@
 #include <array>
 #include "FeedbackDetector.h"
 #include "NotchBank.h"
+#include "EngineDefaults.h"
 
 namespace fk
 {
@@ -259,17 +260,14 @@ public:
             auto& det  = detectors[(size_t) ch];
             auto& bank = banks[(size_t) ch];
             det.setParams (p);
-            bank.defaultQ    = q;
-            bank.initialCutDb = initialCut.load();
-            bank.fastTrackCutDb = initialCut.load() - 6.0f;
             // The user's "max cut" is the REAL ceiling. It used to be the soft cap
             // with a further 6 dB allowed beyond it for a stubborn tone, so a rig
             // set to -24 was measured cutting -30 on 14% of samples. A control
             // labelled max should be one. The two-step escalation is unchanged,
             // just anchored honestly: normal stops 6 dB short, stubborn reaches
-            // the number on the dial.
-            bank.softCapDb   = softCap + 6.0f;
-            bank.hardCapDb   = softCap;
+            // the number on the dial. The arithmetic lives in the bank so the
+            // test library runs the same machine.
+            bank.configure (q, initialCut.load(), softCap);
             bank.harmBudget  = harmBudget.load();
             bank.holdSeconds = (double) releaseSeconds.load();
 
@@ -484,7 +482,7 @@ private:
     //
     // A wider filter is also markedly more forgiving of being placed a few hundred
     // Hz off, which is the other bug being fixed alongside this.
-    std::atomic<float> maxCutDb { -18.0f }, notchQ { 12.0f }, releaseSeconds { 10.0f };
+    std::atomic<float> maxCutDb { fk::defaults::maxCutDb }, notchQ { fk::defaults::notchQ }, releaseSeconds { 10.0f };
     std::atomic<float> harmBudget { 0.0f };    // 0 = no ceiling
     bool wasBypassed = false, wasWatching = false;
     std::atomic<bool>  analysis { false };     // off unless asked for
@@ -512,11 +510,11 @@ private:
         }
         recWrite.store (w, std::memory_order_release);
     }
-    std::atomic<float> prominenceDb { 12.0f }, floorDb { -70.0f };
-    std::atomic<float> minFreq { 200.0f }, maxFreq { 16000.0f };
-    std::atomic<float> stabilityHz { 5.0f }, growthDb { 3.0f }, inputGate { -55.0f };
-    std::atomic<float> initialCut { -6.0f };   // first strike; see the note on maxCutDb
-    std::atomic<int>   persistFrames { 6 };
+    std::atomic<float> prominenceDb { fk::defaults::prominenceDb }, floorDb { fk::defaults::floorDb };
+    std::atomic<float> minFreq { fk::defaults::minFreq }, maxFreq { fk::defaults::maxFreq };
+    std::atomic<float> stabilityHz { fk::defaults::stabilityHz }, growthDb { fk::defaults::growthDb }, inputGate { fk::defaults::inputGateDb };
+    std::atomic<float> initialCut { fk::defaults::initialCutDb };   // first strike; see the note on maxCutDb
+    std::atomic<int>   persistFrames { fk::defaults::persistFrames };
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };
 

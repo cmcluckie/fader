@@ -1,16 +1,16 @@
 {
   "margin_3": {
-    "events": 25,
-    "filters": 9,
-    "hf_suppression": 58.83569283149363,
-    "lf_added": 0.8170027422656503,
-    "lf_ringlike": 0.7681179006422216
+    "events": 17,
+    "filters": 15,
+    "hf_suppression": 61.13819868425918,
+    "lf_added": -5.438184776103501,
+    "lf_ringlike": 0.28683693276811323
   },
   "margin_9": {
-    "events": 82,
-    "filters": 34,
-    "hf_suppression": 59.572258972875055,
-    "lf_added": 58.22216298156575,
-    "lf_ringlike": 0.9992954062872524
+    "events": 89,
+    "filters": 44,
+    "hf_suppression": 60.84897115211506,
+    "lf_added": 3.923456865790296,
+    "lf_ringlike": 0.4556171503890389
   }
 }

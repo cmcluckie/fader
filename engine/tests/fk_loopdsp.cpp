@@ -31,6 +31,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
+#include "../Source/EngineDefaults.h"
 
 namespace
 {
@@ -60,6 +61,25 @@ struct Guard
 extern "C"
 {
 
+/** The engine's own configuration, applied here the way AudioEngine applies it
+    every block. Before this the library ran the detector's and the bank's
+    built-in defaults, which are not what the engine runs, and the gate was
+    passing a machine the rig had never seen. */
+static void applyEngineDefaults (Guard& g)
+{
+    fk::FeedbackDetector::Params p;
+    p.prominenceDb  = fk::defaults::prominenceDb;
+    p.persistFrames = fk::defaults::persistFrames;
+    p.floorDb       = fk::defaults::floorDb;
+    p.minFreq       = fk::defaults::minFreq;
+    p.maxFreq       = fk::defaults::maxFreq;
+    p.stabilityHz   = fk::defaults::stabilityHz;
+    p.growthDb      = fk::defaults::growthDb;
+    p.inputGateDb   = fk::defaults::inputGateDb;
+    g.det.setParams (p);
+    g.bank.configure (fk::defaults::notchQ, fk::defaults::initialCutDb, fk::defaults::maxCutDb);
+}
+
 /** Create a guard. Returns an opaque handle, or null. */
 void* fk_create (double sampleRate, int maxBlock)
 {
@@ -69,7 +89,29 @@ void* fk_create (double sampleRate, int maxBlock)
     g->sampleRate = sampleRate;
     g->det.prepare (sampleRate);
     g->bank.prepare (sampleRate, maxBlock);
+    applyEngineDefaults (*g);
     return g;
+}
+
+/** What the app sends on top of the defaults: its Attack level (confirm frames
+    and first strike), the max-cut dial, the frequency range and the floor. The
+    harness reads these from the rig's audio.json so the gate runs the rig. */
+void fk_configure (void* h, float notchQ, float initialCutDb, float maxCutDb, int persistFrames,
+                   float minHz, float maxHz, float floorDb, float inputGateDb, float prominenceDb)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr) return;
+    fk::FeedbackDetector::Params p;
+    p.prominenceDb  = prominenceDb;
+    p.persistFrames = persistFrames;
+    p.floorDb       = floorDb;
+    p.minFreq       = minHz;
+    p.maxFreq       = maxHz;
+    p.stabilityHz   = fk::defaults::stabilityHz;
+    p.growthDb      = fk::defaults::growthDb;
+    p.inputGateDb   = inputGateDb;
+    g->det.setParams (p);
+    g->bank.configure (notchQ, initialCutDb, maxCutDb);
 }
 
 void fk_destroy (void* h) { delete static_cast<Guard*> (h); }
@@ -204,6 +246,31 @@ int fk_notches (void* h, float* freqHz, float* depthDb, int cap)
         ++out;
     }
     return out;
+}
+
+/** Everything about one active filter the merge rule can see: where it is, where
+    it was anchored, how wide, how deep. Returns 1 if slot i is active. The audit
+    that found a 9400 Hz ring "placed" onto a filter 380 Hz away needed exactly
+    these four numbers and nothing exported them. */
+int fk_notch_detail (void* h, int i, float* freqHz, float* originHz, float* q, float* depthDb, int* locked)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr || i < 0 || i >= kMaxNotches) return 0;
+    const auto& s = g->bank.getSlot (i);
+    if (! s.active) return 0;
+    if (freqHz)   *freqHz   = (float) s.freq;
+    if (originHz) *originHz = (float) s.originHz;
+    if (q)        *q        = (float) s.q;
+    if (depthDb)  *depthDb  = (float) s.targetDb;
+    if (locked)   *locked   = s.locked ? 1 : 0;
+    return 1;
+}
+
+/** The slot the bank would merge a trigger at f onto, or -1: the merge rule itself. */
+int fk_find_near (void* h, float f)
+{
+    auto* g = static_cast<Guard*> (h);
+    return g ? g->bank.findNear ((double) f) : -1;
 }
 
 /** Total cut the guard is applying at f, dB (negative). The sim can subtract

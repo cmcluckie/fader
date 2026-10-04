@@ -20,6 +20,7 @@
 #include <string>
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
+#include "../Source/EngineDefaults.h"
 
 namespace
 {
@@ -1693,6 +1694,41 @@ int main()
         std::snprintf (msg, sizeof msg, "reached %.1f dB, gave up=%d", s.targetDb, (int) s.ineffective);
         report ("T47 a ring that responds to the cut is not called hopeless",
                 ! s.ineffective, msg);
+    }
+
+    // ---- T52: a trigger merges only onto a filter that can reach it ---------
+    // From the rig, 2026-10-03, reconstructed from the two-channel recording.
+    // A filter at 9780 Hz, opened on a 47 Hz-wide reading (Q 20) and fought to
+    // emergency depth (-45, Q 80). Then a ring at 9399 Hz, 3.9% below it. The
+    // bank logged "placed" a hundred times in two seconds; the filter slid 50 Hz
+    // and hit its leash; the ring sat at -27 dB with 2.4 dB of cut on it.
+    //
+    // The merge window was f / 2·defaultQ with the ENGINE's defaultQ of 12 -
+    // ±4.2% - while the filter it merged onto reached ±0.6%. Run with the
+    // engine's configuration, not the bank's defaults: that is the whole bug.
+    {
+        fk::NotchBank<48> bank;
+        bank.prepare (kSR, 64);
+        bank.configure (fk::defaults::notchQ, -18.0, -18.0);     // the rig: Attack 2, dial -18
+
+        double t = 0.0;
+        // the neighbour, fought to emergency the way the rig does it
+        for (int i = 0; i < 12; ++i, t += 0.016) bank.trigger (9780.0, t, true, -40.0, 47.0);
+        int near = -1; double nearQ = 0.0, nearDb = 0.0;
+        for (int i = 0; i < 48; ++i)
+            if (bank.getSlot (i).active) { near = i; nearQ = bank.getSlot (i).q; nearDb = bank.getSlot (i).targetDb; }
+
+        // the ring 3.9% below it: three growing triggers, as logged
+        int slot = -1;
+        for (int i = 0; i < 3; ++i, t += 0.016) slot = bank.trigger (9399.0, t, true, -50.0, 117.0);
+        const double cut   = bank.cutAtDb (9399.0, -1);
+        const double nearF = near >= 0 ? bank.getSlot (near).freq : 0.0;
+        const bool   own   = slot >= 0 && slot != near;
+
+        std::snprintf (msg, sizeof msg, "neighbour Q %.0f at %.1f dB now sits at %.0f Hz; 9399 Hz %s, cut on it %.1f dB",
+                       nearQ, nearDb, nearF, own ? "got its own filter" : (slot < 0 ? "REFUSED" : "MERGED onto the neighbour"), cut);
+        report ("T52 a ring beyond a filter's reach gets its own filter, not the neighbour's skirt",
+                own && cut <= -15.0, msg);
     }
 
     // ---- T51: a full budget must never leave a screaming ring uncut --------

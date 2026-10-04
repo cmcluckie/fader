@@ -12,20 +12,45 @@ What this buys that fk-fuzz cannot:
   - a saturating power amp, so a spike at 5 kHz can suppress a mode at 77 Hz
   - a moving mic, so the candidate set moves under the guard
 """
-import ctypes, os, sys, functools
+import ctypes, json, os, sys, functools
 print = functools.partial(print, flush=True)
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from feedback_sim import FeedbackSim, db
 
-LIB = "/Users/cmcluckie/Code/Fader/engine/build/libfk-loopdsp.dylib"
+LIB = os.environ.get("FK_LOOPDSP", "/Users/cmcluckie/Code/Fader/engine/build/libfk-loopdsp.dylib")
+AUDIO_JSON = os.path.expanduser("~/Documents/FeedbackKiller/audio.json")
+
+# Mirror of FeedbackController.PushAttack: the app's Attack level sets the
+# detector's confirm frames and the bank's first strike together.
+ATTACK = {0: (10, -6.0), 1: (6, -12.0), 2: (6, -18.0)}
+
+# Mirror of engine/Source/EngineDefaults.h - what the engine runs until the app
+# speaks. Keep the two in step; the gate is only honest while they agree.
+ENGINE = dict(notch_q=12.0, first_cut_db=-6.0, max_cut_db=-18.0, persist_frames=6,
+              min_hz=200.0, max_hz=16000.0, floor_db=-70.0, input_gate_db=-90.0, prominence_db=12.0)
+
+
+def rig_config(path=AUDIO_JSON):
+    """What the app sends the engine at startup, read from the rig's audio.json."""
+    cfg = {}
+    try:
+        with open(path) as fh: cfg = json.load(fh)
+    except (OSError, ValueError):
+        pass
+    frames, first = ATTACK.get(int(cfg.get("Attack", 2)), ATTACK[2])
+    out = dict(ENGINE)
+    out.update(first_cut_db=first, max_cut_db=float(cfg.get("MaxCutDb", -18.0)),
+               persist_frames=frames, min_hz=float(cfg.get("MinHz", 40.0)), max_hz=float(cfg.get("MaxHz", 18000.0)),
+               floor_db=float(cfg.get("FloorDb", -95.0)), budget=float(cfg.get("HarmBudget", 0.0)))
+    return out
 
 
 class FkGuard:
     """Quacks like feedback_sim's StatefulSOS, but is 4000 lines of C++."""
 
-    def __init__(self, fs, block=64, caps=None, disconnected=False):
+    def __init__(self, fs, block=64, caps=None, disconnected=False, config="rig"):
         self.lib = ctypes.CDLL(LIB)
         self.lib.fk_create.restype = ctypes.c_void_p
         self.lib.fk_create.argtypes = [ctypes.c_double, ctypes.c_int]
@@ -48,12 +73,40 @@ class FkGuard:
         self.h = self.lib.fk_create(float(fs), int(block))
         if not self.h:
             raise RuntimeError("fk_create failed")
+        # The rig's settings, not the library's defaults. The gate ran the bank
+        # with its own defaults for a week - merge window Q 25, first strike -12,
+        # caps -18/-24 - while the rig ran Q 12, -18, -12/-18. It passed on a
+        # machine the room never saw. "rig" reads ~/Documents/FeedbackKiller/
+        # audio.json (falling back to the app's Attack-2 numbers); "engine" is
+        # the engine before the app has spoken; None leaves the library alone.
+        config = os.environ.get("FK_CONFIG", config)      # rig | engine | none
+        if config not in (None, "none"):
+            cfg = rig_config() if config == "rig" else dict(ENGINE)
+            for kv in filter(None, os.environ.get("FK_OVERRIDE", "").split(",")):   # experiments
+                k, v = kv.split("="); cfg[k] = float(v) if k != "persist_frames" else int(v)
+            self.configure(**cfg)
         if caps:
             self.lib.fk_set_caps.argtypes = [ctypes.c_void_p, ctypes.c_float,
                                              ctypes.c_float, ctypes.c_float]
             self.lib.fk_set_caps(self.h, *[float(c) for c in caps])
         self.disconnected = disconnected
         self.zi = np.zeros((1, 2))     # the sim pokes this; harmless
+
+    def configure(self, notch_q=12.0, first_cut_db=-6.0, max_cut_db=-18.0, persist_frames=6,
+                  min_hz=200.0, max_hz=16000.0, floor_db=-70.0, budget=None,
+                  input_gate_db=-90.0, prominence_db=12.0):
+        self.lib.fk_configure.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                                          ctypes.c_int, ctypes.c_float, ctypes.c_float, ctypes.c_float,
+                                          ctypes.c_float, ctypes.c_float]
+        self.lib.fk_configure(self.h, float(notch_q), float(first_cut_db), float(max_cut_db),
+                              int(persist_frames), float(min_hz), float(max_hz), float(floor_db),
+                              float(input_gate_db), float(prominence_db))
+        if budget is not None:
+            self.lib.fk_set_budget.argtypes = [ctypes.c_void_p, ctypes.c_float]
+            self.lib.fk_set_budget(self.h, float(budget))
+        self.config = dict(notch_q=notch_q, first_cut_db=first_cut_db, max_cut_db=max_cut_db,
+                           persist_frames=persist_frames, min_hz=min_hz, max_hz=max_hz, floor_db=floor_db, budget=budget,
+                           input_gate_db=input_gate_db, prominence_db=prominence_db)
 
     def process(self, x):
         buf = np.ascontiguousarray(x, dtype=np.float32)

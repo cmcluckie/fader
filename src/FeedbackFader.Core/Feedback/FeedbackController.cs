@@ -250,11 +250,15 @@ public sealed class FeedbackController : IAsyncDisposable
 
     private void PushAttack()
     {
-        // confirm frames, first-strike depth
+        // confirm frames, first-strike depth.
+        // "Fast" used to act on four frames instead of six. Measured on the 17
+        // real howls in the replay fixtures, 2026-10-03: the two frames bought
+        // 10 ms of latency and cost two extra hits on the singer's harmonics.
+        // The first strike at the dial is the part of "fast" that works.
         var (frames, firstCut) = _attack switch
         {
             0 => (10f, -6f),    // gentle: more evidence, ease in
-            2 => (4f, -18f),    // fast: act on less, hit hard
+            2 => (6f, -18f),    // fast: hit hard, at the dial, from the first frame
             _ => (6f, -12f),    // normal
         };
         _supervisor.Client.SetParam("persistFrames", frames);
