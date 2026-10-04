@@ -7,7 +7,7 @@ Generated 2026-10-04 from `results/ledger.jsonl` by `scripts/results.py`. **Do n
 
 ## The latest build against the three goals
 
-Build `9d17858` (10-04 14:51).
+Build `3f3992c` (10-04 16:48).
 
 | | Goal | Room like the rig | Reverberant hall |
 |---|---|---|---|
@@ -20,6 +20,7 @@ Rings *heard* are lines the singer did not sing, louder than 20 dB under the voi
 
 | build | date | recorded howls caught | let go | median lead | fast risers: level when cut | rig-like: rings heard +10 / +15 / +20 | rig-like held to, dB | hall: rings heard +6 / +10 | hall held to, dB |
 |---|---|---|---|---|---|---|---|---|---|
+| `3f3992c` | 10-04 16:48 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 29 | +19.5 (17.3 to 22.6) / +19.1 (17.4 to 20.5) | 1 / 2 | +11.4 (9.4 to 15.1) / +14.1 (12.6 to 15.5) |
 | `9d17858` | 10-04 14:51 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 29 | +19.5 (17.3 to 22.6) / +19.1 (17.4 to 20.5) | 1 / 2 | +11.4 (9.4 to 15.1) / +14.1 (12.6 to 15.5) |
 | `d55f580` | 10-04 09:19 | 22 of 22 | 0 | 469 ms | -78 dB | 0 / 0 / 29 | +19.5 (17.3 to 22.6) / +19.1 (17.4 to 20.5) | 1 / 2 | +11.4 (9.4 to 15.1) / +14.1 (12.6 to 15.5) |
 | `4b1c88c` | 10-03 22:27 | 22 of 22 | 0 | 469 ms | -40 dB | 0 / 0 / 16 | +19.4 (17.9 to 22.3) / +19.8 (15.9 to 23.4) | 1 / 2 | +12.5 (10.7 to 14.1) / +13.8 (10.9 to 15.0) |
@@ -35,6 +36,7 @@ Voice change: how much of what the ear gets from the voice differs from the clea
 
 | build | six recorded sung phrases: taken, filters | synth: nothing ringing | rig-0927: nothing ringing | synth: +6 / +10 | rig-0927: +6 / +10 | filters on a singer, nothing ringing |
 |---|---|---|---|---|---|---|
+| `3f3992c` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 64 % / 64 % | 31 / 42 |
 | `9d17858` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 64 % / 64 % | 31 / 42 |
 | `d55f580` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 64 % / 64 % | 31 / 42 |
 | `4b1c88c` | 37 %, 29 | 37 % | 65 % | 48 % / 50 % | 63 % / 63 % | 31 / 42 |
@@ -48,6 +50,7 @@ Voice change: how much of what the ear gets from the voice differs from the clea
 
 | build | unit tests | fuzz: runaway modes | simulated room: top end quieter at 3 / 9 dB over | cold start 20 over: seconds above -40 dB | sung fixtures hit (of 6) | measured loop names the ring | started cold with pinned filters: detections |
 |---|---|---|---|---|---|---|---|
+| `3f3992c` | 58 | 111 | 62 / 62 dB | 0.06 | 2 | yes | 0 |
 | `9d17858` | 58 | 111 | 62 / 62 dB | 0.06 | 2 | yes | 0 |
 | `d55f580` | 58 | 144 | 62 / 62 dB | 0.06 | 2 | yes | 0 |
 | `4b1c88c` | - | - | 62 / 62 dB | 0.06 | 2 | yes | 0 |
@@ -110,7 +113,7 @@ Live builds are named from the engine's start times (the feedback-log file names
 
 Builds with live results and no row in the tables above: `3629b7f` is from before `11fe355` and cannot be re-measured with the rig's settings; `b71ce6f` has the same detector and filter code as `11fe355`; `e2a52c2` is from before `11fe355` and cannot be re-measured with the rig's settings.
 
-## A singer in the loop: every case, build `9d17858`
+## A singer in the loop: every case, build `3f3992c`
 
 Gain is dB over the untreated room's limit. *no guard* rows show what the loop itself does to the sound. Tails are the stable room hanging on to a note; ghosts are a filter sounding its own note after the singer stops.
 
@@ -188,4 +191,4 @@ Gain is dB over the untreated room's limit. *no guard* rows show what the loop i
 
 ## Rulers
 
-Which test code measured which build: `11fe355` by `1416d5b`; `11fe355` by `9d17858`; `11fe355` by `f81455d`; `294bcc8` by `1416d5b`; `294bcc8` by `9d17858`; `294bcc8` by `f81455d`; `4b1c88c` by `1416d5b`; `4b1c88c` by `9d17858`; `4b1c88c` by `f81455d`; `69f6ef0` by `1416d5b`; `69f6ef0` by `9d17858`; `69f6ef0` by `f81455d`; `9d17858` by `9d17858`; `b71ce6f` by `1416d5b`; `b71ce6f` by `9d17858`; `d55f580` by `1416d5b`; `d55f580` by `9d17858`; `d55f580` by `f81455d`; `f5c5f0b` by `1416d5b`; `f5c5f0b` by `9d17858`; `f5c5f0b` by `f81455d`; `fce3790` by `1416d5b`; `fce3790` by `9d17858`; `fce3790` by `f81455d`.
+Which test code measured which build: `11fe355` by `1416d5b`; `11fe355` by `9d17858`; `11fe355` by `f81455d`; `294bcc8` by `1416d5b`; `294bcc8` by `9d17858`; `294bcc8` by `f81455d`; `3f3992c` by `7b0c88d`; `4b1c88c` by `1416d5b`; `4b1c88c` by `9d17858`; `4b1c88c` by `f81455d`; `69f6ef0` by `1416d5b`; `69f6ef0` by `9d17858`; `69f6ef0` by `f81455d`; `9d17858` by `9d17858`; `b71ce6f` by `1416d5b`; `b71ce6f` by `9d17858`; `d55f580` by `1416d5b`; `d55f580` by `9d17858`; `d55f580` by `f81455d`; `f5c5f0b` by `1416d5b`; `f5c5f0b` by `9d17858`; `f5c5f0b` by `f81455d`; `fce3790` by `1416d5b`; `fce3790` by `9d17858`; `fce3790` by `f81455d`.
