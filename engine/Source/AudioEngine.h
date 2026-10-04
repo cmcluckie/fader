@@ -5,6 +5,7 @@
 #include "FeedbackDetector.h"
 #include "NotchBank.h"
 #include "EngineDefaults.h"
+#include "RescueDuck.h"
 
 namespace fk
 {
@@ -158,6 +159,17 @@ public:
 
     FeedbackDetector& detector (int ch) noexcept { return detectors[(size_t) ch]; }
 
+    void setRescueEnabled (bool on) noexcept { rescueOn.store (on); }
+    /// For the telemetry thread: how many times the duck has been asked for on
+    /// this channel, and the particulars of the latest.
+    int   rescueTriggers (int ch) const noexcept { return rescueOut[(size_t) ch].triggers.load(); }
+    float rescueDepthDb (int ch) const noexcept  { return rescueOut[(size_t) ch].depthDb.load(); }
+    float rescueHz (int ch) const noexcept       { return rescueOut[(size_t) ch].hz.load(); }
+    float rescueLevelDb (int ch) const noexcept  { return rescueOut[(size_t) ch].levelDb.load(); }
+    int   rescueReason (int ch) const noexcept   { return rescueOut[(size_t) ch].reason.load(); }
+    int   rescueFutile (int ch) const noexcept   { return rescueOut[(size_t) ch].futile.load(); }
+    int   activeChannelCount() const noexcept    { return activeChans.load(); }
+
     /// Filters that have concluded they are not in the loop - see NotchBank.
     int notInLoopCount() const noexcept
     {
@@ -196,6 +208,8 @@ public:
             banks[(size_t) ch].prepare (sr, block);
             if ((int64_t) probeBuf.size() != probeLen) probeBuf.assign ((size_t) probeLen, 0.0f);
             detectors[(size_t) ch].prepare (sr);
+            ducks[(size_t) ch].prepare (sr);
+            duckSeen[(size_t) ch] = 0;
         }
         elapsed = 0.0;
         lastReleaseCheck = 0.0;
@@ -314,6 +328,7 @@ public:
                 wasWatching = watching;
                 wasBypassed = true;
                 bank.process (out, numSamples, true);
+                ducks[(size_t) ch].reset();      // guard off means off: no duck held over the bypass
             }
             else
             {
@@ -324,6 +339,10 @@ public:
                 wasBypassed = false; wasWatching = false;
 
                 det.push (out, numSamples);   // analyse pre-notch signal on the ring buffer
+
+                auto& duck = ducks[(size_t) ch];
+                duck.enabled = rescueOn.load();
+                rescueOnFrame (duck, det, duckSeen[(size_t) ch], elapsed);
 
                 FeedbackDetector::Reject rj;
                 while (det.popReject (rj))
@@ -341,9 +360,16 @@ public:
                     const int refused = placed >= 0 ? 0 : (int) bank.lastRefusal;
                     pushEvent ({ ch, ev.freq, ev.levelDb, ev.path, ev.ageMs,
                                  ev.widthLoHz, ev.widthHiHz, refused });
+                    rescueOnEvent (duck, ev, elapsed);
                 }
 
                 bank.process (out, numSamples, false);
+                duck.process (out, numSamples, elapsed);
+
+                auto& ro = rescueOut[(size_t) ch];
+                ro.triggers.store (duck.triggers);   ro.depthDb.store ((float) duck.depthDb());
+                ro.hz.store (duck.lastHz);            ro.levelDb.store (duck.lastLevelDb);
+                ro.reason.store ((int) duck.lastReason); ro.futile.store (duck.futileEver);
             }
 
             if (rec) pushRecording (recPre.data(), out, numSamples);
@@ -463,6 +489,13 @@ private:
 
     std::array<NotchBank<kMaxNotches>, maxChans> banks;
     std::array<FeedbackDetector, maxChans>       detectors;
+    // The broadband rescue, one per channel, after the bank. See RescueDuck.h.
+    std::array<RescueDuck, maxChans>             ducks;
+    std::array<int, maxChans>                    duckSeen {};
+    std::atomic<bool>                            rescueOn { true };
+    struct RescueTelemetry { std::atomic<int> triggers { 0 }, reason { 0 }, futile { 0 };
+                             std::atomic<float> depthDb { 0.0f }, hz { 0.0f }, levelDb { -200.0f }; };
+    std::array<RescueTelemetry, maxChans>        rescueOut;
 
     std::atomic<int>   activeChans { 0 };                      // default: nothing checked = nothing cut
     // Defaults tuned at the rig: a room that rings in eight-plus HF modes needs

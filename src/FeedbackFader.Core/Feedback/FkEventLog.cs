@@ -128,6 +128,23 @@ public sealed class FkEventLog : IDisposable
     }
 
     /// <param name="applied">True when AUTO deployed a notch; false when merely flagged (ASSIST/OFF).</param>
+    /// <summary>
+    /// The rescue duck, written into the detection log in the same columns so one
+    /// file tells the whole story of a howl: gate <c>rescue</c>, the reason where a
+    /// filter verdict would be, and the duck's depth where the cut would be.
+    /// </summary>
+    public void WriteRescue(double seconds, int slot, float depthDb, float hz, float levelDb, int why)
+    {
+        if (_writer is null) return;
+        var reason = why switch { 1 => "runaway", 2 => "loud-line", _ => "?" };
+        var line = string.Create(CultureInfo.InvariantCulture,
+            $"{seconds:F3},{ChannelName(slot)},{hz:F2},{levelDb:F2},1,rescue,{reason},{depthDb:F1},0,0");
+        lock (_lock)
+        {
+            _writer.WriteLine(line);
+        }
+    }
+
     /// <summary>A suspect that waited long enough and was declined, and why.</summary>
     public void WriteReject(double seconds, int slot, FkRejection r)
     {

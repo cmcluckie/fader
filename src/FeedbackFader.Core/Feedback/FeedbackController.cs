@@ -91,6 +91,11 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.ContextReceived += c => { Context = c; ContextChanged?.Invoke(c); };
         _supervisor.Client.TrackReceived += OnTrack;
         _supervisor.Client.NotInLoopReceived += n => { NotInLoop = n; NotInLoopChanged?.Invoke(n); };
+        _supervisor.Client.RescueReceived += (ch, depth, hz, level, why) =>
+        {
+            _log.WriteRescue(_clock.Elapsed.TotalSeconds, ch, depth, hz, level, why);
+            RescueDucked?.Invoke(ch, depth, hz);
+        };
         _supervisor.Client.NotchesReceived += OnNotches;
         _supervisor.Client.DetectionReceived += OnDetection;
         _supervisor.Client.RejectionReceived += OnRejection;
@@ -724,6 +729,9 @@ public sealed class FeedbackController : IAsyncDisposable
     /// missing: "it did not catch that" used to be answerable only by simulating
     /// the detector against a downsampled copy of the spectrum.
     /// </summary>
+    /// <summary>The rescue duck acted: channel, depth (dB), the frequency it acted for.</summary>
+    public event Action<int, float, float>? RescueDucked;
+
     private void OnRejection(FkRejection r)
     {
         _log.WriteReject(_clock.Elapsed.TotalSeconds, r.Channel, r);

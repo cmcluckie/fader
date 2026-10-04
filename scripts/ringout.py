@@ -209,6 +209,7 @@ def main():
     ap.add_argument("--rings", type=int, default=12, help="guard mode: stop after this many rings")
     ap.add_argument("--settle-s", type=float, default=3.0)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-rescue", action="store_true", help="switch the engine's rescue duck off for this run (A/B)")
     ap.add_argument("--use-capture", action="store_true",
                     help="the app's Capture is on: meter from its recording and leave its recorder alone")
     a = ap.parse_args()
@@ -253,6 +254,7 @@ def main():
     def restore():
         if not a.use_capture: eng.stop_recording(); eng.analysis(False)
         eng.bypass(False)
+        eng.send("/fk/param", "rescue", 1.0)        # never leave the rescue duck off
         for addr, v in was.items():
             try: x32.set(addr, v)
             except Exception as e: print(f"   RESTORE FAILED {addr}: {e} - set it by hand to {v:.4f}")
@@ -263,6 +265,8 @@ def main():
 
     try:
         if not a.use_capture: eng.record(rec); time.sleep(0.5)
+        eng.send("/fk/param", "rescue", 0.0 if a.no_rescue else 1.0)
+        if a.no_rescue: print("   rescue duck OFF for this run")
         if a.mode == "baseline" and not a.dry_run:
             if not a.use_capture: eng.analysis(True)
             eng.bypass(True); print("   guard BYPASSED (detector still watching)")
@@ -280,7 +284,7 @@ def main():
             time.sleep(0.05)
         else:
             raise RuntimeError("the meter never read the recording - not moving any fader")
-        rings = []; loud_since = None; prev_peaks = []
+        rings = []; rescues = []; loud_since = None; prev_peaks = []
         print(f"\n{'t':>6} {'fader':>6} {'peak Hz':>8} {'dB':>6} {'prom':>5} {'rms':>6}  note")
         while True:
             # one step up
@@ -311,6 +315,13 @@ def main():
                 if ev_path:
                     rows, ev_pos = tail_events(ev_path, ev_pos)
                     for (ts, ch, hz_, lv_) in rows:
+                        if " rescue " in ch + " ":
+                            # the engine's own broadband duck acted: "<chan> rescue <why> <depth dB> ..."
+                            parts = ch.split()
+                            rescues.append(dict(t=time.time() - t0, db=cur_db, hz=hz_, level=lv_, why=parts[2] if len(parts) > 2 else "", depth=float(parts[3]) if len(parts) > 3 else 0.0))
+                            log("rescue", hz_, lv_, 0, rms, ch)
+                            print(f"{time.time()-t0:6.1f} {cur_db:+6.1f} {hz_:8.0f} {lv_:6.1f} {'':>5} {rms:6.1f}  RESCUE DUCK {rescues[-1]['depth']:.0f} dB ({rescues[-1]['why']})")
+                            continue
                         log("detector", hz_, lv_, 0, rms, ch)
                         if candidate is None and ring_here is None and lv_ >= a.onset_db:
                             candidate = (hz_, meter.at(spec, hz_), time.time())
@@ -349,7 +360,9 @@ def main():
                 if len(rings) >= a.rings: print(f"\n   {a.rings} rings mapped; stopping"); break
             if cur_db >= a.max_db and ring_here is None:
                 print(f"\n   ceiling {a.max_db:+.1f} dB reached with no ring"); break
-        summary = dict(mode=a.mode, dry_run=a.dry_run, rings=rings, killed=killed, fader=a.fader, main_db=a.main_db,
+        if rescues:
+            print(f"\n   rescue duck: {len(rescues)} action(s), deepest {min(r['depth'] for r in rescues):.0f} dB")
+        summary = dict(mode=a.mode, dry_run=a.dry_run, rings=rings, rescues=rescues, killed=killed, fader=a.fader, main_db=a.main_db,
                        last_db=cur_db, stamp=stamp)
         json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=1, default=float)
         if rings:

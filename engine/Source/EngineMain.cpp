@@ -132,6 +132,7 @@ private:
         else if (name == "growthDb")       engine.setGrowthDb (v);
         else if (name == "inputGate")      engine.setInputGate (v);
         else if (name == "harmBudget")     engine.setHarmBudget (v);
+        else if (name == "rescue")         engine.setRescueEnabled (v > 0.5f);
     }
 
     // Device/channel changes are marshalled to the telemetry thread;
@@ -208,6 +209,7 @@ private:
             if (tick % 4 == 0) sendContext();                    // ~5 Hz
             if (tick % 4 == 0) sendTracks();                     // ~5 Hz
             if (tick % 10 == 0) sendNotInLoop();                 // ~2 Hz
+            sendRescue();                                        // every tick: it is rare and it matters
             if (tick % 600 == 0) saveProfile();                  // ~every 30 s
 
             ++tick;
@@ -613,6 +615,26 @@ private:
         sender.send (juce::OSCMessage ("/fk/notinloop", n));
     }
     int lastNotInLoop = -1;
+
+    /** The rescue duck went down (or deeper). One message per change, with what
+        it was ducking for: this is a dropout if it is ever wrong, so every one
+        of them is written down. */
+    void sendRescue()
+    {
+        for (int ch = 0; ch < std::min (engine.activeChannelCount(), (int) lastRescue.size()); ++ch)
+        {
+            const int n = engine.rescueTriggers (ch);
+            if (n == lastRescue[(size_t) ch]) continue;
+            lastRescue[(size_t) ch] = n;
+            const int why = engine.rescueReason (ch);
+            sender.send (juce::OSCMessage ("/fk/rescue", ch, engine.rescueDepthDb (ch), engine.rescueHz (ch),
+                                           engine.rescueLevelDb (ch), why));
+            juce::Logger::writeToLog ("RESCUE ch " + juce::String (ch) + ": " + juce::String (engine.rescueDepthDb (ch), 1)
+                + " dB for " + juce::String (engine.rescueHz (ch), 0) + " Hz at " + juce::String (engine.rescueLevelDb (ch), 1)
+                + " dB (" + (why == 1 ? "runaway" : why == 2 ? "loud line" : "?") + ")");
+        }
+    }
+    std::array<int, 16> lastRescue {};
 
     void sendStatus() { sender.send (juce::OSCMessage ("/fk/status", (int) (engine.running() ? 1 : 0), engine.cpuLoad())); }
     void sendAudioState (const juce::String& d, int sr, int bs)

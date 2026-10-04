@@ -64,6 +64,13 @@ public sealed class FkEngineClient : IAsyncDisposable
     public event Action<FkContext>? ContextReceived;
     public event Action<FkTrack>? TrackReceived;
     public event Action<int>? NotInLoopReceived;
+
+    /// <summary>
+    /// <c>/fk/rescue</c> — the broadband rescue duck went down, or deeper:
+    /// channel, depth in dB, the line it was for (Hz, dB) and why (1 runaway,
+    /// 2 loud line). A wrong one of these is a dropout, so each is reported.
+    /// </summary>
+    public event Action<int, float, float, float, int>? RescueReceived;
     public event Action<FkDetection>? DetectionReceived;
     public event Action<FkRejection>? RejectionReceived;
     public event Action<int, FkNotch[]>? NotchesReceived;
@@ -166,6 +173,10 @@ public sealed class FkEngineClient : IAsyncDisposable
 
             case "/fk/notinloop" when m.Arguments is [int nil]:
                 NotInLoopReceived?.Invoke(nil);
+                break;
+
+            case "/fk/rescue" when m.Arguments is [int rch, float rdepth, float rhz, float rlvl, int rwhy]:
+                RescueReceived?.Invoke(rch, rdepth, rhz, rlvl, rwhy);
                 break;
 
             case "/fk/track" when m.Arguments is [int tch, int tix, float thz, float tlo, float thi, int hops, float heat]:

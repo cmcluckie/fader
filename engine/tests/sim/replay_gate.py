@@ -71,7 +71,9 @@ def check(fx):
     # "let go": while the howl was still loud, the cut on it ended shallower
     #   than the dial (LET_GO_DB). That is the failure the number was for - the
     #   09-30 hold bug ended at -5 - and it is the one that is gated.
-    return dict(detected=bool(ev), latency=(first - fx["onset"]) if first is not None else None,
+    rescue = r.g.rescue()
+    return dict(rescues=rescue["episodes"], rescue_why=rescue["reason"],
+                detected=bool(ev), latency=(first - fx["onset"]) if first is not None else None,
                 deepest=deepest, last=last, bled=(deepest <= -12.0 and last > deepest + 8.0),
                 let_go=(deepest <= -12.0 and last > LET_GO_DB and last > deepest + 3.0),
                 hit=(deepest < -6.0))
@@ -84,7 +86,7 @@ if __name__ == "__main__":
     manifest = json.load(open(os.path.join(FIX, "manifest.json")))
     base = json.load(open(BASE)) if os.path.exists(BASE) and not update else None
 
-    bad, bled, let_go, hits, lats = [], 0, 0, 0, []
+    bad, bled, let_go, hits, lats, ducked = [], 0, 0, 0, [], 0
     print(f"{'fixture':<44} {'kind':<5} {'detected':>10} {'deepest':>8} {'end':>7}")
     for fx in manifest:
         c = check(fx)
@@ -95,14 +97,20 @@ if __name__ == "__main__":
             if not c["detected"]:      bad.append(f"{fx['file']}: real howl not detected")
             elif c["deepest"] > MIN_CUT: bad.append(f"{fx['file']}: only {c['deepest']:.1f} dB of cut on a real howl (dial {DIAL_DB:.0f})")
             if c["detected"]: lats.append(c["latency"])
-            bled += int(c["bled"]); let_go += int(c["let_go"])
+            bled += int(c["bled"]); let_go += int(c["let_go"]); ducked += int(c["rescues"] > 0)
         else:
-            print(f"{fx['file']:<44} voice {'HIT' if c['hit'] else 'left alone':>10} {c['deepest']:>7.1f}")
+            print(f"{fx['file']:<44} voice {'HIT' if c['hit'] else 'left alone':>10} {c['deepest']:>7.1f}"
+                  f"{'  RESCUE DUCK' if c['rescues'] else ''}")
             hits += int(c["hit"])
+            # Not relative to any baseline: a duck on a voice is a dropout, and
+            # the number that is acceptable is none.
+            if c["rescues"]:
+                bad.append(f"{fx['file']}: the rescue duck fired on a voice ({c['rescue_why']})")
 
     now = dict(howls=sum(1 for m in manifest if m["kind"] == "howl"), bled=bled, let_go=let_go, voice_hits=hits,
                median_latency_ms=(1000 * sorted(lats)[len(lats) // 2]) if lats else None)
-    print(f"\n{now['howls']} real howls: let go {let_go}, relaxed {bled}, voice hits {hits}, median latency {now['median_latency_ms']:+.0f} ms")
+    print(f"\n{now['howls']} real howls: let go {let_go}, relaxed {bled}, voice hits {hits}, median latency {now['median_latency_ms']:+.0f} ms"
+          f"; rescue duck on {ducked} howls, 0 voices" if not any('rescue duck fired' in b for b in bad) else "")
 
     if base:
         if let_go > base.get("let_go", 0): bad.append(f"howls let go rose {base.get('let_go', 0)} -> {let_go}")

@@ -29,7 +29,7 @@ reduction as the standard last resort for exactly this.
 
 | | condition | what it means |
 |---|---|---|
-| T1 runaway persists | an event flagged `runaway` at or above −55 dB | the first runaway call comes near −75 dB with a −45 dB filter; still running away 20 dB later, the filter is not holding it |
+| T1 runaway persists | an event flagged `runaway` at or above −48 dB | the first runaway call comes near −75 dB with a −45 dB filter; still running away 27 dB later, the filter is not holding it |
 | T2 loud line | a line at or above 4 kHz, at or above −30 dB, 30 dB over the median of ±20 bins, for 3 frames (16 ms) | the detector has failed outright; independent of the suspect logic on purpose |
 
 T2 reads the raw spectrum, not the peak list: the peak list is where a smeared
@@ -56,6 +56,14 @@ fixtures) and T2 is fenced to a loud, isolated, high line. A runaway that
 starts under loud singing gets no duck in this version; that is a known limit,
 not an oversight.
 
+**Status, 2026-10-03 late:** built (`RescueDuck.h`, T53, T54, both gate
+layers). Items 1–3 below measured and passing; item 4, the room, is next.
+One limit found on the way and not addressed: in a reverberant simulated room
+the howls that take over at 15–20 dB are *low* (440, 630, 1200 Hz) and the
+duck, fenced above 4 kHz, leaves them alone. The detector's low-frequency
+calls are not yet trustworthy enough to hang a dropout on — see "the voice"
+under Parked.
+
 **It is built when these are measured, old against new:**
 
 1. Unit: the state machine's timing; T2 fires within 3 frames on a −25 dB
@@ -63,9 +71,13 @@ not an oversight.
    (a sibilant), and on a harmonic stack to 8 kHz at −20 dBFS (a sung note).
 2. Replay: rescue events on the six sung fixtures = **0**, gated. Count
    reported on the howl fixtures.
-3. Closed loop (`preship.py`): cold start at 20 dB of margin — peak level with
-   the duck at least 15 dB below without; duck fully released inside 3 s with
-   the loop stable.
+3. Closed loop (`preship.py`): cold start at 20 dB of margin in a loop shaped
+   like the rig's — with the duck, no time above −30 dBFS, at most 0.15 s
+   above −40, quiet and fully released by the end. *(First written as "peak
+   15 dB lower than without". The simulator's cold start is gentler than the
+   room's and never reproduced the −21 dB chirps, so there is no 15 dB to win
+   there; measured instead: 0.36 s above −40 without, 0.06 s with, 47 filters
+   against 36.)*
 4. Live (`scripts/ringout.py`): cold steps to 20 and 22 dB over the ring point
    — loudest bin at or below −45 dB (was −21 to −23, one kill). Then two
    minutes of speech and singing with **no** rescue row in the log.
@@ -126,6 +138,13 @@ costs in the 1–4 and 4–16 kHz averages.
   fix. `294bcc8` adds 0–3 filters per fixture through the ordinary ladder.
 - **A second ring starting under a louder one** (6.8 kHz, 22 dB over): still
   called at −32 dB.
+- **No rescue below 4 kHz.** By design for now; a low howl at −15 dBFS is as
+  much an emergency as a high one.
+- **The runaway test in near-silence.** Three brief HF lines in the 09-27
+  session (5371, 6458, 4460 Hz, up 30 dB and gone in 0.3 s, no voice present)
+  were called runaways. They no longer reach the duck (bar raised to −48 dB)
+  but each still takes a −45 dB filter. Marginal rings or breath noise;
+  undetermined.
 - **No unit test for the fast riser.** Fixtures 24–27 cover it in the replay
   gate; a synthetic T53 would be faster feedback.
 - **Notch release.** "Relaxed" (ungated) against "let go" (gated); almost no

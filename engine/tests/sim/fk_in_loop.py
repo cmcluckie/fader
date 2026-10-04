@@ -131,6 +131,20 @@ class FkGuard:
                                 d.ctypes.data_as(ctypes.POINTER(ctypes.c_float)), cap)
         return list(zip(f[:n].tolist(), d[:n].tolist()))
 
+    def set_rescue(self, on):
+        """The broadband rescue duck (RescueDuck.h): on by default, as in the engine."""
+        self.lib.fk_set_rescue.argtypes = [ctypes.c_void_p, ctypes.c_int]
+        self.lib.fk_set_rescue(self.h, 1 if on else 0)
+
+    def rescue(self):
+        """What the duck has done: triggers, episodes, deepest and current depth, last cause."""
+        out = (ctypes.c_float * 8)()
+        self.lib.fk_rescue.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_float)]
+        self.lib.fk_rescue(self.h, out)
+        return dict(triggers=int(out[0]), episodes=int(out[1]), deepest_db=float(out[2]), depth_db=float(out[3]),
+                    hz=float(out[4]), level_db=float(out[5]), reason={1: "runaway", 2: "loud line"}.get(int(out[6]), ""),
+                    futile=int(out[7]))
+
     def not_in_loop(self):
         self.lib.fk_not_in_loop.restype = ctypes.c_int
         self.lib.fk_not_in_loop.argtypes = [ctypes.c_void_p]

@@ -32,6 +32,7 @@
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
 #include "../Source/EngineDefaults.h"
+#include "../Source/RescueDuck.h"
 
 namespace
 {
@@ -44,6 +45,8 @@ struct Guard
 {
     fk::FeedbackDetector        det;
     fk::NotchBank<kMaxNotches>  bank;
+    fk::RescueDuck              duck;
+    int                         duckSeen = 0;
     double sampleRate = 48000.0;
     double t          = 0.0;      // transport seconds, advanced by process()
     int    events     = 0;        // detections seen, cumulative
@@ -89,6 +92,7 @@ void* fk_create (double sampleRate, int maxBlock)
     g->sampleRate = sampleRate;
     g->det.prepare (sampleRate);
     g->bank.prepare (sampleRate, maxBlock);
+    g->duck.prepare (sampleRate);
     applyEngineDefaults (*g);
     return g;
 }
@@ -122,6 +126,8 @@ void fk_reset (void* h)
     auto* g = static_cast<Guard*> (h);
     if (g == nullptr) return;
     g->bank.clear (true);
+    g->duck.reset(); g->duck.triggers = g->duck.episodes = g->duck.futileEver = 0; g->duck.deepestDb = 0.0;
+    g->duckSeen = 0;
     g->t = 0.0;
     g->events = 0;
 }
@@ -141,6 +147,7 @@ void fk_process (void* h, float* buf, int n)
     if (g == nullptr || buf == nullptr || n <= 0) return;
 
     g->det.push (buf, n);
+    fk::rescueOnFrame (g->duck, g->det, g->duckSeen, g->t);
 
     fk::FeedbackDetector::Reject rj;
     while (g->det.popReject (rj))
@@ -154,9 +161,11 @@ void fk_process (void* h, float* buf, int n)
         const float depth = slot >= 0 ? (float) g->bank.getSlot (slot).targetDb : 0.0f;
         g->evq.push_back ({ ev.freq, ev.levelDb, ev.growing ? 1 : 0, ev.path, g->t, ev.runaway ? 1 : 0, depth });
         ++g->events;
+        fk::rescueOnEvent (g->duck, ev, g->t);
     }
 
     g->bank.process (buf, n, false);
+    g->duck.process (buf, n, g->t);
     g->bank.release (g->t);
     g->t += (double) n / g->sampleRate;
 }
@@ -219,7 +228,15 @@ int fk_pop_reject (void* h, float* hz, float* levelDb, int* reason, int* frames,
 void fk_set_loop_verdict (void* h, int on)
 {
     auto* g = static_cast<Guard*> (h);
-    if (g) g->bank.loopVerdict = on != 0;
+    if (g)
+    {
+        g->bank.loopVerdict = on != 0;
+        // The rescue duck has the same verdict and the same problem: a recording
+        // does not get quieter when ducked, so it concludes it is not in the loop
+        // and latches itself off for half a minute - which under-counts what it
+        // would have done to everything after its first episode.
+        g->duck.futileS = on != 0 ? 1.0 : 1.0e9;
+    }
 }
 
 /** The ear-weighted harm budget, as the app's "Voice budget" sets it. 0 = off. */
@@ -301,6 +318,25 @@ int fk_suspects (void* h, float loHz, float hiHz, float* freq, float* level, int
         flags[i] = (v[i].reported ? 1 : 0) | (v[i].harmonic ? 2 : 0) | (v[i].hasFamily ? 4 : 0) | (v[i].missed > 0 ? 8 : 0);
     }
     return n;
+}
+
+/** The rescue duck, for the gate: switch it, and read what it has done.
+    out[0] triggers, [1] episodes, [2] deepest dB, [3] depth now dB, [4] last Hz,
+    [5] last level dB, [6] last reason (1 runaway, 2 loud line), [7] futile verdicts. */
+void fk_set_rescue (void* h, int on)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g) { g->duck.enabled = on != 0; if (! on) g->duck.reset(); }
+}
+
+void fk_rescue (void* h, float* out8)
+{
+    auto* g = static_cast<Guard*> (h);
+    if (g == nullptr || out8 == nullptr) return;
+    out8[0] = (float) g->duck.triggers;   out8[1] = (float) g->duck.episodes;
+    out8[2] = (float) g->duck.deepestDb;  out8[3] = (float) g->duck.depthDb();
+    out8[4] = g->duck.lastHz;             out8[5] = g->duck.lastLevelDb;
+    out8[6] = (float) (int) g->duck.lastReason; out8[7] = (float) g->duck.futileEver;
 }
 
 /** Total cut the guard is applying at f, dB (negative). The sim can subtract

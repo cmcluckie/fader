@@ -77,6 +77,12 @@ public:
         float  runawayOfTotalDb  = 15.0f;   // the line within this of the frame's total level...
         int    runawayMaxPeaks   = 10;      // ...or no more than this many peaks in the frame
         float  runawayGlideFrac  = 0.003f;  // a steady march of this much in frequency is a voice
+        // The rescue duck's loud-line trigger: one line at or above runawayMinHz,
+        // this loud, this far over the median of +-20 bins. Every howl that
+        // reached the room on 2026-10-03 passed -30 dB; a sung partial up there
+        // is 30-40 dB under the voice's own level and a sibilant is not a line.
+        float  rescueHowlDb      = -30.0f;
+        float  rescuePromDb      = 30.0f;
         int    clusterReachBins = 3;
         // Watching and ACTING are different questions, and conflating them is what
         // made the guard audible with no feedback in the room. The floor is dragged
@@ -338,6 +344,12 @@ public:
 
     void setParams (const Params& p) noexcept { params = p; }
 
+    /// The rescue duck's backstop: how many frames running there has been one
+    /// loud isolated line above the voice, and which.
+    int   loudLineFrames() const noexcept { return loudFramesNow; }
+    float loudLineHz() const noexcept     { return loudHzNow; }
+    float loudLineDb() const noexcept     { return loudDbNow; }
+
     /// For the test library only: the suspects between two frequencies, as the
     /// firing logic sees them. Every "why did it not fire" tonight was answered by
     /// inference from the reject log, which is throttled to one line per half
@@ -528,6 +540,34 @@ private:
             const float db = juce::Decibels::gainToDecibels (m, -120.0f);
             mag[(size_t) i] = db;
             publishedMag[(size_t) i].store (db, std::memory_order_relaxed);
+        }
+
+        // The rescue duck's backstop question, asked of the raw spectrum before
+        // any peak or suspect logic has had the chance to refuse it: is there,
+        // right now, one isolated line above the voice at howl level? The peak
+        // list is where a smeared fast riser was thrown out for being wide, and
+        // the suspect logic is what took 1.3 s over a cluster; this must not
+        // depend on either being right. See RescueDuck.h.
+        {
+            const int lo = juce::jlimit (22, numBins - 23, (int) (params.runawayMinHz / binHz));
+            const int hi = juce::jlimit (lo, numBins - 23, (int) (params.maxFreq / binHz));
+            int k = lo;
+            for (int i = lo + 1; i <= hi; ++i) if (mag[(size_t) i] > mag[(size_t) k]) k = i;
+            // Not while something pitched is sounding. harmonicPeaksThisFrame is
+            // still the PREVIOUS frame's count here (it is reset further down),
+            // which is what is wanted: a frame ago, was there a harmonic series?
+            // No real voice in 38 minutes of recordings ever raised this trigger,
+            // but a synthetic note with partials to 8 kHz falling as 1/sqrt(k)
+            // did (T54), and a dropout must be impossible by construction, not
+            // unlikely by spectrum. The cost: a howl that starts under a held
+            // note is left to the ordinary paths.
+            if (harmonicPeaksThisFrame < 2
+                && mag[(size_t) k] >= params.rescueHowlDb
+                && mag[(size_t) k] - medianAround (k, 20) >= params.rescuePromDb)
+            {
+                ++loudFramesNow; loudHzNow = (float) k * binHz; loudDbNow = mag[(size_t) k];
+            }
+            else loudFramesNow = 0;
         }
 
         computeLowSpectrum();
@@ -2050,6 +2090,8 @@ private:
     std::array<float, maxRising> risingFreq {}, risingLevel {};
     int risingCount = 0;
     int harmonicPeaksThisFrame = 0;   // peaks judged part of a series so far this frame
+    int   loudFramesNow = 0;          // consecutive frames with a loud isolated line (rescue duck)
+    float loudHzNow = 0.0f, loudDbNow = -200.0f;
     int  samplesSeen  = 0;
 public:
     int floorHalfWidthOverride = 0;   // test hook

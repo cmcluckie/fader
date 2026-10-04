@@ -21,6 +21,7 @@
 #include "../Source/FeedbackDetector.h"
 #include "../Source/NotchBank.h"
 #include "../Source/EngineDefaults.h"
+#include "../Source/RescueDuck.h"
 
 namespace
 {
@@ -1701,6 +1702,108 @@ int main()
         std::snprintf (msg, sizeof msg, "reached %.1f dB, gave up=%d", s.targetDb, (int) s.ineffective);
         report ("T47 a ring that responds to the cut is not called hopeless",
                 ! s.ineffective, msg);
+    }
+
+    // ---- T53: the rescue duck's gain and its timing --------------------------
+    // The broadband last resort (RescueDuck.h). Down in milliseconds, deeper on
+    // every further trigger, held a quarter of a second after the last one, back
+    // at 20 dB/s, straight down again if asked on the way up - and it lets go
+    // by itself when a second of ducking has not made the line any quieter,
+    // because then it is not in that line's loop and all it is doing is muting.
+    {
+        using R = fk::RescueDuck::Reason;
+        fk::RescueDuck d; d.prepare (kSR);
+        std::vector<float> buf (64);
+        double t = 0.0;
+        auto run = [&] (double seconds) {
+            const double until = t + seconds;
+            for (; t < until; t += 64.0 / kSR) { std::fill (buf.begin(), buf.end(), 1.0f); d.process (buf.data(), 64, t); }
+        };
+
+        d.trigger (t, -40.0f, 9000.0f, R::Runaway);        run (0.010);
+        const double first = d.depthDb();                               // -12, within 10 ms
+        d.trigger (t, -36.0f, 9000.0f, R::Runaway);        run (0.010);
+        d.trigger (t, -32.0f, 9000.0f, R::Runaway);        run (0.010);
+        const double third = d.depthDb();                               // -24
+        const float  applied = buf.back();                              // the audio really is down
+        run (0.200);
+        const double held = d.depthDb();                                // still -24, 0.21 s on
+        run (0.540);
+        const double rising = d.depthDb();                              // 0.5 s into release: about -14
+        d.trigger (t, -50.0f, 9000.0f, R::Runaway);        run (0.010);
+        const double again = d.depthDb();                               // pulled back down
+        run (2.0);
+        const double back = d.depthDb();                                // home
+
+        // Not in the loop: a line that never gets quieter however long we duck.
+        fk::RescueDuck f; f.prepare (kSR);
+        double tf = 0.0;
+        for (int i = 0; i < 80; ++i)
+        {
+            f.trigger (tf, -28.0f, 9000.0f, R::LoudLine);
+            for (int b = 0; b < 15; ++b, tf += 64.0 / kSR) f.process (buf.data(), 64, tf);   // 20 ms
+        }
+        const bool gaveUp = f.futileEver == 1 && f.futile (tf);
+        for (int b = 0; b < 1500; ++b, tf += 64.0 / kSR) f.process (buf.data(), 64, tf);     // 2 s
+        const double letGo = f.depthDb();
+
+        const bool ok = first <= -11.0 && first >= -12.5 && third <= -23.0 && third >= -24.5
+                     && applied < 0.08f && held <= -23.0 && rising > -17.0 && rising < -11.0
+                     && again < rising - 4.0 && back == 0.0 && gaveUp && letGo == 0.0;
+        std::snprintf (msg, sizeof msg, "10 ms %.1f, three triggers %.1f (audio x%.3f), held %.1f, 0.5 s into release %.1f, re-trigger %.1f, home %.1f; never-quieter line: %s, then %.1f",
+                       first, third, applied, held, rising, again, back, gaveUp ? "gave up" : "KEPT DUCKING", letGo);
+        report ("T53 the rescue duck goes down hard, earns its way back, and lets go of a loop it is not in", ok, msg);
+    }
+
+    // ---- T54: what may ask for the duck, and what may not --------------------
+    // A false duck is a dropout, so its backstop trigger - one loud isolated
+    // line above the voice - has to be deaf to everything a person does into a
+    // microphone. A howl at 9 kHz must raise it within three frames of being
+    // there. Full-scale-ish white noise, a loud sibilant, and a loud bright
+    // sung note with partials to 8 kHz must not, ever.
+    {
+        fk::FeedbackDetector::Params p; p.floorDb = -95.0f; p.minFreq = 40.0f; p.maxFreq = 18000.0f;
+        constexpr int block = 64;
+        std::vector<float> buf ((size_t) block);
+        auto most = [&] (double seconds, auto&& sample) {
+            fk::FeedbackDetector det; init (det, p);
+            int best = 0;
+            for (int b = 0; b < (int) (seconds * kSR / block); ++b)
+            {
+                for (int i = 0; i < block; ++i) buf[(size_t) i] = (float) sample ((double) (b * block + i) / kSR);
+                det.push (buf.data(), block);
+                best = std::max (best, det.loudLineFrames());
+            }
+            return best;
+        };
+
+        const int howl  = most (0.3, [] (double t) { return 0.2 * std::sin (2.0 * M_PI * 9000.0 * t) + noise (0.0001); });
+        const int white = most (2.0, [] (double) { return noise (0.35); });
+        // a sibilant: band noise 5-9 kHz, loud
+        double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+        const double w0 = 2.0 * M_PI * 7000.0 / kSR, al = std::sin (w0) / (2.0 * 1.5);
+        const int sib = most (2.0, [&] (double) {
+            const double x = noise (1.0);
+            const double y = (al * x - al * x2 - (-2.0 * std::cos (w0)) * y1 - (1.0 - al) * y2) / (1.0 + al);
+            x2 = x1; x1 = x; y2 = y1; y1 = y;
+            return 0.6 * y;
+        });
+        // a loud, bright sung note: 300 Hz, partials to 8 kHz falling as 1/sqrt(k), 5.5 Hz vibrato
+        const int sung = most (2.0, [] (double t) {
+            double v = 0.0;
+            const double f0 = 300.0 * (1.0 + 0.004 * std::sin (2.0 * M_PI * 5.5 * t));
+            for (int k = 1; k * 300 <= 8000; ++k) v += std::sin (2.0 * M_PI * f0 * k * t) / std::sqrt ((double) k);
+            return 0.12 * v;
+        });
+
+        // The duck asks after `need` consecutive frames; that is the line that
+        // must not be reached. (The bright note shows one: its first frame,
+        // before any series has been counted. One frame is not a request.)
+        const int need = fk::RescueDuck().loudFrames;
+        std::snprintf (msg, sizeof msg, "longest run of loud-line frames (the duck asks at %d): 9 kHz howl %d; white noise %d, sibilant %d, bright sung note %d",
+                       need, howl, white, sib, sung);
+        report ("T54 only a howl asks for the duck: not noise, not a sibilant, not a bright loud note",
+                howl >= need && white < need && sib < need && sung < need, msg);
     }
 
     // ---- T52: a trigger merges only onto a filter that can reach it ---------

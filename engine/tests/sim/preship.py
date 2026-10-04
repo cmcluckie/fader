@@ -95,7 +95,9 @@ def run(margin_db, guarded, disconnected=False):
                 events=guard.events if guard else 0,
                 filters=len(guard.notches()) if guard else 0,
                 not_in_loop=guard.not_in_loop() if guard else 0,
-                deepest=guard.deepest_db() if guard else 0.0)
+                deepest=guard.deepest_db() if guard else 0.0,
+                duck_end=guard.rescue()["depth_db"] if guard else 0.0,
+                duck_futile=guard.rescue()["futile"] if guard else 0)
 
 
 def disconnected_check():
@@ -123,7 +125,65 @@ def disconnected_check():
     if g["deepest"] < -30.0:
         problems.append(f"disconnected: parked a filter at {g['deepest']:.1f} dB, "
                         f"far past the dial, for no effect")
+    # The rescue duck has the same duty. Out of the loop it cannot quieten
+    # anything; if it is still down at the end it is simply muting the room.
+    if g["duck_end"] < -0.5:
+        problems.append(f"disconnected: the rescue duck is still down {g['duck_end']:.1f} dB "
+                        f"at the end of a loop it is not in")
     return g, problems
+
+
+def rig_like(margin_db, duck):
+    """A loop shaped like the rig's, started cold.
+
+    The reverberant room above rings low once its top end is held - 440, 630,
+    1200 Hz - and the rescue duck is fenced above 4 kHz so that it can never
+    act where the voice lives; it cannot be judged there. Every ring on the rig
+    has been between 4.4 and 14.6 kHz with the microphone near the speaker, so:
+    half a metre apart, a short room, and a microphone response that peaks near
+    9.5 kHz. Unguarded this howls at 9 kHz at -10 dBFS for as long as it runs.
+    """
+    from scipy import signal
+    from feedback_sim import peaking_eq, sos_from_biquads
+    sim = FeedbackSim(fs=44100); fs = sim.fs
+    b, a = peaking_eq(fs, 9500, 1.0, 14.0)
+    sim.mic_sos = np.vstack([signal.butter(2, 1500, "hp", fs=fs, output="sos"),
+                             sos_from_biquads([(b, a)]),
+                             signal.butter(2, 16000, "lp", fs=fs, output="sos")])
+    sim.build_room(dims=(6, 5, 2.8), rt60=0.4, speaker_pos=(1.0, 2.5, 1.5), mic_path=[(0.0, (1.5, 2.5, 1.5))])
+    sim.set_gain_margin(margin_db)
+    guard = FkGuard(sim.fs, sim.block); guard.set_rescue(duck); sim.external_eq = guard
+    _, mic, _ = sim.run(seconds=6.0, seed="click")
+    mic = np.asarray(mic); n = int(0.02 * fs); k = len(mic) // n
+    env = 20 * np.log10(np.sqrt(np.mean(mic[:k * n].reshape(k, n) ** 2, axis=1)) + 1e-12)
+    r = guard.rescue()
+    return dict(above_30=float(np.sum(env > -30) * 0.02), above_40=float(np.sum(env > -40) * 0.02),
+                last=float(20 * np.log10(np.sqrt(np.mean(mic[-2 * fs:] ** 2)) + 1e-12)),
+                filters=len(guard.notches()), events=guard.events,
+                episodes=r["episodes"], deepest=r["deepest_db"], depth_end=r["depth_db"])
+
+
+def cold_start_check():
+    """A cold start 20 dB over, with the rescue duck and without it.
+
+    This is the case the duck exists for (RescueDuck.h). It has to engage, it
+    has to keep the room out of howl territory, and it has to be GONE by the
+    end with the room quiet - a duck that stays down has not rescued anything,
+    it has turned the system off.
+    """
+    off, on = rig_like(20.0, False), rig_like(20.0, True)
+    problems = []
+    if on["episodes"] < 1:
+        problems.append("cold start: the rescue duck never engaged - this scenario is not testing it")
+    if on["above_30"] > 0.0:
+        problems.append(f"cold start: {on['above_30']:.2f} s above -30 dBFS with the duck on")
+    if on["above_40"] > 0.15:
+        problems.append(f"cold start: {on['above_40']:.2f} s above -40 dBFS with the duck on (limit 0.15)")
+    if on["last"] > -60.0:
+        problems.append(f"cold start: still at {on['last']:.1f} dBFS at the end with the duck on")
+    if on["depth_end"] < -0.5:
+        problems.append(f"cold start: the duck is still down {on['depth_end']:.1f} dB at the end")
+    return off, on, problems
 
 
 def measure():
@@ -193,6 +253,13 @@ if __name__ == "__main__":
           f"{'deepest ' + format(dis['deepest'], '.1f') + 'dB':>20}"
           f"{dis['events']:>8}{dis['filters']:>9}")
     bad += dis_bad
+
+    cs_off, cs_on, cs_bad = cold_start_check()
+    print(f"\ncold start, rig-like loop, 20 dB over   s>-30   s>-40   last 2 s  filters  duck")
+    print(f"{'  without the rescue duck':<38}{cs_off['above_30']:>6.2f}{cs_off['above_40']:>8.2f}{cs_off['last']:>10.1f}{cs_off['filters']:>9}")
+    print(f"{'  with it':<38}{cs_on['above_30']:>6.2f}{cs_on['above_40']:>8.2f}{cs_on['last']:>10.1f}{cs_on['filters']:>9}"
+          f"  {cs_on['episodes']} episode(s), deepest {cs_on['deepest']:.0f} dB, {cs_on['depth_end']:.0f} dB at the end")
+    bad += cs_bad
 
     if update:
         json.dump(now, open(BASELINE, "w"), indent=2, sort_keys=True)
