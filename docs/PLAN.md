@@ -171,6 +171,53 @@ costs in the 1–4 and 4–16 kHz averages.
 
 ---
 
+## The agenda after detection — Chris, 2026-10-04
+
+Detection has been the goal until now; more of it needs more data (the studio,
+`docs/studio-session.md`). Chris's list for what comes next, in his order, with
+the one addition and the one caution agreed in the same conversation. This
+takes precedence over section 3 below, most of which slots into it.
+
+0. **A number for sound quality** *(the addition)*. Every recording has the
+   microphone before and after the guard. Score the difference - the survey's
+   frequency-weighted spectral distance - per fixture and per session, and
+   separately for stretches with no feedback present. Without it, 3 and 4 are
+   impressions, and 1 cannot be judged on tone.
+1. **Clean out the trial and error.** Inventory every mechanism: dead,
+   disabled, proven, unmeasured. For the unmeasured, switch off, run all five
+   gate layers and the twenty-seed fuzz, keep only what moves a number.
+   *Caution:* the tests are a good memory and a poor crystal ball, so this can
+   remove something that only matters in a case not yet seen. Delete only what
+   is dead or shows no effect anywhere; switch off rather than delete anything
+   uncertain until the studio data is in; one removal per commit, with its
+   numbers. Known debris to start from: notch pulsing (never enabled), the
+   plateau path and comb (ship disabled, T42 parked), the 10 ms chirp probe
+   (nothing starts it), the harm budget (run at zero), `qMaxHigh`, and the
+   offender histogram, depth memory, track layer and pitch-profile seeding
+   (effect never measured in isolation).
+2. **Settings: hide, and mostly remove.** Four did harm this week at values the
+   app offers: Attack "fast" (four frames: 10 ms for two voice hits), the
+   voice budget (refused real howls), the input gate (blinded the detector in
+   a quiet room), `notchQ` (never set, leaked into the merge rule). Where the
+   right value has been measured, fix it. Aim: one dial - how hard it may cut
+   - and on/off. Everything else automatic or behind an advanced panel.
+3. **Quality degrades only as feedback is detected.** Half true already: at low
+   gain the bank holds no filters. The broken half is the voice - filters on
+   singing with no feedback present (20-35 per few seconds in the fixtures;
+   ten when Chris spoke on 10-04, some at 141-234 Hz). That is cost with no
+   need and comes first. Then release: a filter should relax to the shallowest
+   depth that still holds its ring.
+4. **Reduce what notches cost.** Narrower and shallower where the ring allows;
+   one wide gentle filter for a hump instead of thirty needles (the planner in
+   item 2 already chooses this); and cancellation (section 3, item 4), which
+   avoids notching.
+
+While Chris travels, offline only: 0, the inventory and on/off table for 1,
+dead code out. Anything that changes behaviour is staged with its numbers for
+him to approve.
+
+---
+
 ## 3. From the survey — proposed, order not yet agreed
 
 Put to Chris on 2026-10-03; he asked for the list. Nothing here is started.
