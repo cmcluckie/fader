@@ -456,7 +456,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 | S3 | measured ladder against the simulator's own: first five rungs within 1 %, margin within 1.5 dB, headroom within 1 dB, the note that rings among the first three | exact, 0.5 dB, 0.1 dB, yes - both rooms | pass |
 | S4 | first five rings of a live ramp within 1 % of the prediction | engine probe not built | open |
 
-- **To do.** [ ] Engine sweep probe: pass-through muted, sample-aligned capture. [ ] `/fk/probe`. [ ] `scripts/measure_loop.py`. [ ] Remove the old 10 ms chirp probe that nothing starts.
+- **To do.** [ ] Engine sweep probe: pass-through muted, sample-aligned capture. [ ] `/fk/probe`. [ ] `scripts/measure_loop.py`. [x] The old 10 ms chirp probe that nothing could start is removed (`ce58788`).
 - **As built.** 10-03 `4b1c88c` `loop_measure.py` (sweep, response estimate, ladder, planner), `loop_measure_check.py` (gate layer 5).
 
 ### 4.4 Pre-placed filters - IN PROGRESS
@@ -657,9 +657,9 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Needs** a switch per mechanism in the test library, which is what epic 6 builds; until then each needs a hand-made build.
 - **Caution agreed 10-04.** The tests are a good memory and a poor crystal ball: switch off rather than delete anything uncertain until the studio data is in; one removal per commit, with its numbers.
 
-### 9.3 Remove the dead - NEW
-- **Done.** The engine's debug prints (10-04, `3f3992c`).
-- **Safe now (dead by the inventory, no behaviour change):** the chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz`, `histTopHz`; the two unused accessors; in the app `FkMode`, `CorrelationMonitor` and the unused controller properties. One per commit, gate numbers unchanged before and after.
+### 9.3 Remove the dead - IN PROGRESS
+- **Done, 10-04.** The engine's debug prints (`3f3992c`). The chirp probe; `qMaxAt`, `qMaxHigh`, `qWidenAboveHz` (their finding kept as a comment); `histTopHz`; two accessors nothing called; a counter never read; a test hook no test set; a duplicated question in the device set-up (`ce58788`) - checked the strict way: every gate figure the same, and all 52 cases of the singer study, 1551 numbers, identical to the log for the build before. In the app: `FkMode` and `CorrelationMonitor`; the whole solution builds.
+- **Still safe to do:** the unused controller properties in the app.
 - **Waiting on a decision:** pulsing (2.8, cancelled); the plateau path, the comb and T42 (1.7); the voice budget (3.7); `RingOutSession` and `X32Geq` (4.8).
 - **Either wire it or remove it:** the CPU figure behind the LOAD readout; the pitch-profile seed.
 - **Old test tools, checked 10-04.** Removed: `precut_test.py` (its question is gate layer 5 now) and `recall.py` (broken since 09-30, when the replay code it borrowed from changed; nobody had noticed, which is the argument for 9.5). Kept, and they run: `timeline.py` (a howl's story from a flight recording), `merge_audit.py` (2.2's check), `make_fixtures.py`, `scripts/fuzz-sweep.py`.
@@ -782,8 +782,11 @@ ruler; the inventories; the documents made true. `9d17858` the tests hold a
 filter as long as the room does. Then the corrected re-measurement of every
 build and this entry.
 
-**Where the plan stands at the end of the day.** 73 features: 23 done, 15 in
-progress, 31 not started, 4 cancelled (three of them proposals).
+**Evening.** Dead code out of the engine and the app (9.3), with every
+number checked unchanged.
+
+**Where the plan stands at the end of the day.** 73 features: 23 done, 16 in
+progress, 30 not started, 4 cancelled (three of them proposals).
 
 **On the rig, late afternoon.** The app was found relaunching its engine seven
 times a minute (7.1). Desk off, input silent, nothing heard. Fixed, deployed

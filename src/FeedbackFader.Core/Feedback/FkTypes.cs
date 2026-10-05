@@ -1,8 +1,5 @@
 namespace FeedbackFader;
 
-/// <summary>Engine mode: analyse-only, detect-and-log, or deploy notches.</summary>
-public enum FkMode { Off = 0, Assist = 1, Auto = 2 }
-
 /// <summary>Telemetry subscription bits for <c>/fk/subscribe</c>.</summary>
 [Flags]
 public enum FkTelemetry { None = 0, Events = 1, Notches = 2, Spectrum = 4, Status = 8, All = 15 }

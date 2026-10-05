@@ -141,7 +141,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 
 1. **Inventory — DONE.** Every mechanism and setting in the app and the engine listed as live, switched off, unreachable or dead. *Goal: nothing unlisted.*
 2. **On/off table — NEW.** Switch each unmeasured mechanism off and run the full tests. *Goal: a number beside each one.*
-3. **Remove the dead — NEW.** The unused probe, unused modes, a readout that always shows zero, debug prints, room memory that is loaded and then erased. *Goal: none left.*
+3. **Remove the dead — IN PROGRESS.** Gone on 4 Oct, with every test number unchanged: the unused probe, unused modes, debug prints, a filter rule that was measured out long ago. Still to do: a readout that always shows zero, room memory that is loaded and then erased, and whatever you cancel. *Goal: none left.*
 4. **Documents match the code — IN PROGRESS.** The README and the interface document were stale in about fifteen places; both are corrected, stale comments in the source are not yet. *Goal: no claim the code contradicts.*
 5. **Test tools in one place — NEW.** The 22 Python test tools folded under one command. *Goal: one entry point, and no file nobody runs. Two leftovers removed 4 Oct, one of which had been broken for days unnoticed.*
 
