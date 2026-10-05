@@ -6,6 +6,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using FeedbackFader;
 
+using Fader.Shared.Net;
 using Fader.Shared.Ui;
 
 namespace FeedbackFader.App;
@@ -140,6 +141,40 @@ public sealed class App : Application
 
         Render();
         base.OnFrameworkInitializationCompleted();
+
+        _ = LocateConsoleAsync();
+    }
+
+    /// <summary>
+    /// Find the console in the background so its address is ready before the user
+    /// opens a window that needs it. Uses the last address that answered, else
+    /// the saved one as a hint, else a LAN search - and writes whatever answers
+    /// back to the store, so "the last detected console" is what we use next time.
+    /// Runs off the UI thread and never throws into startup.
+    /// </summary>
+    private async Task LocateConsoleAsync()
+    {
+        if (_audioStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var seed = _audioStore.Load().ConsoleAddress;
+            var found = await Task.Run(() =>
+                X32Locator.ResolveAsync(new X32AddressStore(), seed));
+
+            if (found is not null && found.ToString() != seed)
+            {
+                _audioStore.Save(_audioStore.Load() with { ConsoleAddress = found.ToString() });
+            }
+        }
+        catch
+        {
+            // Discovery is a convenience; if it fails the user can still type the
+            // address in Setup exactly as before.
+        }
     }
 
     private void OnEngineClick(object? sender, EventArgs e)

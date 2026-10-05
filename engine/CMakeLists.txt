@@ -167,10 +167,16 @@ target_link_libraries(fk-loop
 # Binary: build/fk-engine_artefacts/Release/fk-engine
 
 # MSVC only defines M_PI when asked; the tests use it for their synthetic signals.
+# The tests also hold FeedbackDetectors as locals - ~80 in fk-tests' one main(),
+# and MSVC gives every block's locals their own frame slot - which overflows
+# Windows' 1 MB main-thread stack (0xC00000FD before the first line prints), and
+# 8 MB too. Reserve 64 MB; only pages touched are committed. fk-engine
+# heap-allocates its Engine instead, so it needs none.
 if(MSVC)
     foreach(t fk-tests fk-loop fk-fuzz fk-render)
         if(TARGET ${t})
             target_compile_definitions(${t} PRIVATE _USE_MATH_DEFINES)
+            target_link_options(${t} PRIVATE /STACK:67108864)
         endif()
     endforeach()
 endif()

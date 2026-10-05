@@ -1,8 +1,11 @@
+using System.Net;
+
 using Commons.Music.Midi;
 using Fader.Bridge;
 using Fader.Bridge.Midi;
 using Fader.Bridge.Osc;
 using Fader.Shared;
+using Fader.Shared.Net;
 
 namespace Fader.Bridge.App;
 
@@ -35,6 +38,8 @@ public sealed class BridgeController : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     private BridgeConfig? _config;
+    private readonly X32AddressStore _addressStore = new();
+    private IPAddress? _resolvedAddress;  // cached once the console has answered
     private IMidiAccess? _midiAccess;     // shared: presence checks + opening
     private FaderPortDevice? _surface;
     private X32Client? _client;
@@ -105,7 +110,9 @@ public sealed class BridgeController : IAsyncDisposable
                 return;
             }
 
-            _endpoint = $"{_config.X32IpAddress}:{_config.X32Port}";
+            _endpoint = string.IsNullOrWhiteSpace(_config.X32IpAddress)
+                ? "searching for X32…"
+                : $"{_config.X32IpAddress}:{_config.X32Port}";
 
             try
             {
@@ -217,9 +224,23 @@ public sealed class BridgeController : IAsyncDisposable
             var surface = new FaderPortDevice();
             await surface.OpenAsync(_config.MidiPortName, _midiAccess);
 
+            // Find the console: last address that answered, else the configured
+            // hint, else a LAN search. Cached, so the search only runs until it
+            // first answers; a lost console clears the cache (see TickAsync).
+            _resolvedAddress ??= await X32Locator.ResolveAsync(
+                _addressStore, _config.X32IpAddress, _config.X32Port);
+
+            if (_resolvedAddress is null)
+            {
+                _endpoint = "searching for X32…";
+                return;   // the supervisor tick will try again
+            }
+
+            _endpoint = $"{_resolvedAddress}:{_config.X32Port}";
+
             var session = new CancellationTokenSource();
             var client = new X32Client(
-                _config.ResolvedAddress, _config.X32Port,
+                _resolvedAddress, _config.X32Port,
                 TimeSpan.FromSeconds(_config.KeepaliveSeconds));
             client.MessageReceived += OnConsoleMessage;
             client.Start(session.Token);

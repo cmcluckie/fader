@@ -6,8 +6,12 @@ namespace Fader.Bridge;
 
 public sealed class BridgeConfig
 {
-    /// <summary>X32 Rack IP address. Find it on the console under Setup > Network.</summary>
-    public string X32IpAddress { get; set; } = "192.168.1.100";
+    /// <summary>
+    /// X32 Rack IP address. Optional: leave blank to let the bridge use the last
+    /// address that answered, or search the LAN for the console (like X32-Edit).
+    /// When set, it is used as a hint and, if it answers, remembered as the last.
+    /// </summary>
+    public string X32IpAddress { get; set; } = "";
 
     public int X32Port { get; set; } = 10023;
 
@@ -82,12 +86,22 @@ public sealed class BridgeConfig
 
     private void Validate()
     {
-        if (!IPAddress.TryParse(X32IpAddress, out var address))
+        // A blank address is allowed - discovery finds the console. A non-blank
+        // value must still be a valid IP; anything else is a typo worth catching.
+        if (string.IsNullOrWhiteSpace(X32IpAddress))
+        {
+            ResolvedAddress = IPAddress.None;
+        }
+        else if (IPAddress.TryParse(X32IpAddress, out var address))
+        {
+            ResolvedAddress = address;
+        }
+        else
         {
             throw new InvalidDataException(
-                $"x32IpAddress \"{X32IpAddress}\" is not a valid IP address.");
+                $"x32IpAddress \"{X32IpAddress}\" is not a valid IP address " +
+                "(leave it blank to search for the console automatically).");
         }
-        ResolvedAddress = address;
 
         if (StripCount is < 1 or > 16)
         {
