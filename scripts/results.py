@@ -147,7 +147,9 @@ def build_page():
     # ---- the three goals
     v0 = vers[0]
     w(f"## The latest build against the three goals\n")
-    w(f"Build `{v0}` ({date[v0]}).\n")
+    room, stamp = ledger.running_build()
+    w(f"Build `{v0}` ({date[v0]})."
+      + (f" In the room when this page was made: `{stamp}`." if room != "unknown" else "") + "\n")
     w("| | Goal | Room like the rig | Reverberant hall |")
     w("|---|---|---|---|")
     def ring_cell(room):
