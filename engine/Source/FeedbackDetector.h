@@ -581,7 +581,7 @@ private:
         // §4.5 input gate: don't chase noise between songs (spectrum still published)
         if (rmsDb >= params.inputGateDb)
         {
-            const int floorHalfWidth = floorHalfWidthOverride > 0 ? floorHalfWidthOverride : 20;
+            const int floorHalfWidth = 20;
 
             // TRACKING stays on the short window. The long one is 171 ms, longer
             // than a vibrato cycle at 5.4 Hz, so it averages the wobble away: a
@@ -720,7 +720,6 @@ private:
             }
         }
 
-        if (peakCount > maxSeenPeaks) maxSeenPeaks = peakCount;
 
         updateContext (rmsDb);
 
@@ -2129,7 +2128,6 @@ private:
     float loudHzNow = 0.0f, loudDbNow = -200.0f;
     int  samplesSeen  = 0;
 public:
-    int floorHalfWidthOverride = 0;   // test hook
 private:
     std::array<float, (size_t) 64 * 2 + 4> medianScratch {};
 
@@ -2200,7 +2198,6 @@ private:
     std::array<float, maxPeaks> peakFreq {}, peakLevel {}, peakProm {};
     int peakCount = 0;
 public:
-    mutable int maxSeenPeaks = 0;
 private:
 public:
 

@@ -97,7 +97,6 @@ public:
         recRead.store (r, std::memory_order_release);
         return n;
     }
-    bool isBypassed() const noexcept         { return bypassed.load(); }
 
     /// <summary>
     /// Return-path diagnostic. Replaces what every armed slot writes to its return:
@@ -167,7 +166,6 @@ public:
     float rescueHz (int ch) const noexcept       { return rescueOut[(size_t) ch].hz.load(); }
     float rescueLevelDb (int ch) const noexcept  { return rescueOut[(size_t) ch].levelDb.load(); }
     int   rescueReason (int ch) const noexcept   { return rescueOut[(size_t) ch].reason.load(); }
-    int   rescueFutile (int ch) const noexcept   { return rescueOut[(size_t) ch].futile.load(); }
     int   activeChannelCount() const noexcept    { return activeChans.load(); }
 
     /// Filters that have concluded they are not in the loop - see NotchBank.
@@ -206,7 +204,6 @@ public:
         for (int ch = 0; ch < maxChans; ++ch)
         {
             banks[(size_t) ch].prepare (sr, block);
-            if ((int64_t) probeBuf.size() != probeLen) probeBuf.assign ((size_t) probeLen, 0.0f);
             detectors[(size_t) ch].prepare (sr);
             ducks[(size_t) ch].prepare (sr);
             duckSeen[(size_t) ch] = 0;
@@ -262,14 +259,6 @@ public:
             // question - what the guard removed, and what it let through.
             const bool rec = recording.load() && ch == 0 && numSamples <= maxRecBlock;
             if (rec) juce::FloatVectorOperations::copy (recPre.data(), out, numSamples);
-
-            // Loop delay probe: capture the raw microphone while the chirp is out.
-            if (ch == 0 && probeState.load() == 1)
-                for (int n = 0; n < numSamples; ++n)
-                {
-                    const int64_t k = probePos + n;
-                    if (k >= 0 && k < probeLen) probeBuf[(size_t) k] = out[n];
-                }
 
             auto& det  = detectors[(size_t) ch];
             auto& bank = banks[(size_t) ch];
@@ -369,36 +358,10 @@ public:
                 auto& ro = rescueOut[(size_t) ch];
                 ro.triggers.store (duck.triggers);   ro.depthDb.store ((float) duck.depthDb());
                 ro.hz.store (duck.lastHz);            ro.levelDb.store (duck.lastLevelDb);
-                ro.reason.store ((int) duck.lastReason); ro.futile.store (duck.futileEver);
+                ro.reason.store ((int) duck.lastReason);
             }
 
             if (rec) pushRecording (recPre.data(), out, numSamples);
-        }
-
-        // Loop delay probe: a short chirp out of the return, then listen.
-        //
-        // Everything else in this engine infers the loop from the microphone
-        // alone, which is why it can react and never predict. This measures it:
-        // we know the sample we emitted on and we know the sample it came back
-        // on, and the difference is the round trip - mic to console to monitor
-        // to air to mic. No model, no assumption, no room dimensions. That
-        // number is what turns a growth rate into a loop gain margin in dB,
-        // because growth = margin / round-trip.
-        if (probeState.load() == 1)
-        {
-            for (int ch = 0; ch < active; ++ch)
-            {
-                const int rank = outRank[(size_t) ch];
-                if (rank < 0 || rank >= numOutputs || outputs[rank] == nullptr) continue;
-                float* out = outputs[rank];
-                for (int n = 0; n < numSamples; ++n)
-                {
-                    const int64_t k = probePos + n;
-                    out[n] = (k >= 0 && k < probeChirpLen) ? chirpAt (k) : 0.0f;
-                }
-            }
-            probePos += numSamples;
-            if (probePos >= probeLen) probeState.store (2);    // captured, go analyse
         }
 
         // Diagnostic override, applied last so it replaces whatever the slot wrote.
@@ -493,7 +456,7 @@ private:
     std::array<RescueDuck, maxChans>             ducks;
     std::array<int, maxChans>                    duckSeen {};
     std::atomic<bool>                            rescueOn { true };
-    struct RescueTelemetry { std::atomic<int> triggers { 0 }, reason { 0 }, futile { 0 };
+    struct RescueTelemetry { std::atomic<int> triggers { 0 }, reason { 0 };
                              std::atomic<float> depthDb { 0.0f }, hz { 0.0f }, levelDb { -200.0f }; };
     std::array<RescueTelemetry, maxChans>        rescueOut;
 
@@ -552,27 +515,10 @@ private:
     std::atomic<bool>  bypassed { false };
     std::atomic<float> testTone { 0.0f };
 
-    // ---- loop delay probe ---------------------------------------------------
-    // 0 = idle, 1 = emitting/capturing, 2 = ready for the message thread.
-    static constexpr int64_t probeLen      = 48000;   // 1 s of listening at 48 k
-    static constexpr int64_t probeChirpLen = 480;     // 10 ms sweep
-    std::atomic<int> probeState { 0 };
-    int64_t probePos = 0;
-    std::vector<float> probeBuf;
-
-    /// 500 Hz -> 12 kHz linear sweep. Deterministic, so the analysis can
-    /// regenerate it exactly rather than having to record what we sent.
-    float chirpAt (int64_t k) const noexcept
-    {
-        const double t  = (double) k / sr;
-        const double T  = (double) probeChirpLen / sr;
-        const double f0 = 500.0, f1 = 12000.0;
-        const double ph = 2.0 * juce::MathConstants<double>::pi
-                        * (f0 * t + 0.5 * (f1 - f0) / T * t * t);
-        // Taper the ends so the loudspeaker is not asked for a step.
-        const double w = 0.5 - 0.5 * std::cos (2.0 * juce::MathConstants<double>::pi * t / T);
-        return (float) (0.25 * w * std::sin (ph));
-    }
+    // (A 10 ms chirp probe for the loop delay lived here from August. Nothing could
+    // start it - no OSC address, no caller - and the loop measurement that replaces
+    // it is a sweep with the pass-through muted: engine/tests/sim/loop_measure.py,
+    // plan 4.3. Removed 2026-10-04; it is in the history at 3f3992c.)
     double             tonePhase = 0.0;
     std::array<int, maxChans> outRank { 0, 1, 2, 3, 4, 5, 6, 7 };   // slot -> dense output rank
     std::atomic<float> cpu { 0.0f };

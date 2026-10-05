@@ -140,7 +140,6 @@ public:
                  double levelDb = -1000.0, double widthHz = 0.0, bool wide = false,
                  bool runaway = false) noexcept
     {
-        juce::ignoreUnused (levelDb);
         const int existing = findNear (f);
 
         // Futility accounting happens BEFORE any refusal, deliberately.
@@ -877,19 +876,14 @@ public:
     // around 0.7 of a critical band, where the same fraction at 500 Hz would
     // cost four of them. The ear sets the price and it is cheap at the top.
     double qMax           = 20.0;   // 5.0% wide: the cap below the hop band
-    double qMaxHigh       = 13.0;   // 7.7% wide: one measured hop
-    double qWidenAboveHz  = 2000.0;
 
-    /// Kept, unused, with its measurement: widening the notch to cover a whole
-    /// 7.7% hop is the obvious fix for a ring that steps outside its filter, and
-    /// it does not work. Flat everywhere: harm +30% for 1% fewer runaways. Only
-    /// above 2 kHz, on a rig where spikes CAN hop: runaways 52% -> 49% but kills
-    /// 86% -> 77% and latency 589 -> 880 ms. The ring stepping outside the notch
-    /// is real and well evidenced; making the notch bigger is not the answer.
-    double qMaxAt (double f) const noexcept
-    {
-        return f >= qWidenAboveHz ? qMaxHigh : qMax;
-    }
+    // Tried and measured out, so nobody tries it again: a wider cap above 2 kHz
+    // (Q13, one whole 7.7% hop) for a ring that steps outside its filter. Flat
+    // everywhere: harm +30% for 1% fewer runaways. Only above 2 kHz, on a rig
+    // where spikes CAN hop: runaways 52% -> 49% but kills 86% -> 77% and latency
+    // 589 -> 880 ms. The ring stepping outside the notch is real and well
+    // evidenced; making the notch bigger is not the answer. (The code - qMaxHigh,
+    // qWidenAboveHz, qMaxAt - sat here unused until 2026-10-04.)
 
     double initialCutDb   = -12.0;   // first strike
     double fastTrackCutDb = -18.0;   // first strike on a known repeat offender
@@ -986,11 +980,6 @@ public:
     double cutAtDb (double f, int skip, bool reactiveOnly = false) const noexcept
     {
         if (f <= 0.0) return 0.0;
-        const double w = 2.0 * juce::MathConstants<double>::pi * f / fs;
-        const double cosW = std::cos (w), cos2W = std::cos (2.0 * w);
-        const double sinW = std::sin (w), sin2W = std::sin (2.0 * w);
-
-        juce::ignoreUnused (cosW, cos2W, sinW, sin2W);
         double total = 0.0;
         for (int i = 0; i < MaxNotches; ++i)
         {
@@ -1077,7 +1066,6 @@ public:
     struct Bucket { double count = 0.0; double stamp = 0.0; double deepestDb = 0.0; };
 
     static constexpr double histBaseHz    = 200.0;    // band low edge
-    static constexpr double histTopHz     = 16000.0;  // band high edge
     static constexpr int    histBuckets   = 160;      // 24/oct * log2(80) ~= 152
     static constexpr double histHalfLife  = 300.0;    // halve every 5 min
     static constexpr int    fastTrackStrikes = 3;

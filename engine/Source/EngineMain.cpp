@@ -337,12 +337,6 @@ private:
         setup.sampleRate       = (double) d.sampleRate;
         setup.bufferSize       = d.bufferSize;
 
-        if (d.inputs.empty())
-        {
-            // Nothing checked: keep the device open on defaults but idle.
-            setup.useDefaultInputChannels  = true;
-            setup.useDefaultOutputChannels = true;
-        }
         // Slot i reads the i-th checked input (ascending) and writes its chosen
         // return output - or, with no explicit returns, mirrors its input index.
         std::vector<int> returns;
