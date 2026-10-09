@@ -1,8 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Plumbing both products need and neither owns: the OSC codec, the X32 talkers
-       that are not specific to either job, and the drawn-control toolkit. Nothing
-       here knows what a FaderPort is or what feedback is. -->
+  <!-- Plumbing the app needs and no feature owns: the OSC codec and the
+       drawn-control toolkit. Nothing here knows what feedback is. -->
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>

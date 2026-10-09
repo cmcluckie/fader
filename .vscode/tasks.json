@@ -7,7 +7,7 @@
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/Fader.sln",
+        "${workspaceFolder}/Fader.slnx",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary"
       ],
@@ -16,24 +16,6 @@
         "kind": "build",
         "isDefault": true
       }
-    },
-    {
-      "label": "self-test",
-      "command": "dotnet",
-      "type": "process",
-      "args": ["run", "--project", "${workspaceFolder}/diagnostics/BridgeSelfTest"],
-      "problemMatcher": "$msCompile",
-      "group": {
-        "kind": "test",
-        "isDefault": true
-      }
-    },
-    {
-      "label": "list MIDI ports",
-      "command": "dotnet",
-      "type": "process",
-      "args": ["run", "--project", "${workspaceFolder}/diagnostics/MidiMonitor"],
-      "problemMatcher": "$msCompile"
     }
   ]
 }

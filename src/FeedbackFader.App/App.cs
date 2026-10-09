@@ -109,7 +109,7 @@ public sealed class App : Application
             },
         };
 
-        // Two tray icons for the one mark, as FaderBridge has. macOS wants a
+        // Two tray icons for the one mark. macOS wants a
         // template image - black plus alpha, inverted by the system for a dark
         // menu bar and tinted while the menu is open; the Windows notification
         // area has no such notion, so it gets the coloured twin instead.

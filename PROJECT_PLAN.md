@@ -159,6 +159,6 @@ how much of what the ear gets from the voice differs from the clean voice; a
 
 ---
 
-**Not in this plan:** FaderBridge (the FaderPort-to-X32 bridge). It shares the repository and nothing else.
+**Not in this plan:** FaderBridge (the FaderPort-to-X32 bridge). It was removed from the repository on 9 Oct 2026; the FaderPort talks to Logic natively now.
 
 **Three items are marked CANCELLED as proposals** (1.7, 3.7, 4.8). Say the word and any of them goes back to NEW.

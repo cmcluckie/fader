@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Regenerate every icon the two apps ship, from the geometry below.
+"""Regenerate every icon the app ships, from the geometry below.
 
     pip install cairosvg pillow
     python3 assets/make-icons.py
 
-Two marks in one vocabulary: a line that describes signal, with a fader cap on
-it.  FaderBridge is two fader tracks tied by a span - a surface and a console,
-linked, each end carrying the other's move.  Feedback Fader is a flat response
-bitten by one narrow notch, the cap sitting in the trough it just pulled down.
+One mark: a line that describes signal, with a fader cap on it.  Feedback
+Fader is a flat response bitten by one narrow notch, the cap sitting in the
+trough it just pulled down.  (FaderBridge's mark - two fader tracks tied by a
+span - left with the bridge on 2026-10-09.)
 
 Everything is drawn on a 44-unit grid - a 22 pt menu-bar icon at 2x - and
 scaled from there, so the same geometry serves the menu bar and the 1024 px
@@ -41,14 +41,6 @@ def cap(cx, cy, w, colour, h=7, r=3.5):
     return f'<rect x="{cx-w/2}" y="{cy-h/2}" width="{w}" height="{h}" rx="{r}" fill="{colour}"/>'
 
 
-def bridge(colour="black", track=0.42):
-    return (f'<path d="M11 17 C 11 10, 33 10, 33 17" fill="none" stroke="{colour}" '
-            f'stroke-width="3" opacity="{track}" stroke-linecap="round"/>'
-            f'<path d="M11 17 L11 37 M33 17 L33 37" stroke="{colour}" stroke-width="3" '
-            f'opacity="{track}" stroke-linecap="round"/>'
-            + cap(11, 29, 13, colour) + cap(33, 24, 13, colour))
-
-
 def feedback(colour="black", track=0.42):
     return (f'<path d="M6 12 L16 12 L22 26 L28 12 L38 12" fill="none" stroke="{colour}" '
             f'stroke-width="3.2" opacity="{track}" stroke-linecap="round" '
@@ -57,7 +49,6 @@ def feedback(colour="black", track=0.42):
 
 APPS = {
     # slug:          (mark, accent, .App project, bundle name)
-    "faderbridge":   (bridge, TEAL, "FaderBridge.App", "FaderBridge"),
     "feedbackfader": (feedback, MAGENTA, "FeedbackFader.App", "FeedbackFader"),
 }
 

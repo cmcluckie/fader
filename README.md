@@ -1,177 +1,53 @@
-# Fader — two products for a live rig
+# Feedback Fader
 
-One repo, two independent macOS menu-bar apps. They share a repo, an OSC codec
-and a drawn-control toolkit; they share no runtime state and neither needs the
-other installed.
-
-- **FaderBridge** (the first half of this document) — maps a PreSonus FaderPort 8
-  (USB MIDI, Mackie Control) to a Behringer X32 Rack (OSC over UDP 10023).
-  Bidirectional: the surface drives the console, and the console drives the
-  motors, LEDs and scribble strips back. Runs on **macOS and Windows** (CoreMIDI
-  or WinMM, selected at startup).
-- **Feedback Fader** ([Feedback suppression](#feedback-suppression)) — a
-  headless JUCE audio process the tray app supervises, notching microphone
-  feedback on up to eight channels. macOS, and Windows with an ASIO interface
-  ([Windows](#windows)). Its plan is [PROJECT_PLAN.md](PROJECT_PLAN.md).
-
-They began as one binary. The split cost almost nothing because the seam was
-already there: the feedback code never referenced MIDI, and the feedback views
-never referenced the bridge. The single thing they had in common — which console
-to talk to — is now each product's own setting.
-
-The two-process shape of Feedback Fader (why a separate audio process, not
-managed DSP) is recorded in
+A macOS menu-bar app that keeps microphone feedback out of a live mix, with a
+headless audio engine doing the listening and the cutting. The engine is C++
+(JUCE); the app is C# (Avalonia); they talk over OSC on loopback. Why the audio
+lives in a separate process is recorded in
 [docs/adr/0001](docs/adr/0001-feedback-engine-architecture.md).
+
+Where the project stands: [PROJECT_PLAN.md](PROJECT_PLAN.md) (epics, features,
+goals), [docs/TODO-AS-BUILT.md](docs/TODO-AS-BUILT.md) (what was built, what is
+left, pass thresholds), [docs/TESTING.md](docs/TESTING.md) (the standard tests)
+and [docs/RESULTS.md](docs/RESULTS.md) (every build's numbers).
+
+Until October 2026 this repository also held **FaderBridge**, a FaderPort 8 to
+X32 Rack bridge. The FaderPort talks to Logic natively now; the bridge was
+removed on 2026-10-09 and lives on in the git history.
 
 ## Prerequisites
 
 - .NET 8 SDK or newer
-- FaderPort 8 in **MCU mode** (hold `NEXT` while powering on, choose MCU)
-- Host machine and X32 on the same subnet
-
-On macOS, run from **Terminal in the GUI session, not over SSH** — CoreMIDI will
-not enumerate devices without a logged-in user session. Windows has no such
-restriction.
-
-## Configure
-
-Edit `src/FaderBridge.Core/config.json` — at minimum the console's IP, which
-you'll find on the X32 under **Setup → Network**:
-
-```json
-{
-  "x32IpAddress": "192.168.1.100",
-  "midiPortName": "PreSonus FP8",
-  "stripCount": 8,
-  "x32ChannelCount": 32,
-  "keepaliveSeconds": 9.0,
-  "echoSuppressionMs": 150,
-  "resyncSeconds": 5.0
-}
-```
-
-`resyncSeconds` re-pulls the whole bank periodically. The X32 does not reliably
-broadcast every parameter after a scene recall, so a push-only bridge goes
-quietly stale; this is what catches it. Set to `0` to disable.
-
-`midiPortName` is matched case-insensitively. An **exact** name wins; failing
-that, a substring match must be unambiguous. If nothing matches, or a substring
-matches several ports, the bridge lists what it found and exits.
-
-Exact-match-first is not a nicety. Windows enumerates the FaderPort 8 as both
-`PreSonus FP8` and `MIDIIN2 (PreSonus FP8)` — the first name is a substring of
-the second, so substring matching alone rejects the most natural name as
-ambiguous. Port names differ between platforms; run `MidiMonitor` with no
-arguments to list what your machine actually reports, and copy a name verbatim.
-
-## Moving to the Mac
-
-The repo ships as a git bundle — one file, full history, no server involved:
-
-```bash
-git clone Fader.bundle Fader && cd Fader && git remote remove origin
-```
-
-Then, **before anything else**, list the MIDI ports. CoreMIDI names devices
-differently from WinMM, so the `midiPortName` in `config.json` will very likely
-need changing:
-
-```bash
-dotnet run --project diagnostics/MidiMonitor
-```
-
-Copy a name from that list verbatim into `config.json`. On Windows the device
-reports as `PreSonus FP8`; on macOS expect something different, possibly with
-separate port-1/port-2 entries.
-
-Two macOS-only gotchas:
-
-- **Do not run over SSH.** CoreMIDI will not enumerate devices without a
-  logged-in GUI session. Use Terminal on the machine itself.
-- The launch profiles in `Properties/launchSettings.json` hard-code the Windows
-  port name. Use the no-argument run to list ports first.
-
-Everything else is identical — the backend is selected at startup and the rest of
-the code is platform-agnostic.
+- CMake and a C++ toolchain, for the engine
+- The host machine and the X32 on the same subnet, for the console's meters and RTA
 
 ## Build
-
-Everything builds as a unit from `Fader.slnx` — both products, both core
-libraries, the shared library, and the diagnostics:
 
 ```bash
 dotnet build Fader.slnx
 ```
 
-Five projects under `src/`: `Fader.Shared` (the OSC codec and the drawn-control
-toolkit), then a Core library and an App per product. Only the two Apps produce
-a bundle.
-
-## Run
-
-```bash
-dotnet run --project src/FaderBridge.Core
-```
-
-Run from **Terminal in the GUI session, not over SSH** — CoreMIDI will not
-enumerate devices without a logged-in user session.
-
-| Control | Does |
-|---|---|
-| Faders | `/ch/NN/mix/fader`, motorised both ways |
-| Master layer | **Record (●)** flips the 8 faders to Main LR (strip 1) + mix buses 1–7 (lamp lit); press again for channels |
-| Transport | ◀◀/▶▶ = previous/next track, ▶ = play/pause, ■ = pause on the Mac's music player (Apple Music / Spotify) |
-| Mute | `/ch/NN/mix/on` (inverted: 0 = muted), lamp follows console |
-| Solo | `/-stat/solosw/NN` |
-| Select | `/-stat/selidx` |
-| Bank Left/Right | shift the 8-fader window by 8 |
-| Channel Left/Right | shift the window by 1 |
-| Scribble strips | channel name (upper), channel number (lower) |
-
-## Menu-bar app (macOS)
-
-`src/FaderBridge.App` wraps the bridge in a menu-bar app. It references the real
-`FaderBridge.Core` project and hosts `BridgeHost` in-process, so it runs exactly
-the same code as the console app — the surface, banking, and OSC paths are
-unchanged. A menu-bar app is also a proper GUI login session, which is what
-CoreMIDI needs, so the "don't run over SSH" caveat stops applying.
-
-```bash
-dotnet run --project src/FaderBridge.App   # run from source
-scripts/build-fader-bridge.sh              # -> dist/FaderBridge.app
-```
-
-The menu shows whether the bridge is running, whether the X32 is replying (a
-`/info` probe every 5s), and the MIDI port in use, plus Start/Stop and Quit.
-There is no window: the bridge has nothing to show that the console and the
-surface do not show better. It also **reconnects**: if the
-FaderPort is unplugged it waits and retries every 5s, reattaching when it
-returns. The bundle sets `LSUIElement`, so it lives only in the menu bar — no
-Dock icon. It reads `config.json` from `Contents/MacOS/` inside the bundle.
-
-The app is **unsigned**: it runs when built locally, but Gatekeeper will block it
-if it is zipped, moved, or downloaded without code-signing. Launch-at-login is not
-yet done.
+Three projects under `src/`: `Fader.Shared` (the OSC codec and the drawn-control
+toolkit), `FeedbackFader.Core` (the host side: engine supervision, persistence,
+logging, the X32 readers) and `FeedbackFader.App` (the menu-bar app and its
+window). Only the App produces a bundle.
 
 ## Icons
 
-Each product has its own mark, and the two are one family: a line that describes
-signal, with a fader cap on it. FaderBridge is two fader tracks tied by a span —
-a surface and a console, linked, each end carrying the other's move. Feedback
-Fader is a flat response bitten by one narrow notch, the cap sitting in the
-trough it just pulled down. Colour comes from `Tokens`: teal for the bridge,
-magenta for the catch, so the icons say the same thing the UI does.
+The mark is a flat response bitten by one narrow notch, the cap sitting in the
+trough it just pulled down. Colour comes from `Tokens`: magenta for the catch,
+so the icon says the same thing the UI does.
 
-The menu-bar icon is a **template image** — black plus alpha, flagged with
-`MacOSProperties.SetIsTemplateIcon` — so macOS inverts it for a dark menu bar and
+The menu-bar icon is a **template image** - black plus alpha, flagged with
+`MacOSProperties.SetIsTemplateIcon` - so macOS inverts it for a dark menu bar and
 tints it while the menu is open, rather than the app guessing at the theme. The
 Windows notification area has no such notion, and a black-on-transparent icon
-would disappear into a dark taskbar, so each app ships a coloured twin
+would disappear into a dark taskbar, so the app ships a coloured twin
 (`tray-color.png`) and picks between them at startup.
 
-`assets/` holds the SVG masters, the two `.icns` bundle icons and the two `.ico`
-files the Windows executables embed. Everything there is generated from geometry drawn on a
-44-unit grid — a 22 pt menu-bar icon at 2× — by `assets/make-icons.py`
+`assets/` holds the SVG masters, the `.icns` bundle icon and the `.ico` the
+Windows executable embeds. Everything there is generated from geometry drawn on a
+44-unit grid - a 22 pt menu-bar icon at 2x - by `assets/make-icons.py`
 (`pip install cairosvg pillow`); edit the geometry in that script rather than the
 rasters, and re-run it to rebuild every size. The `.icns` is written directly, so
 the script does not need `iconutil` and runs off a Mac too.
@@ -337,48 +213,20 @@ check still runs:
 dotnet run --project diagnostics/RingOut -- <x32-ip> 5
 ```
 
+
 ## Diagnostics
 
-Six, all runnable independently.
+Four, all runnable independently.
 
-**Bridge self-test** — no hardware needed. Runs the real bridge against a mock
-console over a real UDP socket:
-
-```bash
-dotnet run --project diagnostics/BridgeSelfTest
-```
-
-**FaderPort MIDI monitor** — prints every incoming message decoded, using the
-bridge's own parser:
-
-```bash
-dotnet run --project diagnostics/MidiMonitor                      # list ports and pick one
-dotnet run --project diagnostics/MidiMonitor -- "PreSonus FP8"    # open by exact name
-```
-
-Check that faders reach `0` and `16383` at the extremes, touch prints
-`TOUCH DOWN`/`UP` for the right strip, and nothing prints `(unmapped)`.
-
-Add `--test-output` to drive the surface *outward* first — it writes the scribble
-strips, chases the Select LEDs and sweeps fader 1, restoring everything after:
-
-```bash
-dotnet run --project diagnostics/MidiMonitor -- "PreSonus FP8" --test-output
-```
-
-This is the check that the surface is really in MCU mode and accepts display
-SysEx; passive monitoring cannot tell you either. Only the FaderPort is written
-to — there is no audio path.
-
-**X32 OSC path check** — four steps: `/info` round-trip, read fader, set fader
+**X32 OSC path check** - four steps: `/info` round-trip, read fader, set fader
 (channel 1 should physically move), read back:
 
 ```bash
 dotnet run --project diagnostics/OscPing -- <x32-ip>
 ```
 
-**Feedback engine smoke test** — spawns `fk-engine` via the supervisor and proves
-the whole C# ↔ engine path: telemetry flows, a placed notch round-trips, and a
+**Feedback engine smoke test** - spawns `fk-engine` via the supervisor and proves
+the whole C# <-> engine path: telemetry flows, a placed notch round-trips, and a
 locked notch survives an engine restart. No mics needed (it opens the default
 audio device):
 
@@ -386,7 +234,7 @@ audio device):
 dotnet run --project diagnostics/FkPing
 ```
 
-**X32 ring-out path check** — read-only: subscribes to the RTA, reports the peak
+**X32 ring-out path check** - read-only: subscribes to the RTA, reports the peak
 band mapped to a GEQ band, and reads GEQ bands to confirm they're flat. Changes
 nothing on the console:
 
@@ -394,9 +242,9 @@ nothing on the console:
 dotnet run --project diagnostics/RingOut -- <x32-ip> 5
 ```
 
-**Spectrum scope** — the engine's spectrum and the console RTA on one shared
-log-frequency axis, with engine↔RTA correlations marked (a ring seen on a mic
-*and* in the RTA at the same frequency — §6). Terminal form of the display:
+**Spectrum scope** - the engine's spectrum and the console RTA on one shared
+log-frequency axis, with engine<->RTA correlations marked (a ring seen on a mic
+*and* in the RTA at the same frequency). Terminal form of the display:
 
 ```bash
 dotnet run --project diagnostics/SpectrumScope -- <x32-ip>
@@ -404,44 +252,22 @@ dotnet run --project diagnostics/SpectrumScope -- <x32-ip>
 
 ## What's verified, and what isn't
 
-**Verified (89/89 self-test assertions, on real UDP):** OSC encoding is
-byte-for-byte spec-correct; fader scaling round-trips exactly with no creep;
-MCU scribble SysEx layout and offsets; fader-touch gating suppresses motor
-updates and resyncs on release; echo suppression stops the console's echo of our
-own move re-driving the motor; the inverted mute sense in both directions; bank
-windowing, including clamping at both ends and ignoring off-bank channels;
-recovery from a silent scene recall, without stomping a held fader; the
-master/bus layer routing and the Record-lamp toggle; transport→media commands;
-the whole-row scribble marquee and its display-override gate; feedback
-locked-notch persistence and the CSV log format; and the RTA blob decode, GEQ
-par↔dB maths, nearest-band lookup, and the headamp source mapping.
+**Verified by the self-test (`diagnostics/FeedbackSelfTest`, on real UDP):** OSC
+encoding is byte-for-byte spec-correct; locked-notch persistence and the CSV log
+format; the RTA blob decode, GEQ par<->dB maths, nearest-band lookup, and the
+headamp source mapping.
 
-The suite was mutation-tested — injecting a non-inverted mute and a disabled
-touch gate produced exactly the expected failures, so the assertions have teeth.
-
-**Verified against the live X32 Rack (firmware 2.07).** OSC read *and* write
-(`/info`, `/ch/NN/mix/fader`, `/main/st/mix/fader`); the CoreMIDI port name
-(`PreSonus FP8 Port 1`); the console driving the surface (mute lamps, banking);
-the RTA stream (`/batchsubscribe … /meters/15`, 100×int16, `dB = v/256`) — note
-the batchsubscribe alias must start with `/` or the reply is rejected; the GEQ on
-insert slots 5–7 reading flat (`/fx/N/par/NN`, 0.5 = 0 dB); and the headamp trap
-(`/ch/03/config/source` = 3 → `/headamp/002/gain`).
+**Verified against the live X32 Rack (firmware 2.07).** OSC read and write
+(`/info`, `/ch/NN/mix/fader`, `/main/st/mix/fader`); the RTA stream
+(`/batchsubscribe ... /meters/15`, 100xint16, `dB = v/256`) - note the
+batchsubscribe alias must start with `/` or the reply is rejected; the GEQ on
+insert slots 5-7 reading flat (`/fx/N/par/NN`, 0.5 = 0 dB); and the headamp trap
+(`/ch/03/config/source` = 3 -> `/headamp/002/gain`).
 
 **Verified end-to-end (C# ↔ engine, default audio device).** `fk-engine` builds
 with JUCE, passes audio through the detector untouched, and the supervisor round-
 trips control and telemetry, persists locked notches, and replays them across a
 restart. Proven by `FkPing`.
-
-**Verified against a real FaderPort 8 (Windows / WinMM).** The entire outbound
-path works — everything the bridge sends *to* the surface:
-
-- port enumeration and exact-name matching; the device reports as `PreSonus FP8`
-  (inputs also list `MIDIIN2 (PreSonus FP8)`, outputs `MIDIOUT2 (PreSonus FP8)`)
-- **motorised faders** move to commanded positions — so pitch-bend encoding is
-  right, and **no MCU host handshake is required** before the surface responds
-- **scribble strips** render text — standard MCU display SysEx at device ID
-  `0x14` is accepted, offsets and 7-character cells are correct
-- **button LEDs** light via note-on echo
 
 **Measured in a real room (2026-09-22, a studio: vocal mic, monitors in the room,
 X32 main fader as the gain control).** The first rig session that produced
@@ -478,106 +304,26 @@ to be metering the signal in the loop. The studio's dimensions were never
 measured, so the simulator has not been run against it; RT60 per octave is still
 unmeasured anywhere; and the music false-alarm test (Rule 5) was not run.
 
-**Not verified — still needs hardware.** The self-test ran against a *mock*
-console and a *fake* surface, which proves the logic is right given the protocol
-assumptions but cannot prove the assumptions match the devices. Outstanding:
-
-| Assumption | Risk | How you'll know |
-|---|---|---|
-| MCU note numbers *inbound* (mute 16–23, touch 104–111, …) | Medium | `MidiMonitor` — mislabelled or `(unmapped)` output |
-| Fader touch reports on notes 104–111 | Medium | `MidiMonitor` — no `TOUCH DOWN` when gripping a fader |
-| `/-stat/solosw/NN` and `/-stat/selidx` on Rack firmware | Low-medium | solo/select do nothing; `OscPing` can probe them |
-| `/ch/NN/...` fader, mix/on, config/name | Low | `OscPing` already exercises fader |
-| Surface → console direction on this Mac | Low | move fader 1, watch channel 1 move — not yet eyes-verified here |
-
-Touch reporting matters more than it looks: fader-touch gating is what stops
-incoming OSC fighting your hand. If those notes are wrong, the gating silently
-never engages.
-
-The table above is FaderBridge's. Feedback Fader has since been run on the
-Apollo, real microphones and a PA; what is proven and what is not, with the
-threshold each feature has to pass, is kept in
-[docs/TODO-AS-BUILT.md](docs/TODO-AS-BUILT.md), and every build's numbers in
-[docs/RESULTS.md](docs/RESULTS.md). The findings listed above this table are
-the record of August and September and are not maintained.
-
-## Open decisions
-
-- **Transport buttons are deliberately unmapped.** An X32 Rack has no transport
-  of its own — the only candidate is the USB recorder, whose OSC paths vary
-  between firmware versions. Rather than guess, the bridge logs the press. Tell
-  me what you want Play/Stop/Record to do and it's a few lines each.
-- **Scribble-strip colour** is not implemented (it was flagged as a stretch
-  goal). The X32 exposes `/ch/NN/config/color`; the FaderPort's colour protocol
-  isn't documented by PreSonus.
-
-## Master / bus layer
-
-The console's master and mix-bus levels live on a second **layer** of the eight
-motor faders, instead of the FaderPort's master encoder. `MidiMonitor` showed
-that encoder is not an absolute fader — it rests at `0` and only rises while
-turning, with no direction — so routing it to `/main` drove the master to zero
-at rest. Real motor faders are a far better fit.
-
-The FaderPort's own Master button sends no MIDI (nor does the Session Navigator
-encoder's push), so the layer is toggled by the **Record (●)** button instead —
-a real button gives an instant, lamp-lit switch. Press it to put Main LR on
-strip 1 and mix buses 1–7 on strips 2–8 (Record lamp lit); press again for
-channels. Mute/Solo/Select stay channel-only. Buses 8–16 are not surfaced yet.
-
-The transport buttons, which an X32 has no use for, drive the Mac's music player
-instead (Apple Music, or Spotify if it is running): ◀◀/▶▶ previous/next track,
-▶ play/pause, ■ pause. This uses AppleScript, so macOS asks for Automation
-permission the first time.
-
-## Library choice
-
-`managed-midi` (`Commons.Music.Midi`). On macOS it binds
-`CoreMidiApi.CoreMidiAccess` **explicitly**; on Windows it uses
-`MidiAccessManager.Default`, which resolves to `WinMMMidiAccess`.
-
-RtMidi.Core was rejected: version 1.0.53 bundles a single `librtmidi.dylib` that
-is x86_64-only (Mach-O cputype `0x01000007`, no arm64 slice), so on Apple
-Silicon it fails to load unless the whole app is forced under Rosetta.
-managed-midi ships **no** native binaries — it P/Invokes the platform's own MIDI
-framework, so it runs native on Apple Silicon, Intel, and Windows alike.
-
-`MidiAccessManager.Default` is avoided *on macOS* because it can resolve to the
-RtMidi backend there and reintroduce that dependency. `MidiBackend` falls back to
-RtMidi only if CoreMIDI fails outright, in which case: `brew install rtmidi`.
-
-Scribble strips need SysEx output. The WinMM backend exposes `midiOutLongMsg`
-and `midiOutPrepareHeader`, so this works on Windows.
+Feedback Fader has since been run on the Apollo, real microphones and a PA;
+what is proven and what is not, with the threshold each feature has to pass, is
+kept in [docs/TODO-AS-BUILT.md](docs/TODO-AS-BUILT.md), and every build's
+numbers in [docs/RESULTS.md](docs/RESULTS.md). The findings above are the
+record of August and September and are not maintained.
 
 ## Layout
 
 ```
-src/Fader.Shared/               what both products use and neither owns
+src/Fader.Shared/               the OSC codec and the drawn-control toolkit
   Osc/OscMessage.cs             hand-rolled OSC 1.0 codec, incl. bundles + blobs
   Ui/Tokens.cs                  colours, type, spacing
   Ui/Controls.cs                ArmSwitch, Led, and the panel-building helpers
   Ui/HoldButton.cs              TapButton + hold-to-confirm
   Ui/LevelMeter.cs              metering with ballistics
 
-src/FaderBridge.Core/           the bridge
-  Program.cs                    startup, config load, graceful shutdown
-  BridgeConfig.cs               config.json
-  Bridge/BridgeHost.cs          both directions, touch gating, banking, layers
-  Bridge/FaderScaling.cs        MCU 14-bit <-> X32 float  (tune the taper here)
-  Midi/McuProtocol.cs           note map, motor/LED/scribble/marquee construction
-  Midi/FaderPortDevice.cs       MIDI in/out
-  Osc/X32Client.cs              UDP + /xremote keepalive
-  Osc/X32Address.cs             channel/bus/main address construction
-  Osc/X32Headamp.cs             the headamp/source trap (§7)
-src/FaderBridge.App/            FaderBridge.app (Avalonia tray, no window)
-  BridgeController.cs           host the bridge in-process, report status
-  NowPlaying.cs                 the scribble-strip marquee
-  MediaKeys.cs                  transport -> Apple Music / Spotify
-
-src/FeedbackFader.Core/         Feedback Fader's host side
+src/FeedbackFader.Core/         the host side
   X32Rta.cs                     100-band RTA subscribe + decode
   X32Geq.cs                     31-band GEQ addressing + par<->dB
-  RingOutSession.cs             RTA peak -> GEQ cut
+  RingOutSession.cs             RTA peak -> GEQ cut (not connected to the app)
   X32ChannelMeters.cs           per-channel metering for the signal-path check
   Feedback/FkEngineClient.cs    loopback OSC to fk-engine
   Feedback/EngineSupervisor.cs  spawn / health-check / restart
@@ -595,29 +341,23 @@ src/FeedbackFader.App/          FeedbackFader.app (Avalonia tray + window)
   Program.cs                    entry point + the headless render harnesses
 
 engine/                         the headless C++ audio engine (JUCE)
-  Source/FeedbackDetector.h     spectral detector (ported verbatim)
-  Source/NotchBank.h            biquad notch bank (ported verbatim)
+  Source/FeedbackDetector.h     spectral detector
+  Source/NotchBank.h            biquad notch bank
+  Source/RescueDuck.h           the broadband rescue
   Source/AudioEngine.h          processBlock as a Core Audio callback
   Source/EngineMain.cpp         device + OSC wiring, headless
-  tests/test_detector.cpp       the detector against synthetic rooms
-  tests/test_loop.cpp           the closed-loop room simulator
+  tests/                        unit tests, fuzz, the C ABI for the simulator
+  tests/sim/                    the closed-loop room simulator and the gate
 
-diagnostics/
-  bridge:   BridgeSelfTest/  MidiMonitor/  OscPing/
-  feedback: FeedbackSelfTest/  FkPing/  RingOut/  SpectrumScope/
+diagnostics/                    FeedbackSelfTest/  FkPing/  OscPing/  RingOut/  SpectrumScope/
+scripts/                        the ship gate, the bundle build, the live tools
+results/ledger.jsonl            every test result, by build
 docs/
   adr/0001-...                  architecture decision record
   fk-osc-interface.md           the engine <-> app OSC contract
+  TESTING.md, RESULTS.md        the standard tests and every build's numbers
+  TODO-AS-BUILT.md              what was built, what is left, pass thresholds
 ```
 
-The C# diagnostics reference each product's real source, so a clean diagnostic
-run means that product's own code is what passed. The engine's DSP headers are
-byte-for-byte copies of the FeedbackKiller originals (same SHA).
-
-## Tuning
-
-`FaderScaling` is currently a linear position map. X32 fader floats are not
-linear in dB (`0.0` = −inf, `0.75` ≈ 0 dB, `1.0` = +10 dB). If the FaderPort's
-markings don't line up with the console's readout, shape the curve there — and
-invert the same shaping in `X32ToMcu`, or values will creep on every round trip.
-The self-test asserts that inverse holds.
+The C# diagnostics reference the real source, so a clean diagnostic run means
+the shipped code is what passed.
