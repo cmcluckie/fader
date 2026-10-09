@@ -65,13 +65,16 @@ internal static class Program
             log.Write(new FkDetection(1, 800.0f, -30.0f), applied: false, seconds: 15.0);
             log.Dispose();
 
+            // Ten columns since the capture work: detected and suppressed are
+            // separate facts, and the gate, the refusal, the cut at that frequency,
+            // the nearest filter and the age all travel with the row.
             var lines = File.ReadAllLines(log.Path);
-            Check("csv header matches the plugin's",
-                lines.Length >= 1 && lines[0] == "seconds,channel,frequency_hz,level_db,applied");
+            Check("csv header is the ten-column detection row",
+                lines.Length >= 1 && lines[0] == "seconds,channel,frequency_hz,level_db,applied,gate,filter,cut_here_db,nearest_notch_hz,age_ms");
             Check("csv logs a LEAD detection as applied",
-                lines.Length >= 2 && lines[1] == "12.345,LEAD,1234.56,-20.50,1");
+                lines.Length >= 2 && lines[1].StartsWith("12.345,LEAD,1234.56,-20.50,1,") && lines[1].Split(',').Length == 10);
             Check("csv logs a BGV detection as flagged-only",
-                lines.Length >= 3 && lines[2] == "15.000,BGV,800.00,-30.00,0");
+                lines.Length >= 3 && lines[2].StartsWith("15.000,BGV,800.00,-30.00,0,") && lines[2].Split(',').Length == 10);
 
             var audio = new FkAudioStore(Path.Combine(dir, "audio.json"));
             Check("empty audio store has no inputs", audio.Load().Inputs.Length == 0);
