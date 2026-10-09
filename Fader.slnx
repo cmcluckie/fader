@@ -1,9 +1,7 @@
 <Solution>
   <Folder Name="/diagnostics/">
-    <Project Path="diagnostics/AutoRingOut/AutoRingOut.csproj" />
     <Project Path="diagnostics/FeedbackSelfTest/FeedbackSelfTest.csproj" />
     <Project Path="diagnostics/FkPing/FkPing.csproj" />
-    <Project Path="diagnostics/OscPing/OscPing.csproj" />
     <Project Path="diagnostics/RingOut/RingOut.csproj" />
     <Project Path="diagnostics/SpectrumScope/SpectrumScope.csproj" />
   </Folder>

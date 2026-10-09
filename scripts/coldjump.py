@@ -16,7 +16,10 @@ The jump counts if G0 and G0' agree within --agree dB, and its margin is quoted
 against both. Uses scripts/ringout.py for every move, so the kill switch, the
 fader ceiling and the restore are the same as everywhere else.
 
-    coldjump.py 20 22        # one cycle at each margin
+    coldjump.py --go 20 22   # one cycle at each margin
+
+Rule Zero: every cycle moves X32 faders, so it refuses without --go, which means
+Chris said go for this run; the flag is passed to every ringout.py it starts.
 """
 import argparse, glob, json, os, subprocess, sys, time
 import numpy as np
@@ -28,7 +31,7 @@ OUT = os.path.expanduser("~/Documents/FeedbackKiller/ringout")
 
 def run(args):
     before = set(glob.glob(OUT + "/*"))
-    p = subprocess.run([sys.executable, os.path.join(HERE, "ringout.py")] + args, capture_output=True, text=True)
+    p = subprocess.run([sys.executable, os.path.join(HERE, "ringout.py"), "--go"] + args, capture_output=True, text=True)
     new = sorted(set(glob.glob(OUT + "/*")) - before)
     d = new[-1] if new else None
     js = json.load(open(os.path.join(d, "summary.json"))) if d and os.path.exists(os.path.join(d, "summary.json")) else None
@@ -57,7 +60,10 @@ def main():
     ap.add_argument("--guess", type=float, default=-6.0, help="where the ring point probably is (channel fader dB, main at 0)")
     ap.add_argument("--agree", type=float, default=3.0)
     ap.add_argument("--no-rescue", action="store_true")
+    ap.add_argument("--go", action="store_true", help="Rule Zero: Chris has said go for this run; nothing moves without it")
     a = ap.parse_args()
+    if not a.go:
+        sys.exit("Rule Zero: a cold jump moves X32 faders (channel and main). Run it with --go only when Chris has said go for this run.")
     guess = a.guess
     print(f"{'over':>5} | {'edge before':>11} {'edge after':>10} | {'ch9':>5} {'main':>5} | {'loudest bin':>22} | {'detections':>10} {'rescues':>7} {'killed':>6} | verdict")
     for over in a.over:

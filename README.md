@@ -15,6 +15,31 @@ Until October 2026 this repository also held **FaderBridge**, a FaderPort 8 to
 X32 Rack bridge. The FaderPort talks to Logic natively now; the bridge was
 removed on 2026-10-09 and lives on in the git history.
 
+## Rule Zero: the rig is locked
+
+The UAD Console session and the X32 scene are production and took two years to
+get right. Nothing in this repository changes them, and nothing in it is run
+against them without Chris saying go for that run. The app is **read-only
+against the X32 by default**: it subscribes to the RTA and asks the meters, and
+that is all. Everything that can write to the console, or make a sound in the
+room, is listed here. Each is off until used and fires only from an explicit
+click or flag, never on its own.
+
+| What | Where | What it does to the rig | How it fires |
+|---|---|---|---|
+| Check signal path | Setup | writes nothing on the X32; plays a short tone through the engine's return, which is heard in the room if the desk is up | one click |
+| Ring-out sweep | `scripts/ringout.py` | moves one channel fader (`--fader`, default Ch 9) and the main fader and puts both back at the end; drives the live engine's recorder, bypass and rescue duck for the run | `--go` on the command line, meaning Chris said go for this run; it refuses otherwise (`--dry-run` moves nothing) |
+| Cold jump | `scripts/coldjump.py` | the same, several times over | `--go`, passed on to every sweep it starts |
+
+Not connected: the GEQ ring-out (`RingOutSession`, `X32Geq`) can address the
+X32's insert GEQs, but nothing in the app calls it. If it is ever wired it goes
+in this table first, off by default.
+
+Two tools that moved faders to prove the OSC path (`OscPing`, `AutoRingOut`)
+were removed on 2026-10-09 under this rule. Where the design needs a Console or
+X32 change, the change is written up as a checklist for Chris to make himself,
+and the software stops there.
+
 ## Prerequisites
 
 - .NET 8 SDK or newer
@@ -216,14 +241,7 @@ dotnet run --project diagnostics/RingOut -- <x32-ip> 5
 
 ## Diagnostics
 
-Four, all runnable independently.
-
-**X32 OSC path check** - four steps: `/info` round-trip, read fader, set fader
-(channel 1 should physically move), read back:
-
-```bash
-dotnet run --project diagnostics/OscPing -- <x32-ip>
-```
+Three, all runnable independently. None of them writes to the console.
 
 **Feedback engine smoke test** - spawns `fk-engine` via the supervisor and proves
 the whole C# <-> engine path: telemetry flows, a placed notch round-trips, and a
@@ -257,8 +275,9 @@ encoding is byte-for-byte spec-correct; locked-notch persistence and the CSV log
 format; the RTA blob decode, GEQ par<->dB maths, nearest-band lookup, and the
 headamp source mapping.
 
-**Verified against the live X32 Rack (firmware 2.07).** OSC read and write
-(`/info`, `/ch/NN/mix/fader`, `/main/st/mix/fader`); the RTA stream
+**Verified against the live X32 Rack (firmware 2.07), in September, before
+Rule Zero.** OSC read and write (`/info`, `/ch/NN/mix/fader`,
+`/main/st/mix/fader`; the tool that wrote them is gone); the RTA stream
 (`/batchsubscribe ... /meters/15`, 100xint16, `dB = v/256`) - note the
 batchsubscribe alias must start with `/` or the reply is rejected; the GEQ on
 insert slots 5-7 reading flat (`/fx/N/par/NN`, 0.5 = 0 dB); and the headamp trap
@@ -271,7 +290,8 @@ restart. Proven by `FkPing`.
 
 **Measured in a real room (2026-09-22, a studio: vocal mic, monitors in the room,
 X32 main fader as the gain control).** The first rig session that produced
-numbers rather than impressions. `diagnostics/AutoRingOut` drove the console's
+numbers rather than impressions. A sweep tool (since removed; `scripts/ringout.py`
+is its successor and refuses to move a fader without `--go`) drove the console's
 main fader in 1 dB steps and watched the console's own RTA, alternating bypassed
 and guarded runs.
 
@@ -349,7 +369,7 @@ engine/                         the headless C++ audio engine (JUCE)
   tests/                        unit tests, fuzz, the C ABI for the simulator
   tests/sim/                    the closed-loop room simulator and the gate
 
-diagnostics/                    FeedbackSelfTest/  FkPing/  OscPing/  RingOut/  SpectrumScope/
+diagnostics/                    FeedbackSelfTest/  FkPing/  RingOut/  SpectrumScope/
 scripts/                        the ship gate, the bundle build, the live tools
 results/ledger.jsonl            every test result, by build
 docs/

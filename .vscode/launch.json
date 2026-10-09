@@ -2,13 +2,22 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "5 - Ping X32 (MOVES CHANNEL 1 FADER)",
+      "name": "Feedback Fader (from source)",
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "build",
-      "program": "${workspaceFolder}/diagnostics/OscPing/bin/Debug/net8.0/OscPing.dll",
-      "args": ["192.168.9.113"],
-      "cwd": "${workspaceFolder}/diagnostics/OscPing",
+      "program": "${workspaceFolder}/src/FeedbackFader.App/bin/Debug/net8.0/FeedbackFader.dll",
+      "cwd": "${workspaceFolder}/src/FeedbackFader.App",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Feedback self-test (no hardware; nothing on the desk is written)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "${workspaceFolder}/diagnostics/FeedbackSelfTest/bin/Debug/net8.0/FeedbackSelfTest.dll",
+      "cwd": "${workspaceFolder}/diagnostics/FeedbackSelfTest",
       "console": "integratedTerminal",
       "stopAtEntry": false
     }

@@ -17,6 +17,9 @@ engine's own trim in place of a desk fader.
     ringout.py --mode guard --dry-run     # everything but the fader moves
 
 Safety, in order:
+  - Rule Zero: the X32 is production and locked. Nothing moves without --go,
+    which means Chris said go for THIS run (--dry-run needs no --go). The flag
+    is written into summary.json so the ledger shows who authorised a sweep.
   - only ONE fader moves (--fader, default /ch/09), main is parked at --main-db
   - a hard ceiling on that fader (--max-db)
   - a kill switch on the microphone: any bin at or above --kill-db, or at or
@@ -66,8 +69,8 @@ def parse(d):
 
 class X32:
     """Read and write fader positions. The X32 answers a bare address with its value."""
-    def __init__(self, dry):
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.s.settimeout(1.5); self.dry = dry
+    def __init__(self, dry, go=False):
+        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self.s.settimeout(1.5); self.dry = dry; self.go = go
 
     def get(self, addr):
         for _ in range(3):
@@ -81,6 +84,7 @@ class X32:
     def set(self, addr, value):
         if self.dry:
             print(f"      [dry] {addr} <- {value:.4f} ({fader_db(value):+.1f} dB)"); return
+        if not self.go: raise RuntimeError(f"Rule Zero: --go was not given; refusing to write {addr}")
         self.s.sendto(osc(addr, float(value)), X32_ADDR)
         # read back: a fader that did not move is a fault, not a detail
         for _ in range(5):
@@ -209,14 +213,19 @@ def main():
     ap.add_argument("--rings", type=int, default=12, help="guard mode: stop after this many rings")
     ap.add_argument("--settle-s", type=float, default=3.0)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--go", action="store_true",
+                    help="Rule Zero: Chris has said go for THIS run. Without it (or --dry-run) nothing is sent to the X32 or the engine")
     ap.add_argument("--no-rescue", action="store_true", help="switch the engine's rescue duck off for this run (A/B)")
     ap.add_argument("--use-capture", action="store_true",
                     help="the app's Capture is on: meter from its recording and leave its recorder alone")
     a = ap.parse_args()
+    if not a.dry_run and not a.go:
+        sys.exit(f"Rule Zero: this sweep moves {a.fader} and {a.main} on the X32 and drives the live engine.\n"
+                 "Run it with --go only when Chris has said go for this run, or with --dry-run.")
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     out = os.path.join(OUT, f"{stamp}-{a.mode}"); os.makedirs(out, exist_ok=True)
-    x32 = X32(a.dry_run); eng = Engine()
+    x32 = X32(a.dry_run, a.go); eng = Engine()
     try:
         print("   engine: " + open(os.path.expanduser("~/Documents/FeedbackKiller/engine-build.txt")).read().replace("\n", "; ").strip("; "))
     except OSError:
@@ -368,7 +377,7 @@ def main():
                 print(f"\n   ceiling {a.max_db:+.1f} dB reached with no ring"); break
         if rescues:
             print(f"\n   rescue duck: {len(rescues)} action(s), deepest {min(r['depth'] for r in rescues):.0f} dB")
-        summary = dict(mode=a.mode, dry_run=a.dry_run, rings=rings, rescues=rescues, killed=killed, fader=a.fader, main_db=a.main_db,
+        summary = dict(mode=a.mode, dry_run=a.dry_run, go=a.go, rings=rings, rescues=rescues, killed=killed, fader=a.fader, main_db=a.main_db,
                        last_db=cur_db, stamp=stamp)
         json.dump(summary, open(os.path.join(out, "summary.json"), "w"), indent=1, default=float)
         if rings:
