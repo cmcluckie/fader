@@ -1,3 +1,7 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Text.RegularExpressions;
+using Fader.Shared;
 using FeedbackFader;
 
 namespace Fader.Diagnostics.FeedbackSelfTest;
@@ -5,7 +9,8 @@ namespace Fader.Diagnostics.FeedbackSelfTest;
 /// <summary>
 /// Feedback Fader's offline self-test: the parts of the host side that are pure
 /// enough to check without an engine, a console, or a room - persistence, the
-/// CSV logs, the X32 GEQ/RTA codecs, and engine↔RTA correlation.
+/// CSV logs, the X32 GEQ/RTA codecs, engine↔RTA correlation, and the desk
+/// bypass against a fake X32 on loopback (the real one is production: Rule Zero).
 ///
 /// These checks used to live in the bridge's self-test, back when both products
 /// were one binary. Nothing about them was ever about MIDI.
@@ -19,7 +24,7 @@ internal static class Program
     private static int _passed;
     private static int _failed;
 
-    private static int Main()
+    private static async Task<int> Main()
     {
         Console.WriteLine("Feedback Fader self-test");
         Console.WriteLine("========================\n");
@@ -27,6 +32,7 @@ internal static class Program
         Persistence();
         RtaAndGeq();
         Correlation();
+        await DeskBypass();
 
         Console.WriteLine($"\n{_passed} passed, {_failed} failed");
         return _failed == 0 ? 0 : 1;
@@ -147,6 +153,133 @@ internal static class Program
 
         Check("NearestRtaBand(1000) is ~1000 Hz",
             Math.Abs(X32Rta.BandHz(Correlator.NearestRtaBand(1000f)) - 1000f) < 40f);
+    }
+
+    /// <summary>
+    /// The one X32 write the app has, proven on a desk that cannot be hurt. The
+    /// fake answers a bare /ch/NN/mix/on with the value and takes an int as a
+    /// set, as the X32 does; it can also be told to ignore sets, which is what
+    /// "the read-back must decide" is for.
+    /// </summary>
+    private static async Task DeskBypass()
+    {
+        Section("Desk bypass (fake X32 on loopback)");
+
+        Check("mute address is /ch/01/mix/on", X32Mutes.Address(1) == "/ch/01/mix/on");
+        Check("mute address pads to two digits", X32Mutes.Address(12) == "/ch/12/mix/on");
+
+        Check("channels parse space-separated", FeedbackController.ParseChannels("1 2") is [1, 2]);
+        Check("channels parse comma-separated", FeedbackController.ParseChannels("11, 12") is [11, 12]);
+        Check("blank parses as none", FeedbackController.ParseChannels("  ") is { Length: 0 });
+        Check("channel 0 rejected", FeedbackController.ParseChannels("0 2") is null);
+        Check("channel 33 rejected", FeedbackController.ParseChannels("33") is null);
+        Check("a repeated channel rejected", FeedbackController.ParseChannels("1 1") is null);
+        Check("words rejected", FeedbackController.ParseChannels("lead") is null);
+
+        var toDesk = FeedbackController.SwapPlan(true, new[] { 1, 2 }, new[] { 11, 12 });
+        Check("to the desk: spares open before the guarded channels mute",
+            toDesk is [(11, true), (12, true), (1, false), (2, false)]);
+        var back = FeedbackController.SwapPlan(false, new[] { 1, 2 }, new[] { 11, 12 });
+        Check("back to the guard: guarded channels open before the spares mute",
+            back is [(1, true), (2, true), (11, false), (12, false)]);
+
+        using var desk = new FakeDesk();
+        using var mutes = new X32Mutes(IPAddress.Loopback, desk.Port);
+
+        Check("reads an open channel", await mutes.ReadOpenAsync(1) == true);
+        Check("reads a muted channel", await mutes.ReadOpenAsync(11) == false);
+
+        desk.NoiseBeforeReply = true;
+        Check("an unrelated reply on the socket is not mistaken for the answer", await mutes.ReadOpenAsync(11) == false);
+        desk.NoiseBeforeReply = false;
+
+        Check("a mute is written and read back", await mutes.SetOpenAsync(1, false) && desk.On[1] == 0);
+        Check("an open is written and read back", await mutes.SetOpenAsync(1, true) && desk.On[1] == 1);
+
+        desk.IgnoreSets = true;
+        Check("a set the desk did not take is reported, not assumed", !await mutes.SetOpenAsync(2, false) && desk.On[2] == 1);
+        desk.IgnoreSets = false;
+
+        desk.Sets.Clear();
+        foreach (var (ch, open) in toDesk) await mutes.SetOpenAsync(ch, open);
+        Check("the swap leaves the spares open and the guarded channels muted",
+            desk.On[11] == 1 && desk.On[12] == 1 && desk.On[1] == 0 && desk.On[2] == 0);
+        Check("the desk saw the writes in the planned order",
+            desk.Sets.Select(s => (s.Channel, s.Value == 1)).SequenceEqual(toDesk));
+        Check("nothing but the four named channels was written",
+            desk.Sets.All(s => s.Channel is 1 or 2 or 11 or 12));
+
+        foreach (var (ch, open) in back) await mutes.SetOpenAsync(ch, open);
+        Check("the swap back restores every mute", desk.On[1] == 1 && desk.On[2] == 1 && desk.On[11] == 0 && desk.On[12] == 0);
+
+        using var nobody = new X32Mutes(IPAddress.Loopback, FreePort());
+        Check("no desk answers -> unknown, within a second", await nobody.ReadOpenAsync(1) is null);
+    }
+
+    private static int FreePort()
+    {
+        using var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        return ((IPEndPoint) probe.Client.LocalEndPoint!).Port;
+    }
+
+    /// <summary>Just enough X32 to answer /ch/NN/mix/on: channels 1-10 open, the rest muted.</summary>
+    private sealed class FakeDesk : IDisposable
+    {
+        private readonly UdpClient _udp = new(new IPEndPoint(IPAddress.Loopback, 0));
+        private readonly CancellationTokenSource _cts = new();
+        private static readonly Regex Mute = new(@"^/ch/(\d\d)/mix/on$");
+
+        public readonly Dictionary<int, int> On = new();
+        public readonly List<(int Channel, int Value)> Sets = new();
+        public bool IgnoreSets;
+        public bool NoiseBeforeReply;
+
+        public FakeDesk()
+        {
+            for (var c = 1; c <= 32; c++) On[c] = c <= 10 ? 1 : 0;
+            _ = Task.Run(Loop);
+        }
+
+        public int Port => ((IPEndPoint) _udp.Client.LocalEndPoint!).Port;
+
+        private async Task Loop()
+        {
+            try
+            {
+                while (!_cts.IsCancellationRequested)
+                {
+                    var r = await _udp.ReceiveAsync(_cts.Token);
+                    foreach (var m in OscMessage.ParsePacket(r.Buffer, r.Buffer.Length))
+                    {
+                        var match = Mute.Match(m.Address);
+                        if (!match.Success) continue;
+                        var ch = int.Parse(match.Groups[1].Value);
+                        if (m.Arguments is [int v])
+                        {
+                            lock (Sets) Sets.Add((ch, v));
+                            if (!IgnoreSets) On[ch] = v;
+                            continue;   // the X32 does not acknowledge a set
+                        }
+                        if (NoiseBeforeReply)
+                        {
+                            var noise = new OscMessage("/ch/06/mix/on", 1).ToBytes();
+                            await _udp.SendAsync(noise, noise.Length, r.RemoteEndPoint);
+                        }
+                        var reply = new OscMessage(m.Address, On[ch]).ToBytes();
+                        await _udp.SendAsync(reply, reply.Length, r.RemoteEndPoint);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (ObjectDisposedException) { }
+            catch (SocketException) { }
+        }
+
+        public void Dispose()
+        {
+            _cts.Cancel();
+            _udp.Dispose();
+        }
     }
 
     // ------------------------------------------------------------------ output

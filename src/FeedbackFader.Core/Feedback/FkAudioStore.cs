@@ -27,7 +27,13 @@ public sealed record AudioSelection(
     // tying Feedback Fader to the FaderPort product. It is Feedback Fader's own
     // setting now: the console is something IT talks to, and the two products no
     // longer need to be installed together.
-    string? ConsoleAddress = null)
+    string? ConsoleAddress = null,
+    // The one-click desk bypass (README, Rule Zero): the X32 channels the guarded
+    // microphones land on, and the muted spares carrying the same mics straight
+    // from the Console, in the same order. Both empty = the feature is hidden
+    // and the app never writes a mute. Set in Setup, by Chris.
+    int[]? DeskChannels = null,
+    int[]? BypassChannels = null)
 {
     public static readonly AudioSelection Default = new(null, Array.Empty<int>(), false, null, null);
 }

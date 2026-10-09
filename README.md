@@ -28,6 +28,7 @@ click or flag, never on its own.
 | What | Where | What it does to the rig | How it fires |
 |---|---|---|---|
 | Check signal path | Setup | writes nothing on the X32; plays a short tone through the engine's return, which is heard in the room if the desk is up | one click |
+| Bypass to desk / Back to guard | Show | **the only X32 write in the app.** Sets `/ch/NN/mix/on` on the channels named in Setup, and nothing else: to the desk it opens the bypass channels (e.g. Ch 11/12) and then mutes the guarded ones (e.g. Ch 1/2); back is the reverse, guarded open first. Each write is read back from the desk and logged to the app log; the button then shows what the desk reported, not what was sent | hold the button one second; the hint names the exact channels. Hidden until both channel lists are filled in. Never fires on its own: not on engine death, not at start-up, not at quit |
 | Ring-out sweep | `scripts/ringout.py` | moves one channel fader (`--fader`, default Ch 9) and the main fader and puts both back at the end; drives the live engine's recorder, bypass and rescue duck for the run | `--go` on the command line, meaning Chris said go for this run; it refuses otherwise (`--dry-run` moves nothing) |
 | Cold jump | `scripts/coldjump.py` | the same, several times over | `--go`, passed on to every sweep it starts |
 
@@ -188,6 +189,18 @@ one unmute from recovery. If the engine stops, the menu reads **"engine down —
 audio bypassed"** — but the engine *is* the pass-through, so a dead engine is a
 silent channel until you unmute the spare: that label is a warning, not a
 bypass.
+
+The app can do that unmute for you, from one hold. In Setup, beside the console
+address, enter the **desk channels** the guarded mics land on (`1 2`) and the
+**bypass channels** carrying the same mics straight from the Console (`11 12`),
+in the same order. Show then gains a **Bypass to desk** hold button whose hint
+names exactly what it will open and mute; after the swap it reads the mutes back
+and reports what the desk says, and the guard pill reads **ON THE DESK** until
+**Back to guard** is held. It is the only thing the app ever writes on the
+console (see Rule Zero above), it never fires on its own, and it has not yet
+been tried against the real desk: the swap is proven on a fake X32 on loopback
+by `diagnostics/FeedbackSelfTest`, and the first real use is Chris's, on his go,
+after a backup.
 
 ### Controls and the workflow
 

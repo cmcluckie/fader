@@ -17,8 +17,8 @@ namespace Fader.Shared.Ui;
 /// </summary>
 public sealed class HoldButton : Control
 {
-    private readonly string _label;
-    private readonly string _hint;
+    private string _label;
+    private string _hint;
     private readonly IBrush _accent;
     private readonly double _holdSeconds;
 
@@ -38,6 +38,21 @@ public sealed class HoldButton : Control
     }
 
     public event Action? Fired;
+
+    /// <summary>The state, in capitals, same rule as <see cref="TapButton"/>: a
+    /// button that can mean two things says which one it is right now.</summary>
+    public string Label
+    {
+        get => _label;
+        set { _label = value.ToUpperInvariant(); InvalidateMeasure(); InvalidateVisual(); }
+    }
+
+    /// <summary>The small line under the label: what holding will DO.</summary>
+    public string Hint
+    {
+        get => _hint;
+        set { _hint = value; InvalidateMeasure(); InvalidateVisual(); }
+    }
 
     private string LabelText => _label;
     private string HintText => _hint;

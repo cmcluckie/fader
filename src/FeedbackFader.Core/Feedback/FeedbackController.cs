@@ -51,6 +51,9 @@ public sealed class FeedbackController : IAsyncDisposable
     private string? _currentDevice;
     private string? _selectedDevice;
     private string? _consoleAddress;
+    private int[] _deskChannels = Array.Empty<int>();     // X32 channels fed through the engine
+    private int[] _bypassChannels = Array.Empty<int>();   // their muted spares straight from the Console, pairwise
+    private int _deskBusy;                                // one desk read or swap at a time
     private volatile bool _pendingReplay;
     private volatile bool _allowPersist;
 
@@ -77,6 +80,9 @@ public sealed class FeedbackController : IAsyncDisposable
         _attack = Math.Clamp(audio.Attack, 0, 2);
         _floorAuto = audio.FloorAuto;
         _consoleAddress = audio.ConsoleAddress;
+        var desk = audio.DeskChannels ?? Array.Empty<int>();
+        var bypass = audio.BypassChannels ?? Array.Empty<int>();
+        if (desk.Length == bypass.Length && !desk.Intersect(bypass).Any()) { _deskChannels = desk; _bypassChannels = bypass; }
 
         _supervisor = new EngineSupervisor(enginePath, device ?? audio.Device);
         _store = new FkNotchStore(Path.Combine(dataDir, "notches.json"));
@@ -342,6 +348,181 @@ public sealed class FeedbackController : IAsyncDisposable
 
     public event Action? ConsoleAddressChanged;
 
+    // ---- the desk bypass: the one X32 write ----------------------------------
+    /// <summary>
+    /// The X32 channels the guarded microphones land on (through the engine), and
+    /// the muted spares carrying the same microphones straight from the Console,
+    /// pairwise. Empty until Chris fills them in, and the feature stays hidden
+    /// until then. README, Rule Zero: the mute swap is the only thing this app
+    /// ever writes on the desk, and only from a hold on Show.
+    /// </summary>
+    public IReadOnlyList<int> DeskChannels { get { lock (_lock) { return _deskChannels; } } }
+    public IReadOnlyList<int> BypassChannels { get { lock (_lock) { return _bypassChannels; } } }
+
+    public bool DeskBypassConfigured => TryDeskSetup(out _, out _, out _);
+
+    /// <summary>"1 2" or "1,2" to [1, 2]; null when anything in it is not a channel 1..32, or repeats.</summary>
+    public static int[]? ParseChannels(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return Array.Empty<int>();
+        var list = new List<int>();
+        foreach (var part in text.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!int.TryParse(part, out var ch) || ch < 1 || ch > 32 || list.Contains(ch)) return null;
+            list.Add(ch);
+        }
+        return list.ToArray();
+    }
+
+    /// <summary>
+    /// Returns true if both lists parsed, match in length and share no channel;
+    /// nothing is kept otherwise. Two empty lists switch the feature off.
+    /// </summary>
+    public bool SetDeskBypassChannels(string? deskText, string? bypassText)
+    {
+        var desk = ParseChannels(deskText);
+        var bypass = ParseChannels(bypassText);
+        if (desk is null || bypass is null || desk.Length != bypass.Length || desk.Intersect(bypass).Any()) return false;
+        lock (_lock) { _deskChannels = desk; _bypassChannels = bypass; }
+        DeskBypassState = DeskState.Unknown;
+        SaveAudio();
+        DeskBypassChanged?.Invoke();
+        return true;
+    }
+
+    /// <summary>What the desk's mutes said when last read; never assumed from what was sent.</summary>
+    public DeskState DeskBypassState { get; private set; } = DeskState.Unknown;
+
+    /// <summary>One line for the operator about the last read or swap.</summary>
+    public string DeskMessage { get; private set; } = "";
+
+    public event Action? DeskBypassChanged;
+
+    /// <summary>Read the mutes (reading is always allowed) and say which path is live. Writes nothing.</summary>
+    public async Task RefreshDeskStateAsync()
+    {
+        if (!TryDeskSetup(out var ip, out var desk, out var bypass)) return;
+        if (Interlocked.Exchange(ref _deskBusy, 1) == 1) return;
+        try
+        {
+            using var x32 = new X32Mutes(ip, DeskPort);
+            await ReadDeskStateAsync(x32, desk, bypass);
+        }
+        finally
+        {
+            Volatile.Write(ref _deskBusy, 0);
+            DeskBypassChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// THE X32 write. To the desk: open the bypass channels, then mute the guarded
+    /// ones - a few milliseconds of both beats any gap. Back: open the guarded
+    /// channels, then mute the spares. Every write is read back and logged, and
+    /// the state shown afterwards is what the desk reported, not what was sent.
+    /// Called from a one-second hold on Show and from nowhere else: not on engine
+    /// death, not at start-up, not at quit.
+    /// </summary>
+    public async Task<bool> SwapToDeskAsync(bool toDesk)
+    {
+        if (!TryDeskSetup(out var ip, out var desk, out var bypass))
+        {
+            DeskMessage = "desk bypass is not set up: the console address and both channel lists live in Setup";
+            DeskBypassChanged?.Invoke();
+            return false;
+        }
+        if (Interlocked.Exchange(ref _deskBusy, 1) == 1) return false;
+        try
+        {
+            var plan = SwapPlan(toDesk, desk, bypass);
+            Log?.Invoke($"desk swap {(toDesk ? "to the desk" : "back to the guard")} on {ip}: "
+                        + string.Join(", ", plan.Select(p => $"{(p.Open ? "open" : "mute")} Ch {p.Channel}")));
+            using var x32 = new X32Mutes(ip, DeskPort);
+            var failed = new List<string>();
+            foreach (var (ch, open) in plan) await WriteMuteAsync(x32, ch, open, failed);
+            var state = await ReadDeskStateAsync(x32, desk, bypass);
+            if (failed.Count > 0)
+                DeskMessage = $"desk: {string.Join(", ", failed)} did not take; look at the desk. {DeskMessage}";
+            return failed.Count == 0 && state == (toDesk ? DeskState.Bypassed : DeskState.Guard);
+        }
+        finally
+        {
+            Volatile.Write(ref _deskBusy, 0);
+            DeskBypassChanged?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// The writes a swap makes, in order. Whatever is about to carry the vocal
+    /// opens first; whatever carried it mutes second. Pure, so the self-test can
+    /// hold the order to account without a desk.
+    /// </summary>
+    public static (int Channel, bool Open)[] SwapPlan(bool toDesk, int[] desk, int[] bypass)
+    {
+        var open = toDesk ? bypass : desk;
+        var mute = toDesk ? desk : bypass;
+        return open.Select(ch => (ch, true)).Concat(mute.Select(ch => (ch, false))).ToArray();
+    }
+
+    /// <summary>Where the desk listens. The self-test points this at a fake X32 on loopback.</summary>
+    public int DeskPort { get; set; } = 10023;
+
+    private async Task WriteMuteAsync(X32Mutes x32, int ch, bool open, List<string> failed)
+    {
+        var ok = await x32.SetOpenAsync(ch, open);
+        Log?.Invoke($"desk write {X32Mutes.Address(ch)} <- {(open ? 1 : 0)}: {(ok ? "read back as sent" : "DID NOT TAKE")}");
+        if (!ok) failed.Add($"Ch {ch} {(open ? "open" : "mute")}");
+    }
+
+    private async Task<DeskState> ReadDeskStateAsync(X32Mutes x32, int[] desk, int[] bypass)
+    {
+        var deskOpen = new List<bool?>();
+        var bypassOpen = new List<bool?>();
+        foreach (var ch in desk) deskOpen.Add(await x32.ReadOpenAsync(ch));
+        foreach (var ch in bypass) bypassOpen.Add(await x32.ReadOpenAsync(ch));
+
+        DeskState state;
+        if (deskOpen.Concat(bypassOpen).Any(v => v is null))
+        {
+            state = DeskState.Unknown;
+            DeskMessage = "desk: no answer from the console; the mutes are whatever they were";
+        }
+        else if (deskOpen.All(v => v == true) && bypassOpen.All(v => v == false))
+        {
+            state = DeskState.Guard;
+            DeskMessage = $"desk: guard path live. Ch {Join(desk)} open, Ch {Join(bypass)} muted";
+        }
+        else if (bypassOpen.All(v => v == true) && deskOpen.All(v => v == false))
+        {
+            state = DeskState.Bypassed;
+            DeskMessage = $"desk: BYPASSED. Ch {Join(bypass)} open, Ch {Join(desk)} muted; the guard is out of the path";
+        }
+        else
+        {
+            var openNow = desk.Concat(bypass).Zip(deskOpen.Concat(bypassOpen)).Where(p => p.Second == true).Select(p => p.First);
+            state = DeskState.Mixed;
+            DeskMessage = $"desk: mixed. Open right now: Ch {string.Join(" ", openNow)}; look at the desk";
+        }
+        DeskBypassState = state;
+        Log?.Invoke(DeskMessage);
+        return state;
+    }
+
+    private static string Join(IEnumerable<int> channels) => string.Join("/", channels);
+
+    private bool TryDeskSetup(out IPAddress ip, out int[] desk, out int[] bypass)
+    {
+        string? address;
+        lock (_lock) { address = _consoleAddress; desk = _deskChannels; bypass = _bypassChannels; }
+        if (desk.Length == 0 || desk.Length != bypass.Length || !IPAddress.TryParse(address, out var parsed) || parsed is null)
+        {
+            ip = IPAddress.None;
+            return false;
+        }
+        ip = parsed;
+        return true;
+    }
+
     // ---- channels + enable/disable -----------------------------------------
     /// <summary>Every input channel the current device exposes (index, name).</summary>
     public IReadOnlyList<(int Index, string Name)> InputChannels
@@ -466,15 +647,18 @@ public sealed class FeedbackController : IAsyncDisposable
     {
         Dictionary<string, string> names;
         Dictionary<string, int> returns;
+        int[] desk, bypass;
         lock (_lock)
         {
             names = _names.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
             returns = _returns.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
+            desk = _deskChannels;
+            bypass = _bypassChannels;
         }
         _audioStore.Save(new AudioSelection(_selectedDevice, EnabledSnapshot(), Enabled: true,
             Names: names, Returns: returns, MinHz: _minHz, MaxHz: _maxHz, FloorAuto: _floorAuto,
             FloorDb: _floorDb, Attack: _attack, MaxCutDb: _maxCutDb, HarmBudget: _harmBudget,
-            ConsoleAddress: _consoleAddress));
+            ConsoleAddress: _consoleAddress, DeskChannels: desk, BypassChannels: bypass));
     }
 
     // ---- lifecycle + notch ops ---------------------------------------------

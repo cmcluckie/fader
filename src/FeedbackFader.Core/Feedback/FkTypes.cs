@@ -99,3 +99,6 @@ public sealed record FkRejection(int Channel, float Hz, float LevelDb, int Reaso
 
 /// <summary>Outcome of a signal-path check: did our tone reach the console?</summary>
 public sealed record PathCheckResult(bool Reached, int Channel, float Rise, string Message);
+
+/// <summary>Which path the desk's mutes say is live, as last READ from the X32 - never inferred from what was sent.</summary>
+public enum DeskState { Unknown, Guard, Bypassed, Mixed }

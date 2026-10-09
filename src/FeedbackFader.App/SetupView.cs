@@ -32,6 +32,11 @@ public sealed class SetupView : UserControl
     private readonly ComboBox _maxCut = new() { MinWidth = 130 };
     private readonly ComboBox _budget = new() { MinWidth = 190 };
     private readonly TextBox _console = new() { MinWidth = 150, Watermark = "192.168.1.100" };
+    // The one-click desk bypass: which X32 channels the guarded mics land on and
+    // which muted spares carry the same mics straight from the Console. Blank
+    // keeps the feature hidden and the app read-only on the desk (README, Rule Zero).
+    private readonly TextBox _deskCh = new() { MinWidth = 72, Watermark = "1 2" };
+    private readonly TextBox _bypassCh = new() { MinWidth = 72, Watermark = "11 12" };
     private bool _syncingEdge;
 
     // Named in what the operator is deciding, not in what it sets underneath.
@@ -111,11 +116,24 @@ public sealed class SetupView : UserControl
             if (e.Key == Avalonia.Input.Key.Enter) CommitConsole();
         };
 
+        _deskCh.Text = string.Join(" ", _feedback.DeskChannels);
+        _bypassCh.Text = string.Join(" ", _feedback.BypassChannels);
+        foreach (var box in new[] { _deskCh, _bypassCh })
+        {
+            box.LostFocus += (_, _) => CommitDesk();
+            box.KeyDown += (_, e) =>
+            {
+                if (e.Key == Avalonia.Input.Key.Enter) CommitDesk();
+            };
+        }
+
         var toolbar = Ui.Stack(Orientation.Horizontal, 18,
             Field("Audio device", _deviceBox),
             Field("Sample rate", Pill("48 kHz")),
             Field("Buffer", Pill("64")),
-            Field("Console (X32)", _console));
+            Field("Console (X32)", _console),
+            Field("Desk ch", _deskCh),
+            Field("Bypass ch", _bypassCh));
         toolbar.Margin = new Thickness(0, 0, 0, 16);
 
         var header = new Grid
@@ -254,6 +272,15 @@ public sealed class SetupView : UserControl
         var text = _console.Text ?? "";
         var ok = text.Length == 0 || IPAddress.TryParse(text, out _);
         _console.Foreground = ok ? Tokens.Ink : Tokens.Clip;
+    }
+
+    /// Both lists go in together: the pairing is the whole meaning, so one list
+    /// without the other, or two of different lengths, is kept out and shown red.
+    private void CommitDesk()
+    {
+        var ok = _feedback.SetDeskBypassChannels(_deskCh.Text, _bypassCh.Text);
+        _deskCh.Foreground = ok ? Tokens.Ink : Tokens.Clip;
+        _bypassCh.Foreground = ok ? Tokens.Ink : Tokens.Clip;
     }
 
     public void Teardown()

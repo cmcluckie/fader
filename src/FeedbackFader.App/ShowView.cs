@@ -37,6 +37,10 @@ public sealed class ShowView : UserControl
     private readonly TextBlock _lastCatch = Ui.Mono("nothing caught yet", 15, Tokens.InkDim, FontWeight.SemiBold);
     private readonly TapButton _bypass = new("Guard On", "tap to bypass");
     private readonly HoldButton _panic = new("Panic", "hold 1s · clears every notch", Tokens.Clip);
+    // The desk bypass: the only thing this app ever writes on the X32 (README,
+    // Rule Zero), so it is a hold, its hint names the exact channels it will
+    // open and mute, and it is not on the screen at all until Setup names them.
+    private readonly HoldButton _desk = new("Bypass to desk", "hold 1s", Tokens.Clip) { IsVisible = false };
     // Third action, and the only one that is not about the audio: it is how the
     // ear gets recorded. Pressed during rehearsal when a ring fires - especially
     // the ones heard before the detector reacts.
@@ -90,6 +94,7 @@ public sealed class ShowView : UserControl
         _bypass.Clicked += () => _feedback.SetBypass(!_feedback.IsBypassed);
         _capture.Clicked += () => _feedback.SetCapture(!_feedback.CaptureEnabled);
         _panic.Fired += () => _feedback.ClearAll(includeLocked: true);
+        _desk.Fired += () => _ = SwapDeskAsync();
         _mark.Clicked += () =>
         {
             var saved = _feedback.MarkFeedback();
@@ -104,7 +109,7 @@ public sealed class ShowView : UserControl
             pad: 14);
         ribbon.CornerRadius = Tokens.RadiusLg;
 
-        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto") };
+        var actions = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto,Auto,Auto,Auto") };
         Grid.SetColumn(ribbon, 0);
         Grid.SetColumn(_mark, 1);
         _mark.Margin = new Thickness(14, 0, 0, 0);
@@ -112,12 +117,15 @@ public sealed class ShowView : UserControl
         _capture.Margin = new Thickness(14, 0, 0, 0);
         Grid.SetColumn(_bypass, 3);
         _bypass.Margin = new Thickness(14, 0, 0, 0);
-        Grid.SetColumn(_panic, 4);
+        Grid.SetColumn(_desk, 4);
+        _desk.Margin = new Thickness(14, 0, 0, 0);
+        Grid.SetColumn(_panic, 5);
         _panic.Margin = new Thickness(14, 0, 0, 0);
         actions.Children.Add(ribbon);
         actions.Children.Add(_mark);
         actions.Children.Add(_capture);
         actions.Children.Add(_bypass);
+        actions.Children.Add(_desk);
         actions.Children.Add(_panic);
 
         var root = new DockPanel { Margin = new Thickness(20), LastChildFill = true };
@@ -148,9 +156,28 @@ public sealed class ShowView : UserControl
         _feedback.SearchRangeChanged += OnRange;
         _feedback.BypassChanged += OnStateFlag;
         _feedback.CaptureChanged += OnStateFlag;
+        _feedback.DeskBypassChanged += OnDesk;
+        _feedback.ConsoleAddressChanged += OnDesk;
 
         RebuildTiles();
         RenderState();
+        // A read, so the button's first words are what the desk says, not a guess.
+        if (_feedback.DeskBypassConfigured) _ = _feedback.RefreshDeskStateAsync();
+    }
+
+    /// <summary>
+    /// The hold fired: swap the vocal between the guarded channels and their
+    /// spares, in the direction the button said it would, and put the desk's own
+    /// answer in the ribbon. Every write is also in the app log.
+    /// </summary>
+    private async Task SwapDeskAsync()
+    {
+        var toDesk = _feedback.DeskBypassState != DeskState.Bypassed;
+        _lastCatch.Text = toDesk ? "desk: opening the bypass channels…" : "desk: opening the guarded channels…";
+        _lastCatch.Foreground = Tokens.InkDim;
+        var ok = await _feedback.SwapToDeskAsync(toDesk);
+        _lastCatch.Text = _feedback.DeskMessage;
+        _lastCatch.Foreground = ok ? Tokens.Accent : Tokens.Clip;
     }
 
     private static Control Readout(string label, TextBlock value)
@@ -171,7 +198,11 @@ public sealed class ShowView : UserControl
         _feedback.SearchRangeChanged -= OnRange;
         _feedback.BypassChanged -= OnStateFlag;
         _feedback.CaptureChanged -= OnStateFlag;
+        _feedback.DeskBypassChanged -= OnDesk;
+        _feedback.ConsoleAddressChanged -= OnDesk;
     }
+
+    private void OnDesk() => Dispatcher.UIThread.Post(RenderState);
 
     /// <summary>
     /// Named so Teardown can actually remove it. BypassChanged was subscribed with
@@ -186,6 +217,7 @@ public sealed class ShowView : UserControl
     {
         _guardLed.Tick();
         _panic.Tick();
+        _desk.Tick();
         foreach (var tile in _byPhysical.Values) tile.Tick();
         _spectrum.InvalidateVisual();
     }
@@ -255,20 +287,39 @@ public sealed class ShowView : UserControl
     {
         var ok = _feedback.EngineOk;
         var bypassed = _feedback.IsBypassed;
+        // The desk says the vocal is on the spare channels: the guard may be on,
+        // but nobody is hearing it. The pill must not pulse teal over that.
+        var onDesk = _feedback.DeskBypassState == DeskState.Bypassed;
 
-        // Three states, three unmistakable looks - never a sentence to parse.
+        // Four states, four unmistakable looks - never a sentence to parse.
         var (text, colour, pulsing) = !ok
             ? ("ENGINE DOWN", Tokens.Clip, false)
-            : bypassed
-                ? ("GUARD OFF", (IBrush) Tokens.InkDim, false)
-                : ("GUARD ON", Tokens.Accent, true);
+            : onDesk
+                ? ("ON THE DESK", (IBrush) Tokens.InkDim, false)
+                : bypassed
+                    ? ("GUARD OFF", (IBrush) Tokens.InkDim, false)
+                    : ("GUARD ON", Tokens.Accent, true);
 
         _guardText.Text = text;
         _guardText.Foreground = colour;
         _guardLed.Colour = colour;
         _guardLed.Pulsing = pulsing;
         _guardPill.BorderBrush = colour;
-        _guardPill.Background = !ok ? Tokens.ClipSoft : bypassed ? Tokens.Panel2 : Tokens.AccentSoft;
+        _guardPill.Background = !ok ? Tokens.ClipSoft : (bypassed || onDesk) ? Tokens.Panel2 : Tokens.AccentSoft;
+
+        // The desk swap exists on this screen only once Setup names the channels.
+        // Rule Zero: the hint says exactly which channels a hold opens and mutes.
+        var deskReady = _feedback.DeskBypassConfigured;
+        _desk.IsVisible = deskReady;
+        if (deskReady)
+        {
+            var guarded = string.Join("/", _feedback.DeskChannels);
+            var spares = string.Join("/", _feedback.BypassChannels);
+            _desk.Label = onDesk ? "Back to guard" : "Bypass to desk";
+            _desk.Hint = onDesk
+                ? $"hold 1s · opens Ch {guarded}, mutes Ch {spares}"
+                : $"hold 1s · opens Ch {spares}, mutes Ch {guarded}";
+        }
 
         // One vocabulary, everywhere. The button says the SAME words as the pill so
         // the two can never appear to disagree; the small line says what a tap does.
