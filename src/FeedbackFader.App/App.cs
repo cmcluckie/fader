@@ -167,7 +167,19 @@ public sealed class App : Application
 
             if (found is not null && found.ToString() != seed)
             {
-                _audioStore.Save(_audioStore.Load() with { ConsoleAddress = found.ToString() });
+                // Through the controller when it is up: it is the live authority
+                // and the next thing it saves would otherwise put the old address
+                // back. Found 2026-10-09 on the rig's first launch with this code:
+                // the desk answered and audio.json got the address, but the
+                // controller still held null, so the RTA overlay stayed disabled
+                // until the next launch. Writing the store directly is only for
+                // when the engine is off and there is no controller.
+                var address = found.ToString();
+                if (_feedback is null || !_feedback.SetConsoleAddress(address))
+                {
+                    _audioStore.Save(_audioStore.Load() with { ConsoleAddress = address });
+                }
+                Dispatcher.UIThread.Post(Render);
             }
         }
         catch

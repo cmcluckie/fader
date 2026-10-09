@@ -7,9 +7,9 @@ going by the protocol tables or the Console manual rather than by something
 seen on this rig, the step says so.
 
 Nothing in this list is done yet (2026-10-09). The app's saved configuration on
-the rig Mac is still the previous wiring (inputs 4/5, returns 10/11, no console
-address), and the app itself has been stopped since 2026-10-07 20:54 while its
-engine runs on alone.
+the rig Mac is still the previous wiring (inputs 4/5, returns 10/11). The app
+was relaunched on 2026-10-09 at 14:57 (build ec99884) and found the console's
+address by itself.
 
 ## 0. Back up first
 
@@ -67,10 +67,9 @@ Ch 12 are the spares.
 
 Only after 1 and 2. If the room is live, do it with the mains down.
 
-1. Start the app. The old one has been stopped since 10-07 and its engine is
-   still running on its own; the app's supervisor ends any stray engine from
-   the same binary before it launches its own (checked five ways on 10-04), so
-   there is nothing to quit by hand.
+1. The app is running (since 10-09 14:57). If it is not, start it: its
+   supervisor ends any stray engine from the same binary before launching its
+   own, so there is nothing to quit by hand.
 2. Audio device: **Universal Audio Thunderbolt**.
 3. Arm the two inputs the device lists as the Apollo's mic inputs 1 and 2.
    Name them Lead and BGV.

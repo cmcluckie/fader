@@ -381,14 +381,13 @@ and guarded runs.
 - The electrical round trip through the Mac (above).
 - The RTA overlay and the signal-path check against the new channels: no console
   address has ever been set on the rig Mac.
-- The app on the rig: it stopped on 2026-10-07 at 20:54 with no crash report;
-  its engine (build 3f3992c) is still running on its own and passing audio.
-  Relaunching it is a change to the rig, so it waits for Chris.
-- From Chris's Windows work, merged 2026-10-09 and not yet run on the Mac rig:
-  the engine's dead-man's switch (it exits when the app's pipe closes, so an
-  app that dies cannot leave an orphan like the one above), the 30 s start-up
-  grace before a silent new engine is restarted, the console auto-detect, the
-  `.dmg` and Windows installer scripts.
+- The app on the rig stopped on 2026-10-07 at 20:54 with no crash report, and
+  its engine ran on alone until 2026-10-09 14:57, when the app was relaunched
+  on Chris's go with build ec99884. The new supervisor ended the orphan and
+  started its own engine; the console search found the desk on the first try.
+  The dead-man's switch and the 30 s start-up grace are running on the rig now
+  but have not been put through `scripts/watchdog_check.sh` there.
+- Not run on the Mac at all: the `.dmg` and Windows installer scripts.
 
 **Not verified, from that same session.** The RTA ring criterion **missed
 feedback the operator could hear**: with a like-for-like level gate the guarded

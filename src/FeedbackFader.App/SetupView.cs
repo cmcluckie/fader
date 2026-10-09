@@ -252,6 +252,7 @@ public sealed class SetupView : UserControl
         _feedback.ChannelsChanged += OnChannels;
         _feedback.SpectrumChanged += OnSpectrum;
         _feedback.NotchesChanged += OnNotches;
+        _feedback.ConsoleAddressChanged += OnConsoleAddress;
 
         RefreshDevices();
         RebuildStrips();
@@ -260,6 +261,17 @@ public sealed class SetupView : UserControl
 
     /// <summary>Where the X32 lives, so the path check knows who to ask.</summary>
     public void SetConsoleAddress(IPAddress address) => _consoleAddress = address;
+
+    /// The start-up search can find the desk after this screen was built. Show
+    /// what it found, unless the operator is in the middle of typing there.
+    private void OnConsoleAddress() => Dispatcher.UIThread.Post(() =>
+    {
+        var text = _feedback.ConsoleAddress ?? "";
+        if (_console.IsFocused || _console.Text == text) return;
+        _console.Text = text;
+        _consoleAddress = IPAddress.TryParse(text, out var ip) ? ip : IPAddress.None;
+        SyncConsole();
+    });
 
     /// Take what was typed, keep it if it parses, and say so either way.
     private void CommitConsole()
@@ -294,6 +306,7 @@ public sealed class SetupView : UserControl
         _feedback.ChannelsChanged -= OnChannels;
         _feedback.SpectrumChanged -= OnSpectrum;
         _feedback.NotchesChanged -= OnNotches;
+        _feedback.ConsoleAddressChanged -= OnConsoleAddress;
     }
 
     public void Tick()

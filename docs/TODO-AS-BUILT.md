@@ -570,7 +570,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
   3. *The stale answer.* An engine being replaced answers a last ping on its way out. That "ok" re-raised the flag the restart had lowered, so the new engine's first status was no change, nothing replayed its settings, and it ran with no channels: a silent microphone and no guard, with the tray saying the engine was up.
 - **As built.** 08-20 `124a974` supervisor: starts the engine, restarts it if status stops for 6 s, re-sends every setting and locked filter. 08-21 `dae52ba` a busy telemetry port no longer takes the app down. 08-20 `5b61c15` on/off remembered. 10-04 `540b261`, `3f3992c`: one restart at a time; a late health tick means the app was starved, so the clock restarts instead; before any launch the tracked engine is ended and waited for, then any other engine from the same binary; the engine takes its port before it opens the audio device and leaves at once if the port is taken; `/fk/status` carries the engine's process id and only the launched engine's status counts; launching lowers the "ok" flag so the first status from a new engine is an edge. The app writes `logs/app-log-*.txt`. Test runs leave two cores free and run at low priority.
 - **Known limit.** A stopped engine (SIGSTOP, or a debugger attached) sends .NET's child-process bookkeeping into a spin on macOS, which blocks the restart until the engine continues. A real hang is a different state and is expected to be killed and replaced, but that has not been demonstrated.
-- **10-09, merged from Chris's branch** (`9dc4a46` 09-15, `efe21d6` 10-06, both from the Windows rig): the app holds the engine's stdin open and the engine exits on EOF (`FK_PARENT_WATCH`), so an app that dies cannot leave an orphan like the one running on the Mac rig since 10-07; a new engine gets 30 s for its first status instead of 6 (a Scarlett on ASIO took 11.6 s to open its device, and each 6 s kill made the next open slower); `ProcessAlive` lets the Show screen tell a crashed engine from one with no interface. A second stray sweep, by process name at `Start()`, now runs beside the one by binary path in `Spawn()`: duplicate, harmless, to fold into one. None of it has run on the Mac rig yet; the watchdog check (`scripts/watchdog_check.sh`) should be re-run on it when the room is free.
+- **10-09, merged from Chris's branch** (`9dc4a46` 09-15, `efe21d6` 10-06, both from the Windows rig): the app holds the engine's stdin open and the engine exits on EOF (`FK_PARENT_WATCH`), so an app that dies cannot leave an orphan like the one running on the Mac rig since 10-07; a new engine gets 30 s for its first status instead of 6 (a Scarlett on ASIO took 11.6 s to open its device, and each 6 s kill made the next open slower); `ProcessAlive` lets the Show screen tell a crashed engine from one with no interface. A second stray sweep, by process name at `Start()`, now runs beside the one by binary path in `Spawn()`: duplicate, harmless, to fold into one. Running on the Mac rig since 10-09 14:57 (build `ec99884`, relaunched on Chris's go): the new supervisor ended the orphan (pid 88781, alone since 10-07) and launched its own engine in 0.5 s, the same five log lines as the 10-04 launch. The watchdog check (`scripts/watchdog_check.sh`) has not been re-run on this build; it should be, when the room is next free.
 
 ### 7.2 Devices and channels - DONE
 - **As built.** 08-20 `906b705`, `e562920`, `0a3677a`, `125677e`: device picker, up to eight inputs. 08-21 `6b90290` a return per input. 48 kHz, 64-sample buffer, fixed.
@@ -578,7 +578,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 ### 7.3 Signal-path check - DONE
 - **As built.** 08-22 `0f718d3` plays a brief tone and asks the X32's meters whether it arrived. 08-21 `84143d0` `scripts/find-return.sh`.
 - **Known.** Runs against a blank console address without complaint. The rig has never had a console address set (`audio.json`, read 10-09), so neither this nor the RTA overlay has ever run there.
-- **10-09, merged** (`a92d238`, Chris, 09-13): the app finds the console at start-up (`X32Locator`: the last address that answered, kept in `~/.config/Fader/x32.json`; then the saved one; then an `/info` broadcast across the LAN) and saves what answers as the console address. A read, so allowed under Rule Zero; it ends the blank-address case on any LAN with a desk. `diagnostics/X32LocateTest` exercises the decision without hardware.
+- **10-09, merged** (`a92d238`, Chris, 09-13): the app finds the console at start-up (`X32Locator`: the last address that answered, kept in `~/.config/Fader/x32.json`; then the saved one; then an `/info` broadcast across the LAN) and saves what answers as the console address. A read, so allowed under Rule Zero; it ends the blank-address case on any LAN with a desk. `diagnostics/X32LocateTest` exercises the decision without hardware. **On the rig's first launch with it (10-09 14:57) the desk answered and `audio.json` got `192.168.9.113`.** Found the same minute: it wrote the store behind the controller's back, so the controller still held null (the RTA overlay stayed disabled, and the next settings save would have put null back). Fixed the same evening: the found address goes through the controller when it is up, and Setup's field follows it. In the repository, not yet on the rig.
 
 ### 7.4 Build stamp - DONE
 - **As built.** 10-03 `b71ce6f` after the bundle shipped a three-hour-old engine: the engine writes its build to `engine-build.txt`, the build script rebuilds it every time, the sweep prints it.
@@ -799,6 +799,14 @@ folded in), `ShowView` (his five states plus ON THE DESK), the two FaderBridge
 files and `RUN.md` (removed, per the brief). Solution, self-test (50), engine
 and unit tests all pass after the merge; nothing from it has run on the rig.
 
+**On the rig, 14:57, on Chris's go ("room is idle now").** The bundle was
+rebuilt from `ec99884` through the ship gate (all six layers passed) and the
+app relaunched. Its supervisor ended the orphaned engine and started its own;
+guard on, two channels, input silent, no catches. The console search found
+the desk at once. One fault found in the merged auto-detect and fixed in the
+repository (7.3). Nothing on the desk or in Console was touched; the audio
+path is the same inputs 4/5 → returns 10/11 the orphan was carrying.
+
 **Where the plan stands.** 78 features: 25 done, 18 in progress, 31 not
 started, 4 cancelled (three of them proposals).
 
@@ -900,7 +908,7 @@ to the live engine's ports).
 
 ## Waiting on Chris
 
-0. **The app on the rig stopped on 10-07 at 20:54** and has not been restarted (Rule Zero: a restart is a change). Its engine, `3f3992c`, runs on alone and passes audio. Say when the room is idle and it gets relaunched, or do it yourself.
+0. **The app on the rig was relaunched on 10-09 at 14:57** on your go, build `ec99884` (your dead-man's switch and 30 s grace, the desk bypass hidden until Setup names channels, the console found by itself). The auto-detect fix (7.3) is in the repository and not on the rig; it matters only if a setting is saved before the next launch. Say when the room is next free for the watchdog check on this build.
 1. **Back up, then the checklist** ([RIG-CHECKLIST.md](RIG-CHECKLIST.md)): Console session, X32 scene, `~/Documents/FeedbackKiller`. Then the Console and X32 steps, Setup, and the proof with the mains down. The desk bypass (7.8) is tried for the first time at step 4.3 of it.
 2. **Three answers the brief needs.** (a) It asks for an assist mode as the default; the modes were retired in August, and guard-off with Capture on is the same thing. Should a fresh install start with the guard off? (b) It asks for the RTA-assisted GEQ ring-out (4.8), which the plan proposed cancelling; under Rule Zero it would be one click per cut. (c) Has the rig been rewired yet? The saved configuration says no.
 3. **The room, when you are back:** cold jumps at 20 and 22 on `d55f580` (1.2, 2.3); two minutes of singing at low gain for a live voice-change figure (3.2); and the same two minutes with Attack set to Gentle in Setup - the tests say it halves what is taken from the voice at working gains on a rig like yours. All of it with `--go`.
