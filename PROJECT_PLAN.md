@@ -9,6 +9,10 @@ what it takes to make it a product.
 - **Numbers** come from the standard tests, logged per version:
   [docs/RESULTS.md](docs/RESULTS.md).
 - A feature proven only offline stays IN PROGRESS until it passes in the room.
+- **Rule Zero (9 Oct 2026):** the rig is production. Nothing in this project
+  changes a UAD Console or X32 setting, by any means. The app is read-only on
+  the desk apart from one hold (7.8), and every Console or X32 change is
+  Chris's, from [docs/RIG-CHECKLIST.md](docs/RIG-CHECKLIST.md), after a backup.
 
 ## The three numbers the product is judged on
 
@@ -70,13 +74,13 @@ how much of what the ear gets from the voice differs from the clean voice; a
 **Goal:** From start to safe-to-sing in under a minute with no audible ring, and the stated headroom within 1 dB of the truth.
 
 1. **Ring-out in the app — DONE.** Push the monitors, lock what it finds. *Goal: locked filters are back in place after any restart.*
-2. **Ring-out by fader sweep — DONE.** A script drives the desk, finds the ring point with and without the guard, and brackets cold jumps. *Goal: a repeatable gain-before-feedback figure.*
+2. **Ring-out by fader sweep — DONE.** A script drives the desk, finds the ring point with and without the guard, and brackets cold jumps. *Goal: a repeatable gain-before-feedback figure.* Since 9 Oct it runs only with `--go`, which means you said go for that run.
 3. **Measure the loop — IN PROGRESS.** A two-second sweep with the loop open shows what will ring and how much headroom is left. *Goal: first five rings predicted within 1 %. Proven in the simulator; the engine's probe is not built.*
 4. **Pre-placed filters — IN PROGRESS.** Pin filters from the measurement before anything rings. *Goal: a cold start 9 dB over with no ring at all. Proven in the simulator; not connected to the app.*
 5. **Headroom readout — NEW.** "6 dB before the first ring, at 9.5 kHz." *Goal: within 1 dB of the measured ring point.*
 6. **Room memory — NEW.** Store the map per room and re-check it before trusting it. *Goal: a stale map is detected, not used.*
 7. **One-button setup — NEW.** Measure, place, verify, park 3 dB under the limit. *Goal: under 60 s with no audible ring.*
-8. **Desk-EQ ring-out — CANCELLED** *(proposed)*. Written in August and never connected to the app; features 3–7 replace it.
+8. **Desk-EQ ring-out — CANCELLED** *(proposed)*. Written in August and never connected to the app; features 3–7 replace it. The 9 Oct brief asks for it, so this one is your call; if it comes back, every cut is a click, never automatic.
 
 ## 5. Display — IN PROGRESS
 
@@ -112,9 +116,12 @@ how much of what the ear gets from the voice differs from the clean voice; a
 2. **Devices and channels — DONE.** Pick the interface, up to eight inputs, and where each returns. *Goal: remembered across restarts.*
 3. **Signal-path check — DONE.** Asks the desk whether our audio actually arrives. *Goal: a wrong return found at soundcheck.*
 4. **Build stamp — DONE.** The running engine says exactly which build it is. *Goal: no measurement filed under the wrong build again.*
-5. **Dead-engine fallback — NEW.** Today a dead engine is a silent channel until someone unmutes a spare. *Goal: audio passes within 100 ms of the engine dying.*
+5. **Dead-engine fallback — NEW.** Today a dead engine is a silent channel until someone unmutes a spare. *Goal: audio passes within 100 ms of the engine dying.* The desk bypass (8) is the by-hand version; an automatic swap would be a desk write without a click, so it is not built.
 6. **Starts with the display asleep — NEW.** *Goal: starts unattended.*
 7. **Windows — IN PROGRESS.** It builds with ASIO, but the build script stops on a test we keep failing on purpose. *Goal: one command produces a working Windows build.*
+8. **One-click desk bypass — IN PROGRESS.** A one-second hold on Show swaps the guarded desk channels for their muted spares, and back; the only thing the app ever writes on the desk. *Goal: the vocal on the spare within a second of the hold, and never without one. Built 9 Oct and proven on a fake desk; waits for the rig checklist and your go.*
+9. **Rig wiring — NEW (yours).** The Console and X32 changes in docs/RIG-CHECKLIST.md: the engine on ADAT 1/2, the spares on ADAT 3/4 into Ch 11/12. *Goal: the engine is the only path from Mic 1/2 to Ch 1/2, with a muted spare one hold away.*
+10. **Round trip measured — NEW.** The delay through the Mac, Apollo in to X32 card in. *Goal: a measured figure in the README; the engine's own share stays one buffer (1.3 ms).*
 
 ## 8. Testing and measurement — IN PROGRESS
 
@@ -144,6 +151,8 @@ how much of what the ear gets from the voice differs from the clean voice; a
 3. **Remove the dead — IN PROGRESS.** Gone on 4 Oct, with every test number unchanged: the unused probe, unused modes, debug prints, a filter rule that was measured out long ago. Still to do: a readout that always shows zero, room memory that is loaded and then erased, and whatever you cancel. *Goal: none left.*
 4. **Documents match the code — IN PROGRESS.** The README and the interface document were stale in about fifteen places; both are corrected, stale comments in the source are not yet. *Goal: no claim the code contradicts.*
 5. **Test tools in one place — NEW.** The 22 Python test tools folded under one command. *Goal: one entry point, and no file nobody runs. Two leftovers removed 4 Oct, one of which had been broken for days unnoticed.*
+6. **FaderBridge removed — DONE.** Gone 9 Oct with its diagnostics, build script, assets and launch configs; the solution builds clean. *Goal: nothing of the bridge left but the git history.*
+7. **Nothing moves a fader without you — DONE.** The two diagnostics that moved desk faders are gone; the sweep scripts refuse without `--go`; the README lists every write the repository can make. *Goal: no path from this repository to the desk that does not start with your go.*
 
 ## 10. Release — NEW
 

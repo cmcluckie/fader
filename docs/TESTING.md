@@ -138,3 +138,10 @@ numbers.
 10. **Do not touch the tree while a recording run is in progress.** The log
    refuses results from uncommitted work, including a new file created half
    way through.
+11. **Nothing here moves a fader without Chris saying go.** The rig is
+   production (Rule Zero in the README, 9 Oct 2026). `ringout.py` and
+   `coldjump.py` refuse without `--go`, which means Chris said go for that run
+   and is in the room; `summary.json` records it. The two diagnostics that
+   moved faders are gone. The shipped app sends the desk reads only, plus the
+   one mute swap from a hold on Show. If a test needs a Console or X32 change,
+   it is a checklist step for Chris (`docs/RIG-CHECKLIST.md`), not a script.

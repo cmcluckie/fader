@@ -160,24 +160,46 @@ Three things differ from the Mac build:
   the fallback for an engine that no longer answers.
 - **Unsigned.** SmartScreen warns on first launch: *More info → Run anyway*.
 
-### The signal path and the Console routing change
+### The signal path (the rig as of October 2026)
 
-The engine inserts into the Apollo return path, after the UAD chain:
+Lead mic → Apollo x6 Mic 1 (Unison 610-B → 1176 → LA-2A → Pultec → Helios);
+BGV mic → Apollo x6 Mic 2. Today a Console **Flex Route** puts Analog 1/2 on
+ADAT out 1/2 → X32 card in 1/2 → X32 Ch 1 (Lead) and Ch 2 (BGV). All eight
+Apollo ADAT inputs are taken (drums, guitar and bass into Logic). House music
+goes Loopback → Virtual 1/2 → Flex Route Line 1/2 → X32 Aux In 1/2. The Apollo
+is clock master at 48 kHz and the X32 slaves over BNC; the Mac and the X32 share
+a GL.iNet router.
+
+The engine sits between the UAD chain and the desk:
 
 ```
-X32 XLR 3/4 (mics) → card out → ADAT → Apollo → UAD chain (post-insert)
-   → fk-engine (Core Audio, ADAT 3/4 in) → notch → ADAT 3/4 out
-   → X32 card in → X32 channels 3/4
+Apollo Mic 1/2 → UAD chain (Console inserts, REC) → Core Audio inputs (Mic 1/2)
+   → fk-engine (detector + 48 notches per mic, 64-sample buffer)
+   → Core Audio outputs ADAT 1/2 → X32 card in 1/2 → X32 Ch 1 Lead / Ch 2 BGV
 ```
 
-For this to work you must **disable the Console hardware direct-out** on ADAT 3
-and 4 (set their output destination to *none*). If you leave the direct-out
-running you will hear the un-notched vocal doubling with the engine's return.
-Confirm ADAT 3/4 are still **post-insert** so the engine receives the vocal after
-the 610-B and 1176. In the engine's audio settings choose the Apollo and enable
-**ADAT 3 and 4 for input and output**. The buffer is fixed at **64 samples**
-(analysis runs on a ring buffer beside the signal, so audio latency is only the
-buffer).
+For that to be the only path, the Flex Route that puts Analog 1/2 on ADAT out
+1/2 has to come **off** ADAT 1/2, or the clean vocal doubles with the engine's
+return a few milliseconds apart (a comb filter, heard as thinness). The inserts
+on Mic 1/2 have to be in **REC**, not MON, or the engine gets the raw mic. Both
+are Console changes, so they are steps in
+[docs/RIG-CHECKLIST.md](docs/RIG-CHECKLIST.md) for Chris to make, with a backup
+first; the software does not touch Console. The bypass pair (Analog 1/2 →
+ADAT out 3/4 → X32 card in 3/4 → Ch 11/12, muted) is in the same checklist.
+
+In the app's Setup, once the checklist is done: device **Universal Audio
+Thunderbolt**; arm the two inputs the Apollo lists as its mic inputs 1 and 2;
+set their Returns to the outputs listed as ADAT 1 and ADAT 2; console address
+`192.168.9.113`; desk channels `1 2`, bypass channels `11 12`. The saved
+configuration on the rig Mac is still the previous wiring (inputs 4/5 → returns
+10/11, no console address), so this is a redo, not a check.
+
+**Latency.** The engine's buffer is 64 samples at 48 kHz (1.33 ms); the detector
+runs on a ring buffer beside the signal, so the engine adds the buffer and
+nothing else. The round trip through the Mac (Apollo A/D → Core Audio in → engine
+→ Core Audio out → ADAT → X32 card) has **not been measured** on this rig; the
+loop-measurement probe (plan 4.3) will report it, and it plays a click, so it
+waits for Chris. Console's Input Delay Compensation is already Medium-Long.
 
 ### Keep a bypass path
 
@@ -328,6 +350,24 @@ and guarded runs.
   must cover where the tone is going, not only where it is. A 296 Hz filter
   (Q36) let it out in one guarded run of three; 533 Hz (Q20) is the setting the
   room ladder then agreed with.
+
+**Cannot be verified without the hardware, or without Chris (Rule Zero).**
+
+- The Console changes (Flex Route off ADAT 1/2, Analog 1/2 onto ADAT 3/4,
+  inserts in REC) and the X32 changes (Ch 11/12 from card 3/4, their sends,
+  the Bus 12 key): Chris makes them from the checklist; the software never will.
+- That the engine receives Apollo Mic 1/2 after the UAD chain and lands on X32
+  Ch 1/2 with the new wiring. The saved configuration on the rig is still the
+  old one.
+- The desk bypass against the real X32. It is proven on a fake desk on loopback;
+  the address and the 0/1 meaning come from the X32 protocol, not from a test
+  here.
+- The electrical round trip through the Mac (above).
+- The RTA overlay and the signal-path check against the new channels: no console
+  address has ever been set on the rig Mac.
+- The app on the rig: it stopped on 2026-10-07 at 20:54 with no crash report;
+  its engine (build 3f3992c) is still running on its own and passing audio.
+  Relaunching it is a change to the rig, so it waits for Chris.
 
 **Not verified, from that same session.** The RTA ring criterion **missed
 feedback the operator could hear**: with a like-for-like level gate the guarded

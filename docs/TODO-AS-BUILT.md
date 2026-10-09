@@ -16,6 +16,17 @@ shared header - see 8.12 for why that mattered.
 
 ## How this works
 
+### Rule Zero (9 Oct 2026)
+
+The rig is production and locked: the UAD Console session and the X32 scene
+took two years. Nothing in this project changes either, by any means, and the
+software ships read-only on the desk except for one hold (7.8) that fires only
+from Chris's hand. Every Console or X32 change the design needs is a step in
+[RIG-CHECKLIST.md](RIG-CHECKLIST.md) for Chris, after a backup. The live tools
+move faders only with `--go`, which means Chris said go for that run. On the
+rig Mac the only thing touched without telling him first is the master volume;
+restarting the app or the engine is a change, and waits.
+
 ### Stages
 
 A feature that touches feedback or sound moves through five stages. Each has a
@@ -446,6 +457,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Exit.** [x] Baseline and guarded sweeps. [x] Kill switch live before the first move. [x] Prints the running build. [x] Cold jump bracketed by baselines and rejected if they disagree by more than 3 dB.
 - **As built.** 10-03 `4b293bf` `scripts/ringout.py`. 10-04 `scripts/coldjump.py`. Results under `~/Documents/FeedbackKiller/ringout/`.
 - **Open note.** The room's ring point moved 12 dB within minutes on 10-03 and 10-04, unexplained; the loop probe (4.3) is the instrument for it.
+- **10-09 `e6481e3`.** Rule Zero: both scripts refuse without `--go`; the X32 writer itself raises without it; `summary.json` carries the flag, so the ledger shows who authorised a sweep. `--dry-run` needs nothing.
 
 ### 4.3 Measure the loop - IN PROGRESS
 
@@ -477,7 +489,8 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 ### 4.8 Desk-EQ ring-out - CANCELLED (proposed)
 
-- 08-20 `81ce119` RTA-assisted ring-out on the X32's GEQ, paths verified against the console. Never connected to the app: `RingOutSession.cs` is referenced nowhere. The README still describes it.
+- 08-20 `81ce119` RTA-assisted ring-out on the X32's GEQ, paths verified against the console. Never connected to the app: `RingOutSession.cs` is referenced nowhere. The README says so.
+- **10-09.** The brief (§6) asks for this to be built. It is a desk write, so under Rule Zero it would be: off by default, one click per cut, listed in the README's write table. Chris decides between the brief and the proposal to cancel.
 
 ---
 
@@ -563,14 +576,14 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 ### 7.3 Signal-path check - DONE
 - **As built.** 08-22 `0f718d3` plays a brief tone and asks the X32's meters whether it arrived. 08-21 `84143d0` `scripts/find-return.sh`.
-- **Known.** Runs against a blank console address without complaint.
+- **Known.** Runs against a blank console address without complaint. The rig has never had a console address set (`audio.json`, read 10-09), so neither this nor the RTA overlay has ever run there.
 
 ### 7.4 Build stamp - DONE
 - **As built.** 10-03 `b71ce6f` after the bundle shipped a three-hour-old engine: the engine writes its build to `engine-build.txt`, the build script rebuilds it every time, the sweep prints it.
 
 ### 7.5 Dead-engine fallback - NEW
 - **Goal.** Audio passes within 100 ms of the engine dying.
-- **Now.** The engine *is* the pass-through; if it dies the channel is silent. The tray says "engine down - audio bypassed", which is not true of anything the app does. The README's answer is a spare pair of muted channels on the desk.
+- **Now.** The engine *is* the pass-through; if it dies the channel is silent. The tray says "engine down - audio bypassed", which is not true of anything the app does. The README's answer is a spare pair of muted channels on the desk, and 7.8 is the hold that swaps to them. An automatic swap on engine death is deliberately not built: it would be a desk write with nobody's hand on it.
 
 ### 7.6 Starts with the display asleep - NEW
 - **Now.** It cannot (found 10-03).
@@ -578,7 +591,32 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 ### 7.7 Windows - IN PROGRESS
 - **Exit.** [x] Engine and app build with ASIO (`43e1adf`). [ ] The build script finishes: it runs the unit tests and stops on any failure, and T42 fails on purpose. [ ] The ship gate runs on Windows. [ ] Run on a real interface.
 
-**Open, not yet a feature:** playback to ADAT out 3/4 never arrived (unexplained); the 1-2 kHz hole between the two analysers.
+### 7.8 One-click desk bypass - IN PROGRESS
+
+- **Goal.** The vocal is on the spare channels within a second of the hold, and never without one.
+- **What it writes, and nothing else.** `/ch/NN/mix/on` on the channels named in Setup. To the desk: the spares open, then the guarded channels mute; back: the guarded channels open, then the spares mute (whatever is about to carry the vocal opens first, so there is never a gap). Each write is read back from the desk; the app log gets one line per write; the state the app shows is what the desk reported. It fires from a one-second hold on Show whose hint names the channels, and from nowhere else: not on engine death, not at start-up, not at quit. Hidden until both lists are filled in; the app's saved configuration ships with neither.
+
+| Stage | Threshold | Now | |
+|---|---|---|---|
+| S1 | on a fake X32 on loopback: parsing, the order both ways, read-back, a set the desk ignores reported as a failure, a stray reply not mistaken for the answer, no desk at all | 22 of 22 (`diagnostics/FeedbackSelfTest`) | pass |
+| S4 | Chris, mains down: both swaps on the real desk, every write "read back as sent", the channels on the desk as the ribbon says; then once during a song with the vocal audibly continuous | not sent to the real desk yet | open |
+
+- **As built.** 10-09 `5b70e7d`: `X32Mutes` (set, read back five times over 250 ms, discard replies to other addresses, null when the desk is silent); `FeedbackController.SwapPlan` (pure, the order), `SwapToDeskAsync`, `RefreshDeskStateAsync` (a read on opening Show), `DeskPort` for the test; `DeskChannels` / `BypassChannels` in `audio.json`; two fields beside the console address in Setup; the hold on Show; the guard pill reads ON THE DESK while the spares carry the vocal; `HoldButton` can change its words.
+- **Not verified.** The address and the 0/1 meaning are from the X32 protocol and September's reads of other paths; nothing here has been sent to the real desk (Rule Zero). First real use is Chris's, after a backup.
+- **To do.** [ ] S4. [ ] Bus 12's duck key while bypassed (Chris's decision, checklist §2.5). [ ] An alarm on Show when the desk and the app disagree about which path is live for more than a few seconds (a read, so allowed).
+
+### 7.9 Rig wiring - NEW (Chris)
+
+- **Goal.** The engine is the only path from Apollo Mic 1/2 to X32 Ch 1/2, with a muted spare one hold away.
+- **The steps** are [RIG-CHECKLIST.md](RIG-CHECKLIST.md): backup; Console (Flex Route off ADAT 1/2, Analog 1/2 onto ADAT 3/4, inserts in REC); X32 (card 3/4 into Ch 11/12 by User In, sends copied, muted); Setup (device, Mic 1/2 armed, returns ADAT 1/2, console address, the two channel lists); proof with the mains down; the way back.
+- **Now (10-09).** None of it is done. `audio.json` on the rig is inputs 4/5 → returns 10/11 with no console address. Where the checklist goes by the Console manual or the X32 protocol tables rather than by this rig, it says so.
+
+### 7.10 Round trip measured - NEW
+
+- **Goal.** A measured figure in the README for Apollo in → Core Audio → engine → ADAT out → X32 card in; the engine's own share stays one buffer (64 samples, 1.33 ms at 48 kHz; the detector runs beside the signal, not in front of it).
+- **How.** The loop probe (4.3) gives the acoustic loop, which includes it; the electrical trip alone needs a loopback (a Console Flex Route or a cable), so it waits for Chris. Console's Input Delay Compensation is Medium-Long already.
+
+**Open, not yet a feature:** playback to ADAT out 3/4 never arrived (unexplained, 10-03, on the old wiring); the 1-2 kHz hole between the two analysers.
 
 ---
 
@@ -665,12 +703,20 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **Old test tools, checked 10-04.** Removed: `precut_test.py` (its question is gate layer 5 now) and `recall.py` (broken since 09-30, when the replay code it borrowed from changed; nobody had noticed, which is the argument for 9.5). Kept, and they run: `timeline.py` (a howl's story from a flight recording), `merge_audit.py` (2.2's check), `make_fixtures.py`, `scripts/fuzz-sweep.py`.
 
 ### 9.4 Documents match the code - IN PROGRESS
-- **Exit.** [x] README, feedback section (10-04): eight channels not two; the OFF / ASSIST / AUTO modes replaced by what exists (engine, arm, guard, capture, panic); the desk-EQ ring-out stated as not connected; the log's ten columns; buffer fixed at 64; "audio bypassed" explained as a warning, not a bypass; the stale "nothing was run on a PA" table rows removed. [x] `docs/fk-osc-interface.md` rewritten against `EngineMain.cpp` (10-04): `/fk/mode` gone, twelve addresses added, the event's eight arguments, 48 filter slots, which parameters the app actually sends. [ ] Stale comments in six source files (list in 9.1's app findings). [ ] `diagnostics/FeedbackSelfTest` still asserts the old five-column log header - not run on 10-04 because the diagnostics talk to the live engine's ports. [ ] The app's "Detector - advanced" cards (5.8).
+- **Exit.** [x] README, feedback section (10-04): eight channels not two; the OFF / ASSIST / AUTO modes replaced by what exists (engine, arm, guard, capture, panic); the desk-EQ ring-out stated as not connected; the log's ten columns; buffer fixed at 64; "audio bypassed" explained as a warning, not a bypass; the stale "nothing was run on a PA" table rows removed. [x] `docs/fk-osc-interface.md` rewritten against `EngineMain.cpp` (10-04): `/fk/mode` gone, twelve addresses added, the event's eight arguments, 48 filter slots, which parameters the app actually sends. [ ] Stale comments in six source files (list in 9.1's app findings). [x] `diagnostics/FeedbackSelfTest` asserted the old five-column log header; fixed 10-09 (`765ea18`), 50 checks pass. It touches no engine port, so it runs with the engine up; `FkPing` is the one that does not. [ ] The app's "Detector - advanced" cards (5.8).
 
 ### 9.5 Test tools in one place - NEW
 - **Goal.** One command, and no file nobody runs.
 - **Now.** 22 Python files (two leftovers removed 10-04): the ship gate (7), the singer test and its voices (4), the results log (4), the live tools (2), tools for studying a recording or sweeping settings (4), and the icon maker. Eight were added on 10-04. None of it ships in the product.
 - **Exit.** [ ] One entry point (`fk test ...`, `fk results`, `fk live ...`) over one package. [ ] The leftovers in 9.3 removed. [ ] `docs/TESTING.md` lists every file and nothing else exists.
+
+### 9.6 FaderBridge removed - DONE
+- **Exit.** [x] `src/FaderBridge.App`, `src/FaderBridge.Core`, `diagnostics/BridgeSelfTest`, `diagnostics/MidiMonitor`, `scripts/build-fader-bridge.sh`, the bridge's `.icns`, `.ico` and two SVGs, its entries in `Fader.slnx`, `.vscode/tasks.json`, `.vscode/launch.json` and `assets/make-icons.py`; the README rewritten as Feedback Fader's own. [x] `dotnet build Fader.slnx -c Release`: 0 warnings, 0 errors. [x] Nothing of the FaderPort's own settings or Logic's control-surface setup touched.
+- **As built.** 10-09 `c007f45`, file list in the commit message. `Fader.Shared` stays: the OSC codec and the drawn controls are Feedback Fader's.
+
+### 9.7 Nothing moves a fader without Chris - DONE
+- **Exit.** [x] `diagnostics/AutoRingOut` and `diagnostics/OscPing` removed (both wrote faders), with their solution and launch entries. [x] `scripts/ringout.py` and `scripts/coldjump.py` refuse without `--go` and record it. [x] The README's Rule Zero table lists everything in the repository that can write to the desk or make a sound in the room, and how each fires. [x] Audit of the shipped app: the only messages it sends the X32 are `/meters` and `/batchsubscribe`, both reads, plus 7.8's mutes from a hold.
+- **As built.** 10-09 `e6481e3`.
 
 ---
 
@@ -701,6 +747,47 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 One entry per working day: what was asked, what was built, what was measured,
 what was found, what went wrong. Newest first.
+
+### 2026-10-09
+
+**Asked.** The updated brief (`docs/FeedbackKiller-handoff-prompt.md`): Rule
+Zero; remove FaderBridge; the rig as rewired (engine on Apollo Mic 1/2 → ADAT
+out 1/2 → X32 Ch 1/2, spares on ADAT 3/4 → Ch 11/12); the one-click bypass;
+the RTA-assisted ring-out; an assist mode as the default; the README, a manual
+checklist, and a list of what cannot be verified. Then, mid-afternoon: the rig
+is production ready, the scope is the feedback fader, master volume is the only
+thing I may touch, and anything else is announced first and waits for a backup.
+
+**Built.**
+- `c007f45` FaderBridge removed (9.6): two projects, two diagnostics, the build
+  script, four assets, the launch configs and tasks; the solution builds clean.
+- `e6481e3` Rule Zero (9.7): `AutoRingOut` and `OscPing` removed; `ringout.py`
+  and `coldjump.py` refuse without `--go` and record it; the README lists every
+  write the repository can make. The app sends the X32 only reads.
+- `5b70e7d` the desk bypass (7.8): `X32Mutes`, the two channel lists in Setup,
+  the hold on Show, the pill, 22 checks on a fake desk on loopback.
+- `765ea18` the self-test's three stale CSV checks; 50 pass.
+- The README rewritten for the rig as it is: a Rule Zero section with the write
+  table, the new signal path, latency as far as it is known, the cannot-verify
+  list. `docs/RIG-CHECKLIST.md`: backup, Console, X32, Setup, proof, the way
+  back. The plan: Rule Zero, 7.8-7.10, 9.6, 9.7; this file.
+
+**Found, without touching anything.**
+- The app on the rig stopped on 10-07 at 20:54, no crash report; its logs end
+  there. Its engine (`3f3992c`) runs on with no parent and still passes audio;
+  the input was silent at the last row. The last singing it saw was 10-06,
+  22:55-23:08: 34 catches, all 200-300 Hz.
+- `audio.json` on the rig is the old wiring (inputs 4/5, returns 10/11) and
+  has never had a console address.
+- The self-test had been failing for weeks, unrun.
+
+**Not done, on purpose.** Nothing on the rig: no restart, no OSC, no bundle
+build (it deletes the running engine's folder). The GEQ ring-out (4.8) and
+the assist-mode default conflict with the plan and wait for Chris. The round
+trip is unmeasured. The desk bypass has never been sent to the real desk.
+
+**Where the plan stands.** 78 features: 25 done, 17 in progress, 32 not
+started, 4 cancelled (three of them proposals).
 
 ### 2026-10-04
 
@@ -800,9 +887,11 @@ to the live engine's ports).
 
 ## Waiting on Chris
 
-0. **Know that the app on the rig was restarted on 10-04** and is now build `3f3992c` (the same guard as `d55f580`; a rebuilt watchdog). See 7.1.
-1. **The room, when you are back:** cold jumps at 20 and 22 on `d55f580` (1.2, 2.3); two minutes of singing at low gain for a live voice-change figure (3.2); and the same two minutes with Attack set to Gentle in Setup - the tests say it halves what is taken from the voice at working gains on a rig like yours.
-2. **Three proposed cancellations:** 1.7 wide flat feedback, 3.7 voice budget, 4.8 desk-EQ ring-out.
-3. **The goals themselves:** 10 ms, 15 ms and 15 % are yours; 3 % with no feedback, the -50 dBFS audible line and "up to 20 dB over" are mine. Change any of them and the thresholds above move with it.
-4. **Your recorded singing:** it is on your machine only. Say if any of it may go in the public repository.
-5. **A listen** to three rendered examples, so the percentage is tied to your ears (8.11).
+0. **The app on the rig stopped on 10-07 at 20:54** and has not been restarted (Rule Zero: a restart is a change). Its engine, `3f3992c`, runs on alone and passes audio. Say when the room is idle and it gets relaunched, or do it yourself.
+1. **Back up, then the checklist** ([RIG-CHECKLIST.md](RIG-CHECKLIST.md)): Console session, X32 scene, `~/Documents/FeedbackKiller`. Then the Console and X32 steps, Setup, and the proof with the mains down. The desk bypass (7.8) is tried for the first time at step 4.3 of it.
+2. **Three answers the brief needs.** (a) It asks for an assist mode as the default; the modes were retired in August, and guard-off with Capture on is the same thing. Should a fresh install start with the guard off? (b) It asks for the RTA-assisted GEQ ring-out (4.8), which the plan proposed cancelling; under Rule Zero it would be one click per cut. (c) Has the rig been rewired yet? The saved configuration says no.
+3. **The room, when you are back:** cold jumps at 20 and 22 on `d55f580` (1.2, 2.3); two minutes of singing at low gain for a live voice-change figure (3.2); and the same two minutes with Attack set to Gentle in Setup - the tests say it halves what is taken from the voice at working gains on a rig like yours. All of it with `--go`.
+4. **Three proposed cancellations:** 1.7 wide flat feedback, 3.7 voice budget, 4.8 desk-EQ ring-out (see 2b).
+5. **The goals themselves:** 10 ms, 15 ms and 15 % are yours; 3 % with no feedback, the -50 dBFS audible line and "up to 20 dB over" are mine. Change any of them and the thresholds above move with it.
+6. **Your recorded singing:** it is on your machine only. Say if any of it may go in the public repository.
+7. **A listen** to three rendered examples, so the percentage is tied to your ears (8.11).
