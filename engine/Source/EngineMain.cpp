@@ -16,6 +16,8 @@
 #include <atomic>
 #include <thread>
 #include <csignal>
+#include <memory>
+#include <cstdio>
 #include <vector>
 #include <algorithm>
 #if JUCE_WINDOWS
@@ -697,12 +699,33 @@ int main (int argc, char* argv[])
     std::signal (SIGINT,  [] (int) { gRun.store (false); });
     std::signal (SIGTERM, [] (int) { gRun.store (false); });
 
+    // Don't outlive the app. Windows does not kill child processes when their
+    // parent dies, and this loop otherwise runs forever - so a crashed or
+    // force-killed app used to leave an orphaned engine holding the audio
+    // device, which then blocked the next engine from opening it. When launched
+    // by the supervisor (FK_PARENT_WATCH set), the app keeps our stdin pipe open
+    // for its whole life; the pipe breaking (EOF) means the app is gone, so we
+    // stop. Standalone runs don't set the flag and are unaffected.
+    if (juce::SystemStats::getEnvironmentVariable ("FK_PARENT_WATCH", {}).isNotEmpty())
+    {
+        std::thread ([]
+        {
+            while (std::getchar() != EOF) { /* parent alive; it sends nothing */ }
+            gRun.store (false);
+        }).detach();
+    }
+
     const juce::String device = argc > 1 ? juce::String (argv[1]) : juce::String();  // "" = default
     const int          rate   = argc > 2 ? juce::String (argv[2]).getIntValue() : 48000;
     const int          buffer = argc > 3 ? juce::String (argv[3]).getIntValue() : 64;
 
-    fk::Engine engine;
-    if (! engine.start (device, rate, buffer))
+    // Heap, not stack. Engine holds eight FeedbackDetectors by value, each with
+    // multi-kilobyte FFT ring/scratch/mag arrays, plus the notch banks and event
+    // queues - together far more than the 1 MB default main-thread stack on
+    // Windows, so a stack local overflows on construction before main() runs a
+    // line (macOS's 8 MB stack hid this). make_unique puts it on the heap.
+    auto engine = std::make_unique<fk::Engine>();
+    if (! engine->start (device, rate, buffer))
         return 1;
 
     juce::Logger::writeToLog ("fk-engine up: OSC in " + juce::String (fk::kEngineListenPort)
@@ -720,7 +743,7 @@ int main (int argc, char* argv[])
 
     while (gRun.load()) juce::Thread::sleep (200);
 
-    engine.stop();
+    engine->stop();
     juce::Logger::writeToLog ("fk-engine stopped");
     return 0;
 }

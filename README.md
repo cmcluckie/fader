@@ -20,9 +20,10 @@ removed on 2026-10-09 and lives on in the git history.
 The UAD Console session and the X32 scene are production and took two years to
 get right. Nothing in this repository changes them, and nothing in it is run
 against them without Chris saying go for that run. The app is **read-only
-against the X32 by default**: it subscribes to the RTA and asks the meters, and
-that is all. Everything that can write to the console, or make a sound in the
-room, is listed here. Each is off until used and fires only from an explicit
+against the X32 by default**: it subscribes to the RTA, asks the meters, and at
+start-up sends `/info` to find the desk (the last address that answered, then
+the saved one, then a LAN broadcast). That is all. Everything that can write to
+the console, or make a sound in the room, is listed here. Each is off until used and fires only from an explicit
 click or flag, never on its own.
 
 | What | Where | What it does to the rig | How it fires |
@@ -189,8 +190,9 @@ ADAT out 3/4 → X32 card in 3/4 → Ch 11/12, muted) is in the same checklist.
 
 In the app's Setup, once the checklist is done: device **Universal Audio
 Thunderbolt**; arm the two inputs the Apollo lists as its mic inputs 1 and 2;
-set their Returns to the outputs listed as ADAT 1 and ADAT 2; console address
-`192.168.9.113`; desk channels `1 2`, bypass channels `11 12`. The saved
+set their Returns to the outputs listed as ADAT 1 and ADAT 2; the console
+address the app finds for itself (type `192.168.9.113` only if it does not);
+desk channels `1 2`, bypass channels `11 12`. The saved
 configuration on the rig Mac is still the previous wiring (inputs 4/5 → returns
 10/11, no console address), so this is a redo, not a check.
 
@@ -264,6 +266,12 @@ the console's own analyser over the engine's spectrum and marks rings both can
 see, and **Check signal path** (Setup) plays a brief tone and asks the
 console's meters whether it arrived.
 
+It finds the console itself at start-up: the last address that answered (kept
+in `~/.config/Fader/x32.json`, or `%APPDATA%\Fader` on Windows), then the
+address saved in Setup, then a broadcast of `/info` across the LAN, the way
+X32-Edit finds a desk. Whatever answers is saved as the console address, so the
+field in Setup only needs typing if the search finds nothing.
+
 A ring-out that cuts the X32's own GEQ was written in August
 (`RingOutSession`, `X32Geq`) and its console paths were verified, but **it is
 not connected to the app**: nothing in the app writes the GEQ. The read-only
@@ -276,7 +284,15 @@ dotnet run --project diagnostics/RingOut -- <x32-ip> 5
 
 ## Diagnostics
 
-Three, all runnable independently. None of them writes to the console.
+Four, all runnable independently. None of them writes to the console.
+
+**X32 locate test** - exercises the start-up search for the console: the
+remembered address, then a given one, then an `/info` broadcast; reports what
+answered. Read-only (`/info` is a query):
+
+```bash
+dotnet run --project diagnostics/X32LocateTest
+```
 
 **Feedback engine smoke test** - spawns `fk-engine` via the supervisor and proves
 the whole C# <-> engine path: telemetry flows, a placed notch round-trips, and a
@@ -368,6 +384,11 @@ and guarded runs.
 - The app on the rig: it stopped on 2026-10-07 at 20:54 with no crash report;
   its engine (build 3f3992c) is still running on its own and passing audio.
   Relaunching it is a change to the rig, so it waits for Chris.
+- From Chris's Windows work, merged 2026-10-09 and not yet run on the Mac rig:
+  the engine's dead-man's switch (it exits when the app's pipe closes, so an
+  app that dies cannot leave an orphan like the one above), the 30 s start-up
+  grace before a silent new engine is restarted, the console auto-detect, the
+  `.dmg` and Windows installer scripts.
 
 **Not verified, from that same session.** The RTA ring criterion **missed
 feedback the operator could hear**: with a like-for-like level gate the guarded

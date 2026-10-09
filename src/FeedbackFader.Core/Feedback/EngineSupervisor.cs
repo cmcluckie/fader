@@ -26,11 +26,19 @@ public sealed class EngineSupervisor : IAsyncDisposable
     private int _restarts;
     private int _restartPending;      // 1 while a restart has been scheduled and its engine not yet launched
     private volatile int _procId;     // the engine we launched; a status from any other process is not ours
+    private volatile bool _heardSinceLaunch;   // the engine we launched has sent at least one status
     private volatile bool _stopping;
 
     // Renew well under the 5 s telemetry timeout; a 6 s status gap means dead.
     private static readonly TimeSpan HealthInterval = TimeSpan.FromSeconds(2);
     private const long StatusTtlMs = 6000;
+
+    // A new engine is silent until its audio device is open, and opening one can take far
+    // longer than StatusTtlMs: a Scarlett 2i2 on Focusrite USB ASIO at 48k/64 took 11.6 s on
+    // a settled driver. Judged by the 6 s rule, every engine was killed mid-open, and each kill
+    // left the driver busier, so the next open was slower still - the engine never came up
+    // again (Windows rig, 2026-10-04 to 10-06). So the first status gets this long instead.
+    private const long StartupTtlMs = 30000;
 
     public EngineSupervisor(string binaryPath, string? device = null, int sampleRate = 48000, int bufferSize = 64)
     {
@@ -41,7 +49,19 @@ public sealed class EngineSupervisor : IAsyncDisposable
     }
 
     public FkEngineClient Client => _client;
+
+    /// <summary>True when the engine is running audio (telemetry reports it live).</summary>
     public bool EngineOk { get; private set; }
+
+    /// <summary>
+    /// True when the engine PROCESS is up, regardless of whether audio is running.
+    /// Lets the UI tell "engine crashed" apart from "engine fine, no interface
+    /// selected yet" - two states EngineOk alone collapses into one.
+    /// </summary>
+    public bool ProcessAlive
+    {
+        get { lock (_procLock) { return _proc is not null && !_proc.HasExited; } }
+    }
 
     public event Action<string>? Log;
     public event Action<bool>? EngineOkChanged;
@@ -56,6 +76,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         _client.Error += m => Log?.Invoke($"[fk-osc] {m}");
         _client.Start(_cts.Token);
 
+        KillStrayEngines();   // clear any orphan left by a crash of an older build
         Spawn();
         Interlocked.Exchange(ref _lastHealthTicks, Environment.TickCount64);
         _health = new Timer(_ => Health(), null, HealthInterval, HealthInterval);
@@ -76,6 +97,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
 
         Interlocked.Exchange(ref _lastStatusTicks, Environment.TickCount64);
+        _heardSinceLaunch = true;
         if (status.EngineOk)
         {
             _restarts = 0;   // sustained health clears the backoff
@@ -149,8 +171,13 @@ public sealed class EngineSupervisor : IAsyncDisposable
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
+                    // Held open for the engine's lifetime as a dead-man's switch:
+                    // if this app dies, the OS closes the pipe, the engine reads
+                    // EOF and exits, so it can never be orphaned. See EngineMain.
+                    RedirectStandardInput = true,
                     CreateNoWindow = true,
                 };
+                psi.Environment["FK_PARENT_WATCH"] = "1";
                 psi.ArgumentList.Add(_device);                 // "" = default Core Audio device
                 psi.ArgumentList.Add(_sampleRate.ToString());
                 psi.ArgumentList.Add(_bufferSize.ToString());
@@ -161,6 +188,7 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 p.Start();
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
+                _heardSinceLaunch = false;
                 _proc = p;
                 _procId = p.Id;
                 Interlocked.Exchange(ref _lastStatusTicks, Environment.TickCount64);  // grace window
@@ -218,7 +246,8 @@ public sealed class EngineSupervisor : IAsyncDisposable
         }
 
         var since = now - Interlocked.Read(ref _lastStatusTicks);
-        if (procDead || since > StatusTtlMs)
+        var ttl = _heardSinceLaunch ? StatusTtlMs : StartupTtlMs;
+        if (procDead || since > ttl)
         {
             Log?.Invoke(procDead ? "engine process gone; restarting" : $"engine silent {since} ms; restarting");
             if (EngineOk) { EngineOk = false; EngineOkChanged?.Invoke(false); }
@@ -260,6 +289,30 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 Volatile.Write(ref _restartPending, 0);
             }
         }, TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// Kill any fk-engine process still running before we spawn ours. Only this
+    /// one app should ever run, and it owns the single engine it manages, so any
+    /// engine already alive at startup is an orphan from a previous crash - and
+    /// an orphan holding the audio device would block the engine we are about to
+    /// start. The dead-man's-switch (FK_PARENT_WATCH) prevents new orphans; this
+    /// sweeps up ones left by builds that predate it.
+    /// </summary>
+    private void KillStrayEngines()
+    {
+        var name = Path.GetFileNameWithoutExtension(_binaryPath);
+        foreach (var p in Process.GetProcessesByName(name))
+        {
+            try
+            {
+                Log?.Invoke($"killing stray engine pid {p.Id}");
+                p.Kill();
+                p.WaitForExit(1000);
+            }
+            catch { /* gone already, or not ours to kill */ }
+            finally { p.Dispose(); }
+        }
     }
 
     private void KillProc()

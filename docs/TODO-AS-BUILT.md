@@ -570,6 +570,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
   3. *The stale answer.* An engine being replaced answers a last ping on its way out. That "ok" re-raised the flag the restart had lowered, so the new engine's first status was no change, nothing replayed its settings, and it ran with no channels: a silent microphone and no guard, with the tray saying the engine was up.
 - **As built.** 08-20 `124a974` supervisor: starts the engine, restarts it if status stops for 6 s, re-sends every setting and locked filter. 08-21 `dae52ba` a busy telemetry port no longer takes the app down. 08-20 `5b61c15` on/off remembered. 10-04 `540b261`, `3f3992c`: one restart at a time; a late health tick means the app was starved, so the clock restarts instead; before any launch the tracked engine is ended and waited for, then any other engine from the same binary; the engine takes its port before it opens the audio device and leaves at once if the port is taken; `/fk/status` carries the engine's process id and only the launched engine's status counts; launching lowers the "ok" flag so the first status from a new engine is an edge. The app writes `logs/app-log-*.txt`. Test runs leave two cores free and run at low priority.
 - **Known limit.** A stopped engine (SIGSTOP, or a debugger attached) sends .NET's child-process bookkeeping into a spin on macOS, which blocks the restart until the engine continues. A real hang is a different state and is expected to be killed and replaced, but that has not been demonstrated.
+- **10-09, merged from Chris's branch** (`9dc4a46` 09-15, `efe21d6` 10-06, both from the Windows rig): the app holds the engine's stdin open and the engine exits on EOF (`FK_PARENT_WATCH`), so an app that dies cannot leave an orphan like the one running on the Mac rig since 10-07; a new engine gets 30 s for its first status instead of 6 (a Scarlett on ASIO took 11.6 s to open its device, and each 6 s kill made the next open slower); `ProcessAlive` lets the Show screen tell a crashed engine from one with no interface. A second stray sweep, by process name at `Start()`, now runs beside the one by binary path in `Spawn()`: duplicate, harmless, to fold into one. None of it has run on the Mac rig yet; the watchdog check (`scripts/watchdog_check.sh`) should be re-run on it when the room is free.
 
 ### 7.2 Devices and channels - DONE
 - **As built.** 08-20 `906b705`, `e562920`, `0a3677a`, `125677e`: device picker, up to eight inputs. 08-21 `6b90290` a return per input. 48 kHz, 64-sample buffer, fixed.
@@ -577,6 +578,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 ### 7.3 Signal-path check - DONE
 - **As built.** 08-22 `0f718d3` plays a brief tone and asks the X32's meters whether it arrived. 08-21 `84143d0` `scripts/find-return.sh`.
 - **Known.** Runs against a blank console address without complaint. The rig has never had a console address set (`audio.json`, read 10-09), so neither this nor the RTA overlay has ever run there.
+- **10-09, merged** (`a92d238`, Chris, 09-13): the app finds the console at start-up (`X32Locator`: the last address that answered, kept in `~/.config/Fader/x32.json`; then the saved one; then an `/info` broadcast across the LAN) and saves what answers as the console address. A read, so allowed under Rule Zero; it ends the blank-address case on any LAN with a desk. `diagnostics/X32LocateTest` exercises the decision without hardware.
 
 ### 7.4 Build stamp - DONE
 - **As built.** 10-03 `b71ce6f` after the bundle shipped a three-hour-old engine: the engine writes its build to `engine-build.txt`, the build script rebuilds it every time, the sweep prints it.
@@ -590,6 +592,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 ### 7.7 Windows - IN PROGRESS
 - **Exit.** [x] Engine and app build with ASIO (`43e1adf`). [ ] The build script finishes: it runs the unit tests and stops on any failure, and T42 fails on purpose. [ ] The ship gate runs on Windows. [ ] Run on a real interface.
+- **10-09, merged from Chris's Windows work** (09-13 to 10-06): the Engine is heap-allocated (it overflowed Windows' 1 MB main-thread stack before `main` ran a line); the tests get a 64 MB stack; an Inno Setup installer that stops the app and engine on uninstall or reinstall; `scripts/package-feedback-fader-win.ps1`; winget's per-user ISCC path. His commit on 10-04 says the Windows build and installer run again. Not run here; the Scarlett 2i2 on Focusrite ASIO is the reference interface and it took 11.6 s to open at 48k/64.
 
 ### 7.8 One-click desk bypass - IN PROGRESS
 
@@ -712,7 +715,7 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 
 ### 9.6 FaderBridge removed - DONE
 - **Exit.** [x] `src/FaderBridge.App`, `src/FaderBridge.Core`, `diagnostics/BridgeSelfTest`, `diagnostics/MidiMonitor`, `scripts/build-fader-bridge.sh`, the bridge's `.icns`, `.ico` and two SVGs, its entries in `Fader.slnx`, `.vscode/tasks.json`, `.vscode/launch.json` and `assets/make-icons.py`; the README rewritten as Feedback Fader's own. [x] `dotnet build Fader.slnx -c Release`: 0 warnings, 0 errors. [x] Nothing of the FaderPort's own settings or Logic's control-surface setup touched.
-- **As built.** 10-09 `c007f45`, file list in the commit message. `Fader.Shared` stays: the OSC codec and the drawn controls are Feedback Fader's.
+- **As built.** 10-09 `c007f45`, file list in the commit message. `Fader.Shared` stays: the OSC codec and the drawn controls are Feedback Fader's. The merge of Chris's branch the same day brought two more bridge files and `RUN.md` (a FaderBridge run guide naming the removed `OscPing` and `MidiMonitor`); all three removed in the merge.
 
 ### 9.7 Nothing moves a fader without Chris - DONE
 - **Exit.** [x] `diagnostics/AutoRingOut` and `diagnostics/OscPing` removed (both wrote faders), with their solution and launch entries. [x] `scripts/ringout.py` and `scripts/coldjump.py` refuse without `--go` and record it. [x] The README's Rule Zero table lists everything in the repository that can write to the desk or make a sound in the room, and how each fires. [x] Audit of the shipped app: the only messages it sends the X32 are `/meters` and `/batchsubscribe`, both reads, plus 7.8's mutes from a hold.
@@ -727,8 +730,8 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 ### 10.1 Mac app - DONE
 - `scripts/build-feedback-fader.sh`: runs the ship gate, builds the engine with its stamp, assembles `dist/FeedbackFader.app`. Apple silicon only; needs .NET 8 installed.
 
-### 10.2 Installer - NEW
-- **Exit.** [ ] Self-contained (no .NET to install). [ ] Intel or universal build. [ ] A disk image or package, not a bare folder.
+### 10.2 Installer - IN PROGRESS
+- **Exit.** [ ] Self-contained (no .NET to install). [ ] Intel or universal build. [x] A disk image or package, not a bare folder: `scripts/package-feedback-fader-dmg.sh` and `installers/windows/FeedbackFader.iss` (Chris, 09-13, merged 10-09). Neither has been run on this Mac.
 
 ### 10.3 Signing - NEW
 - **Now.** None on either platform; Windows warns on first launch.
@@ -786,7 +789,17 @@ build (it deletes the running engine's folder). The GEQ ring-out (4.8) and
 the assist-mode default conflict with the plan and wait for Chris. The round
 trip is unmeasured. The desk bypass has never been sent to the real desk.
 
-**Where the plan stands.** 78 features: 25 done, 17 in progress, 32 not
+**Merged, evening.** Chris's twelve commits from the remote branch (09-13 to
+10-06, from the Windows rig): the installer and packaging scripts, the
+heap-allocated Engine and the tests' 64 MB stack, the engine's dead-man's
+switch, the 30 s start-up grace, `ProcessAlive` and the five-state Show pill,
+the X32 auto-detect and its test, channel strips first in Setup, the engine
+folder in the solution. Conflicts: the README (the rewrite kept, the auto-detect
+folded in), `ShowView` (his five states plus ON THE DESK), the two FaderBridge
+files and `RUN.md` (removed, per the brief). Solution, self-test (50), engine
+and unit tests all pass after the merge; nothing from it has run on the rig.
+
+**Where the plan stands.** 78 features: 25 done, 18 in progress, 31 not
 started, 4 cancelled (three of them proposals).
 
 ### 2026-10-04

@@ -75,7 +75,9 @@ Only after 1 and 2. If the room is live, do it with the mains down.
 3. Arm the two inputs the device lists as the Apollo's mic inputs 1 and 2.
    Name them Lead and BGV.
 4. Return for each: the outputs the device lists as **ADAT 1** and **ADAT 2**.
-5. Console (X32): `192.168.9.113`. Desk ch: `1 2`. Bypass ch: `11 12`.
+5. Console (X32): the app finds it at start-up (it sends `/info`, a query, to
+   the remembered address and then as a broadcast); type `192.168.9.113` only
+   if the field stays empty. Desk ch: `1 2`. Bypass ch: `11 12`.
 6. Leave the detector settings as they were (40 Hz–18 kHz, floor −95, Attack
    fast, −18 dB) unless the plan says otherwise by then.
 

@@ -230,7 +230,7 @@ public sealed class ShowView : UserControl
         _spectrum.SetFloor(_feedback.FloorDb);
     });
 
-    private void OnChannels() => Dispatcher.UIThread.Post(RebuildTiles);
+    private void OnChannels() => Dispatcher.UIThread.Post(() => { RebuildTiles(); RenderState(); });
     private void OnEngineOk(bool _) => Dispatcher.UIThread.Post(RenderState);
 
     private void OnSpectrum(FkSpectrum spec)
@@ -285,27 +285,53 @@ public sealed class ShowView : UserControl
 
     private void RenderState()
     {
-        var ok = _feedback.EngineOk;
         var bypassed = _feedback.IsBypassed;
         // The desk says the vocal is on the spare channels: the guard may be on,
         // but nobody is hearing it. The pill must not pulse teal over that.
         var onDesk = _feedback.DeskBypassState == DeskState.Bypassed;
 
-        // Four states, four unmistakable looks - never a sentence to parse.
-        var (text, colour, pulsing) = !ok
-            ? ("ENGINE DOWN", Tokens.Clip, false)
-            : onDesk
-                ? ("ON THE DESK", (IBrush) Tokens.InkDim, false)
-                : bypassed
-                    ? ("GUARD OFF", (IBrush) Tokens.InkDim, false)
-                    : ("GUARD ON", Tokens.Accent, true);
+        // Six honest states, not two. "ENGINE DOWN" used to mean any of: the
+        // process crashed, no interface was picked, or no mic was armed - three
+        // very different fixes hidden behind one alarming word. Name each one, and
+        // say in the hint what to do about it. ON THE DESK is the sixth: the spares
+        // carry the vocal, so whatever the guard is doing, nobody hears it.
+        string text, hint;
+        IBrush colour;
+        bool pulsing = false, lit = false, alarm = false;
+
+        if (!_feedback.ProcessAlive)
+        {
+            (text, hint, colour, alarm) = ("ENGINE DOWN", "the audio engine stopped", Tokens.Clip, true);
+        }
+        else if (!_feedback.EngineOk)
+        {
+            (text, hint, colour, alarm) = ("NO AUDIO INTERFACE", "pick your interface in Setup", Tokens.Clip, true);
+        }
+        else if (_feedback.EnabledInputs.Count == 0)
+        {
+            (text, hint, colour, alarm) = ("NO CHANNEL SELECTED", "arm a mic in Setup", Tokens.Clip, true);
+        }
+        else if (onDesk)
+        {
+            (text, hint, colour) = ("ON THE DESK", bypassed ? "guard off · tap to protect" : "guard on · tap to bypass", (IBrush) Tokens.InkDim);
+        }
+        else if (bypassed)
+        {
+            (text, hint, colour) = ("GUARD OFF", "tap to protect", (IBrush) Tokens.InkDim);
+        }
+        else
+        {
+            (text, hint, colour, pulsing, lit) = ("GUARD ON", "tap to bypass", Tokens.Accent, true, true);
+        }
 
         _guardText.Text = text;
         _guardText.Foreground = colour;
         _guardLed.Colour = colour;
         _guardLed.Pulsing = pulsing;
         _guardPill.BorderBrush = colour;
-        _guardPill.Background = !ok ? Tokens.ClipSoft : (bypassed || onDesk) ? Tokens.Panel2 : Tokens.AccentSoft;
+        // Red for a problem, teal for a live guard, plain for resting (bypassed, or
+        // the vocal on the desk's spares).
+        _guardPill.Background = alarm ? Tokens.ClipSoft : lit ? Tokens.AccentSoft : Tokens.Panel2;
 
         // The desk swap exists on this screen only once Setup names the channels.
         // Rule Zero: the hint says exactly which channels a hold opens and mutes.
@@ -321,13 +347,14 @@ public sealed class ShowView : UserControl
                 : $"hold 1s · opens Ch {spares}, mutes Ch {guarded}";
         }
 
-        // One vocabulary, everywhere. The button says the SAME words as the pill so
-        // the two can never appear to disagree; the small line says what a tap does.
-        // Lit teal = protecting, dark = not. State first, action second.
-        _bypass.IsLit = ok && !bypassed;
-        _bypass.Label = !ok ? "ENGINE DOWN" : bypassed ? "GUARD OFF" : "GUARD ON";
-        _bypass.Hint = bypassed ? "tap to protect" : "tap to bypass";
+        // One vocabulary, everywhere: the button says the SAME words as the pill,
+        // so the two can never appear to disagree; the small line says what to do.
+        _bypass.IsLit = lit;
+        _bypass.Label = text;
+        _bypass.Hint = hint;
         _bypass.InvalidateVisual();
+
+        var ok = _feedback.EngineOk;
 
         // Same vocabulary rule as the guard button: the state is the label, so it
         // can never be ambiguous whether it is recording. Lit = recording.

@@ -112,7 +112,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 **Problem:** The guard has to be in the audio path, stay there, and fail safe.
 **Goal:** One buffer of delay, a wiring fault flagged within 2 s, and a dead engine never means a dead microphone.
 
-1. **Engine supervision — DONE.** The app starts, watches and restarts the engine. *Goal: exactly one engine, always, back within 6 s of a crash. Rebuilt 4 Oct after it was found relaunching the engine in a loop; now checked five ways.*
+1. **Engine supervision — DONE.** The app starts, watches and restarts the engine. *Goal: exactly one engine, always, back within 6 s of a crash. Rebuilt 4 Oct after it was found relaunching the engine in a loop; now checked five ways. Your 6 Oct dead-man's switch (the engine quits when the app's pipe closes) and 30 s start-up grace merged 9 Oct, not yet run on the Mac rig.*
 2. **Devices and channels — DONE.** Pick the interface, up to eight inputs, and where each returns. *Goal: remembered across restarts.*
 3. **Signal-path check — DONE.** Asks the desk whether our audio actually arrives. *Goal: a wrong return found at soundcheck.*
 4. **Build stamp — DONE.** The running engine says exactly which build it is. *Goal: no measurement filed under the wrong build again.*
@@ -160,7 +160,7 @@ how much of what the ear gets from the voice differs from the clean voice; a
 **Goal:** A sound engineer installs it and is guarding in ten minutes without us.
 
 1. **Mac app — DONE.** A working app for Apple-silicon Macs. *Goal: opens and guards on the home rig.*
-2. **Installer — NEW.** Self-contained; today it needs .NET installed and Intel Macs are not built. *Goal: one download, nothing else to install.*
+2. **Installer — IN PROGRESS.** Your `.dmg` script and Windows setup `.exe` (13 Sep) are in since 9 Oct; still needs .NET installed and Intel Macs are not built. *Goal: one download, nothing else to install.*
 3. **Signing — NEW.** *Goal: opens without a security warning on Mac and Windows.*
 4. **Versions — NEW.** A visible version number and an About screen. *Goal: a user can tell us which build they have.*
 5. **Licences — NEW.** Settle the terms of the audio framework and the ASIO driver code. *Goal: cleared before anyone else gets a copy.*

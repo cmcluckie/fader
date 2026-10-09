@@ -37,8 +37,17 @@ if ($LASTEXITCODE -ne 0) { throw "engine build failed" }
 # The detector tests are pure DSP - no device - so a Windows compiler that
 # changed a result shows up here rather than in a loud room.
 Write-Host "==> Running detector tests"
-& (Join-Path $Build "fk-tests_artefacts\Release\fk-tests.exe")
-if ($LASTEXITCODE -ne 0) { throw "detector tests failed" }
+$TestOut = & (Join-Path $Build "fk-tests_artefacts\Release\fk-tests.exe") 2>&1
+$TestOut | Write-Host
+if ($LASTEXITCODE -ne 0) {
+    # T42 is a known, deliberate failure (as in preship.sh): the plateau path
+    # ships disabled and the test is kept red so the gap stays visible.
+    # Anything else - or a crash that printed no FAIL line - is real.
+    $Fails = @($TestOut | Where-Object { "$_" -match '^  FAIL' })
+    $Other = @($Fails | Where-Object { "$_" -notmatch 'T42' })
+    if ($Fails.Count -eq 0 -or $Other.Count -gt 0) { throw "detector tests failed" }
+    Write-Host "    (T42 failing as expected - plateau path is parked)"
+}
 
 Write-Host "==> Publishing app ($Rid, self-contained)"
 if (Test-Path $Out) { Remove-Item -Recurse -Force $Out }
