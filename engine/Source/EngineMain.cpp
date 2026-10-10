@@ -358,9 +358,13 @@ private:
         setup.inputChannels.clear();
         setup.inputChannels.setRange (0, 64, true);
 
-        if (d.inputs.empty())
+        const bool anyReturn = std::any_of (returns.begin(), returns.end(), [] (int r) { return r >= 0; });
+        if (d.inputs.empty() || ! anyReturn)
         {
-            // Nothing checked: outputs on defaults, idle (they are cleared every block).
+            // Nothing checked, or everything on None: outputs on defaults, idle.
+            // They are cleared every block, so this is digital silence on the
+            // device's default outputs - the same duplex open as always, rather
+            // than an input-only open that not every driver accepts.
             setup.useDefaultOutputChannels = true;
         }
         else
