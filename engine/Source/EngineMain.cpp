@@ -224,6 +224,7 @@ private:
 
             if ((mask & 0x2) && tick % 2 == 0)  sendNotches();    // ~10 Hz
             if  (mask & 0x4)                    sendSpectrum();    // ~20 Hz
+            if ((mask & 0x4) && tick % 2 == 0)  sendLevels();      // ~10 Hz, every device input
             if ((mask & 0x8) && tick % 10 == 0) sendStatus();     // ~2 Hz
             if (tick % 4 == 0) sendContext();                    // ~5 Hz
             if (tick % 4 == 0) sendTracks();                     // ~5 Hz
@@ -348,23 +349,34 @@ private:
         for (size_t i = 0; i < d.inputs.size(); ++i)
             returns.push_back (i < d.outputs.size() ? d.outputs[i] : d.inputs[i]);
 
+        // Every input the device has is opened, armed or not, so the app can show
+        // a level on each one and the operator can see which input moves when
+        // they sing. Bits past the device's channel count are ignored by JUCE's
+        // device classes. Slots then read their armed input by its own index
+        // (setInputMap below), which is its rank once every input is enabled.
+        setup.useDefaultInputChannels = false;
+        setup.inputChannels.clear();
+        setup.inputChannels.setRange (0, 64, true);
+
         if (d.inputs.empty())
         {
-            // Nothing checked: keep the device open on defaults but idle.
-            setup.useDefaultInputChannels  = true;
+            // Nothing checked: outputs on defaults, idle (they are cleared every block).
             setup.useDefaultOutputChannels = true;
         }
         else
         {
-            setup.useDefaultInputChannels  = false;
             setup.useDefaultOutputChannels = false;
-            setup.inputChannels.clear();
             setup.outputChannels.clear();
-            for (int idx : d.inputs)  setup.inputChannels.setBit (idx);
             for (int idx : returns)   if (idx >= 0) setup.outputChannels.setBit (idx);
         }
 
         devices.setAudioDeviceSetup (setup, true);
+
+        {
+            std::array<int, AudioEngine::maxChans> inRanks {};
+            for (size_t i = 0; i < d.inputs.size() && i < inRanks.size(); ++i) inRanks[i] = d.inputs[i];
+            engine.setInputMap (inRanks.data(), (int) d.inputs.size());
+        }
 
         // JUCE hands the callback one dense pointer per enabled output channel,
         // ascending - so each slot's return becomes a rank into that dense list.
@@ -451,6 +463,24 @@ private:
             juce::OSCMessage msg ("/fk/spectrum"); msg.addInt32 (ch); msg.addBlob (blob);
             sender.send (msg);
         }
+    }
+
+    // A peak per device input, armed or not: uint16 count, then count floats
+    // (linear 0..1, host byte order, like the spectrum blob). The Levels tab.
+    void sendLevels()
+    {
+        const int n = engine.meteredInputs();
+        if (n <= 0) return;
+        juce::MemoryBlock blob;
+        const juce::uint16 count = (juce::uint16) n;
+        blob.append (&count, sizeof (count));
+        for (int c = 0; c < n; ++c)
+        {
+            const float pk = engine.takeInputPeak (c);
+            blob.append (&pk, sizeof (pk));
+        }
+        juce::OSCMessage msg ("/fk/levels"); msg.addBlob (blob);
+        sender.send (msg);
     }
 
     // Enumerate input-capable devices and report each, plus the current one.

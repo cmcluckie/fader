@@ -82,10 +82,10 @@ to any output.
 
 1. Build and start the app there (README: Build, and Building the engine).
 2. Audio device: the Apollo (or that computer's own interface).
-3. Arm the two inputs listed as the mic inputs 1 and 2. The app log lists every
-   input by name at start-up (`input N: ...`). On the rig's Apollo, Core Audio
-   input 0 is Mic 1 (it moved when you sang on 9 Oct); inputs 24/25 are a
-   Console loopback pair, not mics.
+3. Setup → **Levels**: sing, and arm the input whose meter moves (the app log
+   also lists every input by name at start-up, `input N: ...`). On the rig's
+   Apollo, Core Audio input 0 is Mic 1 (it moved when you sang on 9 Oct);
+   inputs 24/25 are a Console loopback pair, not mics.
 4. Leave each one's Return on **None — listen only**. The Show pill reads
    ASSIST.
 5. Sing, and push the monitors until the room rings once. Every catch is on the

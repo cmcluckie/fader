@@ -18,8 +18,8 @@ disagree, the code is right and this page is a bug.
 | Address | Args | Meaning |
 |---|---|---|
 | `/fk/audio` | `s i i` | device name, sample rate, buffer size. The app always sends 48000 and 64. |
-| `/fk/inputs` | `i ...` | the physical input channels to guard (0-based), up to eight. Sorted by the engine; slot i is the i-th of them. |
-| `/fk/outputs` | `i ...` | where each slot returns, parallel to the sorted inputs. Empty: each slot returns on its own input's index. |
+| `/fk/inputs` | `i ...` | the physical input channels to guard (0-based), up to eight. Sorted by the engine; slot i is the i-th of them. Since 2026-10-09 the engine opens EVERY input the device has (for `/fk/levels`) and each slot reads its armed input by index. |
+| `/fk/outputs` | `i ...` | where each slot returns, parallel to the sorted inputs. `-1` = no return: the slot is analysed and logged and writes nothing anywhere (assist). Empty list: each slot returns on its own input's index (the old rule, for tools that never send one). |
 | `/fk/listdevices` | - | send the device and channel lists again |
 | `/fk/bypass` | `i` | 1: audio passes untouched, analysis stops, filters fade out |
 | `/fk/analysis` | `i` | 1: keep detecting while bypassed (what Capture uses) - detects and logs, places nothing |
@@ -64,6 +64,7 @@ Everything else in the detector and the filter bank is fixed at build time.
 | `/fk/device` | `s` | one input-capable device name | after `/fk/listdevices` |
 | `/fk/channel` | `i s` | input index, name | with the device list |
 | `/fk/outchannel` | `i s` | output index, name | with the device list |
+| `/fk/levels` | `b` | blob: uint16 count, then count little-endian floats: the peak sample magnitude (linear 0..1) on each device input since the last report, armed or not. The Levels tab. | ~10 Hz with bit 2 |
 | `/fk/event` | `i f f f f f i i` | channel, Hz, level dB, age ms (how long it was watched), width low Hz, width high Hz, path, refused | on every detection, whatever the mask |
 | `/fk/reject` | `i f f i i` | channel, Hz, level dB, reason, frames | when a candidate is declined, with bit 0 |
 | `/fk/notches` | `i b` | channel, packed filter state | about 10 Hz with bit 1 |

@@ -75,6 +75,8 @@ public sealed class FkEngineClient : IAsyncDisposable
     public event Action<FkRejection>? RejectionReceived;
     public event Action<int, FkNotch[]>? NotchesReceived;
     public event Action<FkSpectrum>? SpectrumReceived;
+    /// <summary>A peak per device input (linear 0..1), every input the device has, ~10 Hz.</summary>
+    public event Action<float[]>? LevelsReceived;
     public event Action<FkAudioState>? AudioStateReceived;
     public event Action<string>? DeviceListed;
     public event Action<int, string>? ChannelListed;
@@ -217,6 +219,10 @@ public sealed class FkEngineClient : IAsyncDisposable
                 if (DecodeSpectrum(ch, blob) is { } s) SpectrumReceived?.Invoke(s);
                 break;
 
+            case "/fk/levels" when m.Arguments is [byte[] levelBlob]:
+                if (DecodeLevels(levelBlob) is { } levels) LevelsReceived?.Invoke(levels);
+                break;
+
             case "/fk/audio/state" when m.Arguments is [string dev, int sr, int buf, int running]:
                 AudioStateReceived?.Invoke(new FkAudioState(dev, sr, buf, running != 0));
                 break;
@@ -255,6 +261,22 @@ public sealed class FkEngineClient : IAsyncDisposable
     }
 
     // u16 binCount, f32 hzPerBin, f32[binCount] magnitudes
+    /// <summary>
+    /// The levels blob: uint16 count, then count little-endian floats, the peak
+    /// sample magnitude on each device input since the last report. Null for a
+    /// short or malformed blob.
+    /// </summary>
+    public static float[]? DecodeLevels(byte[] blob)
+    {
+        if (blob.Length < 2) return null;
+        var count = BinaryPrimitives.ReadUInt16LittleEndian(blob);
+        if (blob.Length < 2 + count * 4) return null;
+        var levels = new float[count];
+        for (var i = 0; i < count; i++)
+            levels[i] = BinaryPrimitives.ReadSingleLittleEndian(blob.AsSpan(2 + i * 4));
+        return levels;
+    }
+
     private static FkSpectrum? DecodeSpectrum(int ch, byte[] blob)
     {
         if (blob.Length < 6) return null;

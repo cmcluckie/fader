@@ -533,6 +533,20 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 - **As built.** 08-20 `6f52c68`, `dbd7a35`. Engine spectrum, X32 RTA, filters, detections coloured by whether the desk's analyser agrees. Display only.
 - **Known.** With more than two channels the extra ones overwrite one trace.
 
+
+### 5.10 Setup in three tabs - IN PROGRESS
+
+- **Goal.** A new user finds their microphone and arms it without being told which input it is; everything about the interface and the desk sits apart from everything about the guard.
+- **Exit.** [x] Three tabs: Audio device (device, sample rate, buffer, console address and its search, the path check, the desk bypass, a Rule Zero line), Levels (every device input with a live meter, a held peak in dB and an Arm button, grouped Analog / ADAT / S/PDIF / Virtual from the names the device gives), Inputs (only the armed channels with Return, level and notches; then the guard settings, ring-out, capture, filters in place, the advanced disclosure). [x] One status strip above the tabs: engine, build, ASSIST or GUARD, armed count, in-path count. [x] The path check is disabled with a reason while no Return is set. [x] The tab is remembered while the app runs; a fresh open lands on Inputs when something is armed, else Audio device. [ ] Run on a real machine: Chris's separate computer first. [ ] The mock-up Chris approved (the Design artifact "Feedback Fader Setup tabs", 10-09) compared against the real screen.
+- **As built.** 10-09: `SetupView.cs` rebuilt around three pages and a tab strip; `LevelRow` for the Levels tab; the Inputs tab's strips are the armed channels only, with an "Arm another → Levels" button; `EngineSupervisor.EngineBuild` from the engine's first output line for the strip. Built, tests pass, **not run anywhere**: the rig is frozen and a second app instance on this Mac would end the rig's engine.
+
+### 5.11 A level on every input - IN PROGRESS
+
+- **Goal.** The input that moves when you sing is obvious within two seconds.
+- **Exit.** [x] The engine opens every input the device has (bits past the device's count are ignored), each slot reads its armed input by index (`setInputMap`), and a lock-free peak per input is taken by the telemetry thread ten times a second as `/fk/levels`. [x] The app keeps the last peak and a two-second hold per input in dBFS (`InputLevels`). [x] The levels blob decodes (self-test). [ ] S4: on a real interface the meters move on the right rows and the armed slots still read the right inputs (the slot-to-input mapping changed under them).
+- **As built.** 10-09: `AudioEngine.h` (`inRank`, `inPeak`, `takeInputPeak`), `EngineMain.cpp` (`setRange(0, 64)` on the input channels, `sendLevels`), `FkEngineClient.DecodeLevels`, `FeedbackController.OnLevels`. The 10-09 listens with `sounddevice` (7.9) are what this replaces.
+- **Risk to watch.** Opening every input is new for the Windows build: a Scarlett has two, but a large ASIO device enabling all channels may open slower. The 30 s start-up grace covers it; the log will say.
+
 ---
 
 # 6. Engine architecture - NEW
@@ -836,7 +850,14 @@ on the Apollo inputs (40 s silent, 30 s singing, from outside the engine) were
 the whole of it. Found and corrected my own false alarm about the User In
 patch.
 
-**Where the plan stands.** 79 features: 25 done, 19 in progress, 31 not
+**Later in the evening.** Chris asked for Setup in three tabs (Audio device,
+Levels, Inputs), approved a mock-up on the Design canvas, and said build it.
+Built 5.10 and 5.11: the tabs, and the engine opening every input with a peak
+per input ten times a second, so the Levels tab can show which input moves.
+Not run anywhere: the rig is frozen and a second instance here would end its
+engine; his separate computer sees it first.
+
+**Where the plan stands.** 81 features: 25 done, 21 in progress, 31 not
 started, 4 cancelled (three of them proposals).
 
 ### 2026-10-04

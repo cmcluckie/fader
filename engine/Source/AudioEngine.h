@@ -2,6 +2,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <atomic>
 #include <array>
+#include <cmath>
 #include "FeedbackDetector.h"
 #include "NotchBank.h"
 #include "EngineDefaults.h"
@@ -50,6 +51,33 @@ public:
         // beyond the given count keep the old mirror rule.
         for (int i = 0; i < maxChans; ++i)
             outRank[(size_t) i] = i < count ? ranks[i] : i;
+    }
+
+    /// <summary>
+    /// Which enabled input each slot reads, as a RANK into the device's enabled
+    /// input channels. Every input is enabled now (so each can be metered), so the
+    /// rank is the armed input's own index. Slots beyond the count read input i.
+    /// Call only while the device is being (re)configured, not mid-callback.
+    /// </summary>
+    void setInputMap (const int* ranks, int count) noexcept
+    {
+        for (int i = 0; i < maxChans; ++i)
+            inRank[(size_t) i] = i < count ? ranks[i] : i;
+    }
+
+    /// <summary>How many device inputs are being metered (the enabled input count, capped).</summary>
+    int meteredInputs() const noexcept { return metered.load(); }
+
+    /// <summary>
+    /// The peak sample magnitude on one device input since the last call, 0..1
+    /// (linear), and reset. The telemetry thread calls this ~10 times a second,
+    /// so each value is the peak of the last ~100 ms. Every input the device has,
+    /// armed or not: this is what the Levels tab shows.
+    /// </summary>
+    float takeInputPeak (int input) noexcept
+    {
+        if (input < 0 || input >= (int) inPeak.size()) return 0.0f;
+        return inPeak[(size_t) input].exchange (0.0f);
     }
 
     /// <summary>Pass audio through untouched, keeping every notch's state intact.</summary>
@@ -238,8 +266,22 @@ public:
         const float q       = notchQ.load();
         const float softCap = maxCutDb.load();
 
-        const int  active = juce::jmin (activeChans.load(), maxChans, numInputs);
+        const int  active = juce::jmin (activeChans.load(), maxChans);
         const bool bypass = bypassed.load();
+
+        // A peak per device input, armed or not, so the app can show a level on
+        // every input and the operator can see which one moves when they sing.
+        // Lock-free max: the telemetry thread takes and resets it.
+        const int meteredNow = juce::jmin (numInputs, (int) inPeak.size());
+        metered.store (meteredNow);
+        for (int c = 0; c < meteredNow; ++c)
+        {
+            if (inputs[c] == nullptr) continue;
+            const auto range = juce::FloatVectorOperations::findMinAndMax (inputs[c], numSamples);
+            const float pk = juce::jmax (std::abs (range.getStart()), std::abs (range.getEnd()));
+            float cur = inPeak[(size_t) c].load (std::memory_order_relaxed);
+            while (pk > cur && ! inPeak[(size_t) c].compare_exchange_weak (cur, pk)) {}
+        }
 
         // Clear every output first; slots then write into their mapped returns.
         // Anything not driven is silence, never garbage.
@@ -249,7 +291,8 @@ public:
         for (int ch = 0; ch < active; ++ch)
         {
             const int rank = outRank[(size_t) ch];
-            if (inputs[ch] == nullptr) continue;
+            const int src  = inRank[(size_t) ch];
+            if (src < 0 || src >= numInputs || inputs[src] == nullptr) continue;
 
             // No return (rank -1): the slot still runs the whole machine - detector,
             // bank, duck, recorder - on a scratch block, so everything is logged
@@ -259,7 +302,7 @@ public:
             if (listenOnly && numSamples > (int) listenBuf.size()) continue;
             if (! listenOnly && (rank >= numOutputs || outputs[rank] == nullptr)) continue;
 
-            const float* in  = inputs[ch];
+            const float* in  = inputs[src];
             float*       out = listenOnly ? listenBuf.data() : outputs[rank];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
@@ -501,6 +544,19 @@ private:
     // Scratch block for a slot with no return: the whole chain runs on it, nothing
     // is written to the device. Sized for any buffer the engine is ever opened with.
     std::array<float, 8192>                      listenBuf {};
+
+    // Which enabled input each slot reads (see setInputMap); identity by default.
+    static constexpr std::array<int, maxChans> identityRanks()
+    {
+        std::array<int, maxChans> a {};
+        for (int i = 0; i < maxChans; ++i) a[(size_t) i] = i;
+        return a;
+    }
+    std::array<int, maxChans>                    inRank = identityRanks();
+
+    // Peak per device input since the telemetry thread last took it (see takeInputPeak).
+    std::array<std::atomic<float>, 64>           inPeak {};
+    std::atomic<int>                             metered { 0 };
     std::array<float, (size_t) recRingSize> recRing {};
     std::array<float, (size_t) maxRecBlock> recPre {};
     std::atomic<int> recWrite { 0 }, recRead { 0 };

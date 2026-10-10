@@ -115,12 +115,60 @@ public sealed class FeedbackController : IAsyncDisposable
         _supervisor.Client.ChannelListed += OnChannelListed;
         _supervisor.Client.OutChannelListed += OnOutChannelListed;
         _supervisor.Client.AudioStateReceived += OnAudioState;
+        _supervisor.Client.LevelsReceived += OnLevels;
     }
 
     public bool EngineOk => _supervisor.EngineOk;
 
     /// <summary>The engine process is up, even if no audio device is running yet.</summary>
     public bool ProcessAlive => _supervisor.ProcessAlive;
+
+    /// <summary>The running engine's build stamp, or null before it has said.</summary>
+    public string? EngineBuild => _supervisor.EngineBuild;
+
+    // ---- a level on every device input ------------------------------------
+    // The engine opens every input the device has and reports a peak per input
+    // ten times a second, armed or not. Kept here as the last peak and a peak
+    // held for two seconds, both in dBFS, for the Levels tab: sing, and the
+    // input that moves is the microphone.
+    private readonly object _levelLock = new();
+    private float[] _levelDb = Array.Empty<float>();
+    private float[] _holdDb = Array.Empty<float>();
+    private long[] _holdAt = Array.Empty<long>();
+
+    private void OnLevels(float[] peaks)
+    {
+        var now = Environment.TickCount64;
+        lock (_levelLock)
+        {
+            if (_levelDb.Length != peaks.Length)
+            {
+                _levelDb = new float[peaks.Length];
+                _holdDb = Enumerable.Repeat(-120f, peaks.Length).ToArray();
+                _holdAt = new long[peaks.Length];
+            }
+            for (var c = 0; c < peaks.Length; c++)
+            {
+                var db = peaks[c] > 1e-6f ? 20f * MathF.Log10(peaks[c]) : -120f;
+                _levelDb[c] = db;
+                if (db >= _holdDb[c] || now - _holdAt[c] > 2000) { _holdDb[c] = db; _holdAt[c] = now; }
+            }
+        }
+    }
+
+    /// <summary>Per device input: the peak of the last report and the peak held for two seconds, in dBFS. Empty until the engine reports.</summary>
+    public (float LevelDb, float HoldDb)[] InputLevels
+    {
+        get
+        {
+            lock (_levelLock)
+            {
+                var r = new (float, float)[_levelDb.Length];
+                for (var c = 0; c < r.Length; c++) r[c] = (_levelDb[c], _holdDb[c]);
+                return r;
+            }
+        }
+    }
     public string LogPath => _log.Path;
 
     public event Action<bool>? EngineOkChanged;
@@ -615,6 +663,12 @@ public sealed class FeedbackController : IAsyncDisposable
     public bool InPath
     {
         get { lock (_lock) { return _enabled.Any(i => _returns.GetValueOrDefault(i, NoReturn) >= 0); } }
+    }
+
+    /// <summary>How many armed inputs have a Return, and so are actually in the audio path.</summary>
+    public int InPathCount
+    {
+        get { lock (_lock) { return _enabled.Count(i => _returns.GetValueOrDefault(i, NoReturn) >= 0); } }
     }
 
     public void SetReturn(int channel, int output)

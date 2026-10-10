@@ -241,7 +241,13 @@ there is:
 
 - **Feedback engine** (tray): the audio process on or off.
 - **Arm** (Setup, per channel): this input is guarded. Nothing is cut until a
-  channel is armed.
+  channel is armed. Setup has three tabs since 9 Oct: **Audio device** (the
+  interface, the console, the desk bypass, the path check), **Levels** (every
+  input the device has, each with a live meter and an Arm button: sing, and the
+  input that moves is your microphone) and **Inputs** (only the armed channels,
+  with their Returns, then the guard settings, ring-out, capture and the filters
+  in place). A status strip above the tabs reads the same on all three: engine,
+  build, ASSIST or GUARD, how many are armed and how many are in the audio path.
 - **Return** (Setup, per channel): the output the cut signal goes back out on,
   or **None**: the detector listens and every catch is logged and shown, and
   nothing is written to any output. That is assist mode, and it is what a newly

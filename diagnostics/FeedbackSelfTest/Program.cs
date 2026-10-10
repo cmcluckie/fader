@@ -125,6 +125,16 @@ internal static class Program
         Check("RTA band 99 is ~20 kHz", Math.Abs(X32Rta.BandHz(99) - 20000f) < 50f);
         Check("RTA band centres ascend",
             X32Rta.BandHz(10) < X32Rta.BandHz(50) && X32Rta.BandHz(50) < X32Rta.BandHz(90));
+
+        // The engine's levels blob: uint16 count, then count little-endian floats.
+        var lv = new byte[2 + 3 * 4];
+        BitConverter.GetBytes((ushort) 3).CopyTo(lv, 0);
+        BitConverter.GetBytes(0.5f).CopyTo(lv, 2);
+        BitConverter.GetBytes(0.0f).CopyTo(lv, 6);
+        BitConverter.GetBytes(1.0f).CopyTo(lv, 10);
+        var decoded = FkEngineClient.DecodeLevels(lv);
+        Check("levels blob decodes three inputs", decoded is { Length: 3 } && Math.Abs(decoded[0] - 0.5f) < 1e-6f && decoded[1] == 0f && decoded[2] == 1f);
+        Check("levels short blob rejected", FkEngineClient.DecodeLevels(new byte[] { 3, 0, 1 }) is null);
     }
 
     private static void Correlation()

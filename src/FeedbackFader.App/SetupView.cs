@@ -11,11 +11,17 @@ using Fader.Shared.Ui;
 namespace FeedbackFader.App;
 
 /// <summary>
-/// Setup mode: the screen you open at soundcheck and close before the set.
+/// Setup, in three tabs (rebuilt 2026-10-09 from the mock-up Chris approved):
 ///
-/// Same data as Show, opposite posture - calm, dense, honest. Pick the interface,
-/// switch on the mics to guard, name them the way the band does, and the engine's
-/// real detection spec sits behind one disclosure for anyone who wants to check it.
+///   Audio device  - the interface, the console, the desk bypass, the path check.
+///   Levels        - EVERY input the device has, each with a live meter and an
+///                   Arm button. Sing; the input that moves is your microphone.
+///   Inputs        - only the armed channels: name, Return (None = listen only),
+///                   level, notches; then the guard settings, ring-out, capture
+///                   and the filters in place.
+///
+/// A status strip above the tabs says the same thing on every tab: engine, build,
+/// ASSIST or GUARD, how many are armed and how many are in the audio path.
 /// </summary>
 public sealed class SetupView : UserControl
 {
@@ -31,12 +37,12 @@ public sealed class SetupView : UserControl
     private readonly ComboBox _attack = new() { MinWidth = 130 };
     private readonly ComboBox _maxCut = new() { MinWidth = 130 };
     private readonly ComboBox _budget = new() { MinWidth = 190 };
-    private readonly TextBox _console = new() { MinWidth = 150, Watermark = "192.168.1.100" };
+    private readonly TextBox _console = new() { MinWidth = 170, Watermark = "192.168.1.100" };
     // The one-click desk bypass: which X32 channels the guarded mics land on and
     // which muted spares carry the same mics straight from the Console. Blank
     // keeps the feature hidden and the app read-only on the desk (README, Rule Zero).
-    private readonly TextBox _deskCh = new() { MinWidth = 72, Watermark = "1 2" };
-    private readonly TextBox _bypassCh = new() { MinWidth = 72, Watermark = "11 12" };
+    private readonly TextBox _deskCh = new() { MinWidth = 90, Watermark = "1 2" };
+    private readonly TextBox _bypassCh = new() { MinWidth = 90, Watermark = "11 12" };
     private bool _syncingEdge;
 
     // Named in what the operator is deciding, not in what it sets underneath.
@@ -94,6 +100,24 @@ public sealed class SetupView : UserControl
     private bool _discOpen;
     private IPAddress _consoleAddress = IPAddress.None;
 
+    // ---- the three tabs and the strip above them --------------------------
+    private const int TabDevice = 0, TabLevels = 1, TabInputs = 2;
+    private static int s_lastTab = -1;                 // survives the window being closed and reopened
+    private int _tab = -1;
+    private readonly Control[] _pages = new Control[3];
+    private readonly Border[] _tabPills = new Border[3];
+    private readonly TextBlock[] _tabLabels = new TextBlock[3];
+    private readonly Led _statusLed = new(Tokens.Safe, 9);
+    private readonly TextBlock _statusText = Ui.Mono("", 12, Tokens.InkDim);
+    private readonly TextBlock _deviceInfo = Ui.Mono("", 12.5, Tokens.InkDim);
+    private readonly TextBlock _consoleState = Ui.Text("", 12.5, Tokens.InkDim);
+    private readonly TextBlock _deskState = Ui.Mono("", 11, Tokens.InkDim);
+    private readonly TextBlock _inputsEmpty = Ui.Text("", 13, Tokens.InkDim);
+    private readonly StackPanel _levelRows = new() { Spacing = 2 };
+    private readonly List<LevelRow> _levelRowList = new();
+    private int[] _levelsBuilt = Array.Empty<int>();
+    private int _frame;
+
     public SetupView(FeedbackController feedback)
     {
         _feedback = feedback;
@@ -106,8 +130,7 @@ public sealed class SetupView : UserControl
 
         // Which console to ask. Only the RTA overlay and the signal-path check
         // need it, and both say so plainly when it is blank - so this is a field,
-        // not a wizard. It used to be inherited from the bridge's config.json,
-        // back when the two products were one app.
+        // not a wizard. The app also searches the LAN for it at start-up.
         _console.Text = _feedback.ConsoleAddress ?? "";
         SyncConsole();
         _console.LostFocus += (_, _) => CommitConsole();
@@ -126,29 +149,6 @@ public sealed class SetupView : UserControl
                 if (e.Key == Avalonia.Input.Key.Enter) CommitDesk();
             };
         }
-
-        var toolbar = Ui.Stack(Orientation.Horizontal, 18,
-            Field("Audio device", _deviceBox),
-            Field("Sample rate", Pill("48 kHz")),
-            Field("Buffer", Pill("64")),
-            Field("Console (X32)", _console),
-            Field("Desk ch", _deskCh),
-            Field("Bypass ch", _bypassCh));
-        toolbar.Margin = new Thickness(0, 0, 0, 16);
-
-        var header = new Grid
-        {
-            ColumnDefinitions = new ColumnDefinitions(ChannelStrip.Columns),
-            Margin = new Thickness(10, 0, 10, 6),
-        };
-        AddCol(header, Ui.Caption("Arm"), 0);
-        AddCol(header, Ui.Caption("Channel"), 1);
-        AddCol(header, Ui.Caption("Input"), 2);
-        AddCol(header, Ui.Caption("Return"), 3);
-        AddCol(header, Ui.Caption("Level"), 4);
-        var notchCap = Ui.Caption("Notches");
-        notchCap.HorizontalAlignment = HorizontalAlignment.Right;
-        AddCol(header, notchCap, 5);
 
         // Where the detector looks. Dragging the edges on the live spectrum is the
         // fix for a voice being notched - you can see your own energy sitting below
@@ -209,42 +209,20 @@ public sealed class SetupView : UserControl
             _feedback.SetHarmBudget(Budgets[_budget.SelectedIndex].Budget);
         };
 
-        var bandHead = Ui.Stack(Orientation.Horizontal, 12,
-            Ui.Caption("Listen band"), _bandLabel);
-        var bandBox = Ui.Stack(Orientation.Vertical, 8,
-            bandHead,
-            _band,
-            Ui.Stack(Orientation.Horizontal, 16,
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Low edge"), _lowEdge),
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Attack"), _attack),
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Max cut"), _maxCut),
-                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Voice budget"), _budget)),
-            Ui.Text("It cuts what lands inside the box: between the teal handles and above the dashed line. Drag any of the three.",
-                    12.5, Tokens.InkFaint));
-        bandBox.Margin = new Thickness(0, 0, 0, 16);
+        // The three pages.
+        _pages[TabDevice] = BuildDevicePage();
+        _pages[TabLevels] = BuildLevelsPage();
+        _pages[TabInputs] = BuildInputsPage();
 
-        var pathCard = BuildPathCheck();
-        var ringOut = BuildRingOut();
-        var filters = BuildFilterList();
+        var pages = new Panel();
+        foreach (var p in _pages) pages.Children.Add(p);
 
-        var disclosure = BuildDisclosure();
-
-        var root = new DockPanel { Margin = new Thickness(20), LastChildFill = true };
-        var top = Ui.Stack(Orientation.Vertical, 0, toolbar, bandBox, _hint, header);
+        var root = new DockPanel { Margin = new Thickness(20, 14, 20, 20), LastChildFill = true };
+        var top = Ui.Stack(Orientation.Vertical, 12, BuildStatusStrip(), BuildTabStrip());
+        top.Margin = new Thickness(0, 0, 0, 16);
         DockPanel.SetDock(top, Dock.Top);
-        DockPanel.SetDock(disclosure, Dock.Bottom);
         root.Children.Add(top);
-        root.Children.Add(disclosure);
-        root.Children.Add(new ScrollViewer
-        {
-            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
-            // Channel strips FIRST, right under their ARM/CHANNEL/INPUT header -
-            // they are the main thing on this screen. The signal-path check and
-            // ring-out are occasional tools, so they sit below the mics, not
-            // wedged between the header and the rows it labels.
-            Content = Ui.Stack(Orientation.Vertical, 18, _strips, pathCard, ringOut, filters),
-        });
+        root.Children.Add(pages);
         Content = root;
 
         _feedback.SearchRangeChanged += OnSearchRange;
@@ -253,10 +231,346 @@ public sealed class SetupView : UserControl
         _feedback.SpectrumChanged += OnSpectrum;
         _feedback.NotchesChanged += OnNotches;
         _feedback.ConsoleAddressChanged += OnConsoleAddress;
+        _feedback.EngineOkChanged += OnEngineOk;
+        _feedback.BypassChanged += OnEngineOk;
+        _feedback.DeskBypassChanged += OnDesk;
 
         RefreshDevices();
         RebuildStrips();
+        RebuildLevelRows();
         RebuildNotchList();   // show the empty state before any telemetry arrives
+        RenderStatus();
+
+        // Open where the work is: Inputs when something is armed, else the device.
+        SelectTab(s_lastTab >= 0 ? s_lastTab : _feedback.EnabledInputs.Count > 0 ? TabInputs : TabDevice);
+    }
+
+    // ---- the strip and the tabs --------------------------------------------
+
+    private Control BuildStatusStrip()
+    {
+        var pill = new Border
+        {
+            Background = Tokens.Panel,
+            BorderBrush = Tokens.Line,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Tokens.Pill,
+            Padding = new Thickness(12, 6),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = Ui.Stack(Orientation.Horizontal, 10, _statusLed, _statusText),
+        };
+        _statusLed.VerticalAlignment = VerticalAlignment.Center;
+        _statusText.VerticalAlignment = VerticalAlignment.Center;
+        return pill;
+    }
+
+    private Control BuildTabStrip()
+    {
+        var names = new[] { "Audio device", "Levels", "Inputs" };
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+        for (var i = 0; i < 3; i++)
+        {
+            var label = Ui.Text(names[i], 14, Tokens.InkDim, FontWeight.SemiBold);
+            label.FontFamily = Tokens.Display;
+            var pill = new Border
+            {
+                Padding = new Thickness(14, 9),
+                BorderThickness = new Thickness(0, 0, 0, 2),
+                BorderBrush = Brushes.Transparent,
+                Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
+                Child = label,
+            };
+            var index = i;
+            pill.PointerPressed += (_, _) => SelectTab(index);
+            _tabPills[i] = pill;
+            _tabLabels[i] = label;
+            row.Children.Add(pill);
+        }
+        return new Border
+        {
+            BorderBrush = Tokens.Line,
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = row,
+        };
+    }
+
+    private void SelectTab(int tab)
+    {
+        _tab = tab;
+        s_lastTab = tab;
+        for (var i = 0; i < 3; i++)
+        {
+            var on = i == tab;
+            _pages[i].IsVisible = on;
+            _tabPills[i].BorderBrush = on ? Tokens.Accent : Brushes.Transparent;
+            _tabLabels[i].Foreground = on ? Tokens.Accent : Tokens.InkDim;
+        }
+        if (tab == TabLevels) RebuildLevelRows();
+    }
+
+    /// <summary>
+    /// One sentence that is true on every tab: engine, build, what the guard is
+    /// doing, how many mics are armed, how many are actually in the audio path.
+    /// </summary>
+    private void RenderStatus()
+    {
+        var alive = _feedback.ProcessAlive;
+        var ok = _feedback.EngineOk;
+        var armed = _feedback.EnabledInputs.Count;
+        var inPath = _feedback.InPathCount;
+        var build = _feedback.EngineBuild is { Length: > 0 } b ? b.Split(' ')[0] : "build ?";
+        var mode = !alive ? "ENGINE DOWN"
+                 : !ok ? "NO AUDIO INTERFACE"
+                 : armed == 0 ? "NOTHING ARMED"
+                 : !_feedback.InPath ? "ASSIST"
+                 : _feedback.IsBypassed ? "GUARD OFF"
+                 : "GUARD ON";
+        _statusText.Text = $"engine {(ok ? "running" : alive ? "up, no audio" : "down")} · {build} · {mode} · {armed} armed · {inPath} in the audio path";
+        _statusLed.Colour = !alive || !ok ? Tokens.Clip : armed == 0 ? Tokens.InkDim : Tokens.Safe;
+        _statusLed.Pulsing = ok && armed > 0 && _feedback.InPath && !_feedback.IsBypassed;
+
+        var ins = _feedback.InputChannels.Count;
+        var outs = _feedback.OutputChannels.Count;
+        _deviceInfo.Text = ins == 0 ? "no device open" : $"{ins} inputs · {outs} outputs · 48 kHz · 64 samples (1.3 ms)";
+
+        _consoleState.Text = _feedback.ConsoleAddress is null
+            ? "Not set. The app searches the LAN for the desk at start-up; type the address only if that finds nothing."
+            : "Set. The RTA overlay and the meters read from it; the app writes nothing to the desk.";
+
+        // In assist (no Return anywhere) there is nowhere to put the tone. Say so
+        // instead of letting the check report a failure that is not one.
+        var canTone = _feedback.InPath;
+        _pathCheck.IsEnabled = canTone;
+        if (!canTone)
+        {
+            _pathState.Text = "No Return is set, so there is no tone to send. Choose a Return on Inputs first.";
+            _pathState.Foreground = Tokens.InkDim;
+        }
+
+        var desk = _feedback.DeskBypassConfigured;
+        _deskState.Text = desk ? "ON · BYPASS TO DESK IS ON SHOW" : "OFF · BLANK KEEPS THE BUTTON OFF SHOW";
+        _deskState.Foreground = desk ? Tokens.Accent : Tokens.InkDim;
+    }
+
+    // ---- tab 1: the audio device --------------------------------------------
+
+    private Control BuildDevicePage()
+    {
+        var deviceRow = Ui.Stack(Orientation.Horizontal, 18,
+            Field("Device", _deviceBox),
+            Field("Sample rate", Pill("48 kHz")),
+            Field("Buffer", Pill("64")));
+        var deviceCard = Ui.Card(Ui.Stack(Orientation.Vertical, 12,
+            Ui.Caption("Audio device"),
+            deviceRow,
+            _deviceInfo));
+
+        var found = Ui.Stack(Orientation.Horizontal, 12, Field("Address", _console));
+        var consoleCard = Ui.Card(Ui.Stack(Orientation.Vertical, 12,
+            Ui.Caption("Console (X32)"),
+            found,
+            _consoleState,
+            BuildPathCheck()));
+
+        var deskHead = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
+        var deskCap = Ui.Caption("Desk bypass");
+        Grid.SetColumn(deskCap, 0);
+        Grid.SetColumn(_deskState, 1);
+        deskHead.Children.Add(deskCap);
+        deskHead.Children.Add(_deskState);
+        var deskCard = Ui.Card(Ui.Stack(Orientation.Vertical, 12,
+            deskHead,
+            Ui.Stack(Orientation.Horizontal, 14,
+                Field("Desk channels", _deskCh),
+                Field("Bypass channels", _bypassCh)),
+            Wrapped("The one thing the app can write on the desk: a mute swap, from a one-second hold on Show. Blank keeps that button off the screen.",
+                    12.5, Tokens.InkDim)));
+
+        var twoUp = new Grid { ColumnDefinitions = new ColumnDefinitions("*,*") };
+        Grid.SetColumn(consoleCard, 0);
+        Grid.SetColumn(deskCard, 1);
+        deskCard.Margin = new Thickness(14, 0, 0, 0);
+        twoUp.Children.Add(consoleCard);
+        twoUp.Children.Add(deskCard);
+
+        var rule = new Border
+        {
+            Background = Tokens.Ground2,
+            BorderBrush = Tokens.LineSoft,
+            BorderThickness = new Thickness(1),
+            CornerRadius = Tokens.RadiusMd,
+            Padding = new Thickness(16, 12),
+            Child = Ui.Stack(Orientation.Horizontal, 12,
+                new Led(Tokens.Accent, 8) { VerticalAlignment = VerticalAlignment.Center },
+                Wrapped("Rule Zero. This screen never changes a Console or X32 setting. What the engine listens to, and where it returns, is on the Inputs tab.",
+                        13, Tokens.InkDim, VerticalAlignment.Center)),
+        };
+
+        return new ScrollViewer
+        {
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = Ui.Stack(Orientation.Vertical, 14, deviceCard, twoUp, rule),
+        };
+    }
+
+    // ---- tab 2: levels on every input -----------------------------------------
+
+    private Control BuildLevelsPage()
+    {
+        var hint = Ui.Text("Sing. The input that moves is your microphone. Arm it here or on Inputs; an armed input listens only until a Return is chosen.",
+                           14, Tokens.InkDim);
+        hint.TextWrapping = TextWrapping.Wrap;
+        hint.Margin = new Thickness(0, 0, 0, 12);
+
+        var header = new Grid { ColumnDefinitions = new ColumnDefinitions(LevelRow.Columns), Margin = new Thickness(10, 0, 10, 6) };
+        AddCol(header, Ui.Caption("#"), 0);
+        AddCol(header, Ui.Caption("Input"), 1);
+        AddCol(header, Ui.Caption("Name"), 2);
+        AddCol(header, Ui.Caption("Level · peak held 2 s"), 3);
+        var dbCap = Ui.Caption("dB");
+        dbCap.HorizontalAlignment = HorizontalAlignment.Right;
+        AddCol(header, dbCap, 4);
+        var armCap = Ui.Caption("Arm");
+        armCap.HorizontalAlignment = HorizontalAlignment.Right;
+        AddCol(header, armCap, 5);
+
+        var card = Ui.Card(Ui.Stack(Orientation.Vertical, 4, header, _levelRows), background: Tokens.Ground2, pad: 12);
+
+        var footer = Ui.Text("The meters are what the engine hears, read from the same stream it analyses. Nothing here touches an output.",
+                             12.5, Tokens.InkFaint);
+        footer.Margin = new Thickness(0, 12, 0, 0);
+
+        var root = new DockPanel { LastChildFill = true };
+        DockPanel.SetDock(hint, Dock.Top);
+        DockPanel.SetDock(footer, Dock.Bottom);
+        root.Children.Add(hint);
+        root.Children.Add(footer);
+        root.Children.Add(new ScrollViewer
+        {
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = card,
+        });
+        return root;
+    }
+
+    /// <summary>One row per device input, in device order, with a caption where the family changes.</summary>
+    private void RebuildLevelRows()
+    {
+        var channels = _feedback.InputChannels
+            .Where(c => !c.Name.StartsWith("NONE", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var indices = channels.Select(c => c.Index).ToArray();
+
+        if (indices.SequenceEqual(_levelsBuilt))
+        {
+            foreach (var row in _levelRowList)
+                row.SyncArm(_feedback.IsInputEnabled(row.Index), _feedback.ChannelName(row.Index), _feedback.InputChannels.FirstOrDefault(c => c.Index == row.Index).Name);
+            return;
+        }
+        _levelsBuilt = indices;
+
+        _levelRows.Children.Clear();
+        _levelRowList.Clear();
+        if (channels.Length == 0)
+        {
+            _levelRows.Children.Add(Ui.Text("Pick an audio device first.", 13, Tokens.InkDim));
+            return;
+        }
+
+        string? group = null;
+        foreach (var (index, hardwareName) in channels)
+        {
+            var g = GroupOf(hardwareName);
+            if (g != group)
+            {
+                group = g;
+                var cap = Ui.Caption(g);
+                cap.Margin = new Thickness(10, 10, 0, 2);
+                _levelRows.Children.Add(cap);
+            }
+            var row = new LevelRow(index, hardwareName);
+            row.SyncArm(_feedback.IsInputEnabled(index), _feedback.ChannelName(index), hardwareName);
+            row.ArmClicked += () => _feedback.SetInputEnabled(index, !_feedback.IsInputEnabled(index));
+            _levelRowList.Add(row);
+            _levelRows.Children.Add(row);
+        }
+    }
+
+    /// <summary>Which family an input belongs to, from the name the device gives it.</summary>
+    private static string GroupOf(string name)
+    {
+        var u = name.ToUpperInvariant();
+        if (u.Contains("ADAT")) return "ADAT";
+        if (u.Contains("SPDIF") || u.Contains("S/PDIF") || u.Contains("AES")) return "S/PDIF · AES";
+        if (u.Contains("VIRTUAL") || u.Contains("LOOP")) return "Virtual";
+        return "Analog";
+    }
+
+    // ---- tab 3: the armed inputs and the guard ------------------------------
+
+    private Control BuildInputsPage()
+    {
+        var header = new Grid
+        {
+            ColumnDefinitions = new ColumnDefinitions(ChannelStrip.Columns),
+            Margin = new Thickness(10, 0, 10, 6),
+        };
+        AddCol(header, Ui.Caption("Arm"), 0);
+        AddCol(header, Ui.Caption("Channel"), 1);
+        AddCol(header, Ui.Caption("Input"), 2);
+        AddCol(header, Ui.Caption("Return"), 3);
+        AddCol(header, Ui.Caption("Level"), 4);
+        var notchCap = Ui.Caption("Notches");
+        notchCap.HorizontalAlignment = HorizontalAlignment.Right;
+        AddCol(header, notchCap, 5);
+
+        _hint.Margin = new Thickness(0, 0, 0, 14);
+        _hint.TextWrapping = TextWrapping.Wrap;
+
+        var armMore = Ui.Small("Arm another → Levels", Tokens.Accent);
+        armMore.Click += (_, _) => SelectTab(TabLevels);
+        var armRow = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), Margin = new Thickness(10, 4, 10, 0) };
+        _inputsEmpty.VerticalAlignment = VerticalAlignment.Center;
+        _inputsEmpty.TextWrapping = TextWrapping.Wrap;
+        Grid.SetColumn(_inputsEmpty, 0);
+        Grid.SetColumn(armMore, 1);
+        armRow.Children.Add(_inputsEmpty);
+        armRow.Children.Add(armMore);
+
+        var bandHead = Ui.Stack(Orientation.Horizontal, 12,
+            Ui.Caption("Guard · listen band"), _bandLabel);
+        var guardCard = Ui.Card(Ui.Stack(Orientation.Vertical, 8,
+            bandHead,
+            _band,
+            Ui.Stack(Orientation.Horizontal, 16,
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Low edge"), _lowEdge),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Attack"), _attack),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Max cut"), _maxCut),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Voice budget"), _budget),
+                Ui.Stack(Orientation.Vertical, 6, Ui.Caption("Floor"), _floorAuto)),
+            Ui.Text("It cuts what lands inside the box: between the teal handles and above the dashed line. Drag any of the three.",
+                    12.5, Tokens.InkFaint)), background: Tokens.Ground2);
+
+        var ringOut = BuildRingOut();
+        var captureCard = BuildCapture();
+        var filters = BuildFilterList();
+        var disclosure = BuildDisclosure();
+
+        var root = new DockPanel { LastChildFill = true };
+        var top = Ui.Stack(Orientation.Vertical, 0, _hint, header);
+        DockPanel.SetDock(top, Dock.Top);
+        DockPanel.SetDock(disclosure, Dock.Bottom);
+        root.Children.Add(top);
+        root.Children.Add(disclosure);
+        root.Children.Add(new ScrollViewer
+        {
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled,
+            Content = Ui.Stack(Orientation.Vertical, 18, _strips, armRow, guardCard, ringOut, captureCard, filters),
+        });
+        return root;
     }
 
     /// <summary>Where the X32 lives, so the path check knows who to ask.</summary>
@@ -267,11 +581,17 @@ public sealed class SetupView : UserControl
     private void OnConsoleAddress() => Dispatcher.UIThread.Post(() =>
     {
         var text = _feedback.ConsoleAddress ?? "";
-        if (_console.IsFocused || _console.Text == text) return;
-        _console.Text = text;
-        _consoleAddress = IPAddress.TryParse(text, out var ip) ? ip : IPAddress.None;
-        SyncConsole();
+        if (!_console.IsFocused && _console.Text != text)
+        {
+            _console.Text = text;
+            _consoleAddress = IPAddress.TryParse(text, out var ip) ? ip : IPAddress.None;
+            SyncConsole();
+        }
+        RenderStatus();
     });
+
+    private void OnEngineOk(bool _) => Dispatcher.UIThread.Post(RenderStatus);
+    private void OnDesk() => Dispatcher.UIThread.Post(RenderStatus);
 
     /// Take what was typed, keep it if it parses, and say so either way.
     private void CommitConsole()
@@ -307,12 +627,31 @@ public sealed class SetupView : UserControl
         _feedback.SpectrumChanged -= OnSpectrum;
         _feedback.NotchesChanged -= OnNotches;
         _feedback.ConsoleAddressChanged -= OnConsoleAddress;
+        _feedback.EngineOkChanged -= OnEngineOk;
+        _feedback.BypassChanged -= OnEngineOk;
+        _feedback.DeskBypassChanged -= OnDesk;
     }
 
+    /// <summary>Driven by the window's single animation timer; only the visible tab's meters move.</summary>
     public void Tick()
     {
-        foreach (var s in _strip.Values) s.Tick();
-        _band.InvalidateVisual();
+        _frame++;
+        _statusLed.Tick();
+        if (_tab == TabInputs)
+        {
+            foreach (var s in _strip.Values) s.Tick();
+            _band.InvalidateVisual();
+        }
+        else if (_tab == TabLevels)
+        {
+            var levels = _feedback.InputLevels;
+            foreach (var row in _levelRowList)
+            {
+                if (row.Index < levels.Length) row.SetLevel(levels[row.Index].LevelDb, levels[row.Index].HoldDb);
+                row.Tick();
+            }
+        }
+        if (_frame % 16 == 0) RenderStatus();   // ~twice a second is plenty for a sentence
     }
 
     private static string Hz(float hz) => hz >= 1000f ? $"{hz / 1000f:0.##} kHz" : $"{hz:0} Hz";
@@ -354,6 +693,15 @@ public sealed class SetupView : UserControl
 
     private static Control Field(string label, Control control) =>
         Ui.Stack(Orientation.Vertical, 6, Ui.Caption(label), control);
+
+    /// <summary>A sentence that wraps instead of running off the card.</summary>
+    private static TextBlock Wrapped(string text, double size, IBrush brush, VerticalAlignment align = VerticalAlignment.Top)
+    {
+        var t = Ui.Text(text, size, brush);
+        t.TextWrapping = TextWrapping.Wrap;
+        t.VerticalAlignment = align;
+        return t;
+    }
 
     private static Control Pill(string text) => new Border
     {
@@ -451,6 +799,7 @@ public sealed class SetupView : UserControl
     private Control BuildPathCheck()
     {
         _pathState.Text = "Put a tone on the return and see if the desk hears it.";
+        _pathState.TextWrapping = TextWrapping.Wrap;
         _pathCheck.Click += async (_, _) =>
         {
             _pathCheck.IsEnabled = false;
@@ -467,27 +816,33 @@ public sealed class SetupView : UserControl
                 _pathState.Text = ex.Message;
                 _pathState.Foreground = Tokens.Clip;
             }
-            finally { _pathCheck.IsEnabled = true; }
+            finally { _pathCheck.IsEnabled = _feedback.InPath; }
         };
 
-        // Capture: a diagnostic you switch on when something needs answering, and
-        // off again afterwards. It writes a row per detection with how long the ring
-        // took to be called feedback and how wide it was, and it keeps detection
-        // running while the guard is bypassed - so a song played half on and half
-        // off produces two comparable sets instead of one set and a silence.
+        return Ui.Stack(Orientation.Vertical, 8,
+            Ui.Stack(Orientation.Horizontal, 12, _pathCheck,
+                Wrapped("Soundcheck only — this puts a brief tone through the PA.", 12.5, Tokens.InkFaint, VerticalAlignment.Center)),
+            _pathState);
+    }
+
+    /// <summary>
+    /// Capture: a diagnostic you switch on when something needs answering, and
+    /// off again afterwards. It writes a row per detection with how long the ring
+    /// took to be called feedback and how wide it was, keeps the audio, and keeps
+    /// detection running while the guard is bypassed - so a song played half on
+    /// and half off produces two comparable sets instead of one set and a silence.
+    /// </summary>
+    private Control BuildCapture()
+    {
         _capture.Click += (_, _) =>
         {
             _feedback.SetCapture(!_feedback.CaptureEnabled);
             RenderCapture();
         };
         RenderCapture();
-
+        _captureState.TextWrapping = TextWrapping.Wrap;
+        _captureState.VerticalAlignment = VerticalAlignment.Center;
         return Ui.Card(Ui.Stack(Orientation.Vertical, 10,
-            Ui.Caption("Signal path"),
-            Ui.Stack(Orientation.Horizontal, 12, _pathCheck,
-                Ui.Text("Soundcheck only — this puts a brief tone through the PA.",
-                        12.5, Tokens.InkFaint)),
-            _pathState,
             Ui.Caption("Capture"),
             Ui.Stack(Orientation.Horizontal, 12, _capture, _captureState)),
             background: Tokens.Ground2);
@@ -499,8 +854,8 @@ public sealed class SetupView : UserControl
         _capture.Content = on ? "Stop capture" : "Start capture";
         _capture.Foreground = on ? Tokens.Catch : Tokens.InkDim;
         _captureState.Text = on
-            ? "Recording every catch: how long it took, how wide it was. Guard off is measured too."
-            : "Off. Logs every catch with its detection time and width, guard on and off.";
+            ? "Recording every catch and the audio, 17 MB a minute. Guard off is measured too."
+            : "Off. Logs every catch with its detection time and width, and keeps the audio.";
     }
 
     /// <summary>
@@ -627,7 +982,7 @@ public sealed class SetupView : UserControl
     });
 
     private void OnDevices() => Dispatcher.UIThread.Post(RefreshDevices);
-    private void OnChannels() => Dispatcher.UIThread.Post(RebuildStrips);
+    private void OnChannels() => Dispatcher.UIThread.Post(() => { RebuildStrips(); RebuildLevelRows(); RenderStatus(); });
 
     private void OnSpectrum(FkSpectrum spec)
     {
@@ -677,17 +1032,24 @@ public sealed class SetupView : UserControl
         _syncing = false;
     }
 
+    /// <summary>The Inputs tab shows only the armed channels; arming happens on Levels.</summary>
     private void RebuildStrips()
     {
         var channels = _feedback.InputChannels
             .Where(c => !c.Name.StartsWith("NONE", StringComparison.OrdinalIgnoreCase))
+            .Where(c => _feedback.IsInputEnabled(c.Index))
             .ToArray();
         var indices = channels.Select(c => c.Index).ToArray();
 
-        _hint.Text = channels.Length == 0
-            ? "Pick an audio device above to see its input channels."
-            : "Switch on the mics to guard; Return is the output the cut signal is sent back on, or None to listen and log without touching any output. Double-click a name to rename.";
-        _hint.Margin = new Thickness(0, 0, 0, 14);
+        var any = _feedback.InputChannels.Count > 0;
+        _hint.Text = !any
+            ? "Pick an audio device on the Audio device tab to see its inputs."
+            : "Return is the output the cut signal is sent back on, or None to listen and log without touching any output. Double-click a name to rename.";
+        _inputsEmpty.Text = channels.Length == 0
+            ? "Nothing armed. Go to Levels, sing, and arm the input that moves."
+            : _feedback.InPath
+                ? $"{channels.Length} armed, {_feedback.InPathCount} in the audio path."
+                : $"{channels.Length} armed, all on None: the engine listens and logs, nothing reaches an output. Pick a Return only to put it in the path.";
 
         if (indices.SequenceEqual(_built))
         {
@@ -718,6 +1080,109 @@ public sealed class SetupView : UserControl
             _strips.Children.Add(strip);
         }
     }
+}
+
+/// <summary>
+/// One device input on the Levels tab: index, the device's name for it, the
+/// operator's name if it is armed, a live meter with a two-second peak hold,
+/// the held peak in dB, and an Arm button.
+/// </summary>
+public sealed class LevelRow : Border
+{
+    public const string Columns = "40,160,90,*,64,90";
+
+    private readonly LevelMeter _meter = new() { Height = 9, VerticalAlignment = VerticalAlignment.Center };
+    private readonly TextBlock _db = Ui.Mono("silent", 12.5, Tokens.InkDim);
+    private readonly TextBlock _chip = Ui.Mono("", 11, Tokens.Accent, FontWeight.Bold);
+    private readonly Border _chipBox;
+    private readonly TextBlock _name;
+    private readonly Button _arm = Ui.Small("arm", Tokens.InkDim);
+    private bool _armed;
+
+    public int Index { get; }
+
+    public LevelRow(int index, string hardwareName)
+    {
+        Index = index;
+        Padding = new Thickness(10, 5);
+        CornerRadius = Tokens.RadiusMd;
+
+        var idx = Ui.Mono($"{index:00}", 12.5, Tokens.InkDim);
+        _name = Ui.Text(hardwareName, 14, Tokens.InkDim);
+        _name.TextTrimming = TextTrimming.CharacterEllipsis;
+        _chip.LetterSpacing = 1;
+        _chipBox = new Border
+        {
+            Background = Tokens.AccentSoft,
+            CornerRadius = Tokens.Pill,
+            Padding = new Thickness(8, 2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Child = _chip,
+            IsVisible = false,
+        };
+        _db.HorizontalAlignment = HorizontalAlignment.Right;
+        _arm.HorizontalAlignment = HorizontalAlignment.Right;
+        _arm.Click += (_, _) => ArmClicked?.Invoke();
+
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(Columns) };
+        Add(grid, idx, 0);
+        Add(grid, _name, 1);
+        Add(grid, _chipBox, 2);
+        _meter.Margin = new Thickness(0, 0, 14, 0);
+        Add(grid, _meter, 3);
+        Add(grid, _db, 4);
+        Add(grid, _arm, 5);
+        Child = grid;
+    }
+
+    public event Action? ArmClicked;
+
+    private static void Add(Grid g, Control c, int col)
+    {
+        Grid.SetColumn(c, col);
+        c.VerticalAlignment = VerticalAlignment.Center;
+        g.Children.Add(c);
+    }
+
+    public void SyncArm(bool armed, string label, string hardwareName)
+    {
+        _armed = armed;
+        Background = armed ? Tokens.AccentSoft : Brushes.Transparent;
+        _name.Foreground = armed ? Tokens.Ink : Tokens.InkDim;
+        var showChip = armed && !string.Equals(label, hardwareName, StringComparison.Ordinal);
+        _chipBox.IsVisible = showChip;
+        _chip.Text = showChip ? label.ToUpperInvariant() : "";
+        _arm.Content = new TextBlock
+        {
+            Text = armed ? "ARMED" : "arm",
+            FontSize = 11.5,
+            FontWeight = armed ? FontWeight.Bold : FontWeight.Normal,
+            Foreground = armed ? Tokens.Accent : Tokens.InkDim,
+            LetterSpacing = armed ? 1 : 0,
+        };
+        _arm.BorderBrush = armed ? Tokens.AccentLine : Tokens.Line;
+        _arm.Background = armed ? Tokens.AccentSoft : Tokens.Panel2;
+        _meter.Muted = false;
+    }
+
+    /// <param name="levelDb">peak over the last reporting interval, dBFS</param>
+    /// <param name="holdDb">the peak held for two seconds, dBFS</param>
+    public void SetLevel(float levelDb, float holdDb)
+    {
+        _meter.SetTarget(Math.Clamp((levelDb + 72f) / 72f, 0f, 1f));
+        if (holdDb <= -90f)
+        {
+            _db.Text = "silent";
+            _db.Foreground = Tokens.InkDim;
+        }
+        else
+        {
+            _db.Text = $"{holdDb:0}";
+            _db.Foreground = holdDb > -3f ? Tokens.Clip : holdDb > -50f ? Tokens.Ink : Tokens.InkDim;
+        }
+    }
+
+    public void Tick() => _meter.Tick();
 }
 
 /// <summary>One input channel as a row: arm, name, hardware input, level, notches.</summary>

@@ -53,6 +53,9 @@ public sealed class EngineSupervisor : IAsyncDisposable
     /// <summary>True when the engine is running audio (telemetry reports it live).</summary>
     public bool EngineOk { get; private set; }
 
+    /// <summary>The running engine's build stamp ("ec99884 built 2026-10-09 14:56"), from its first line of output.</summary>
+    public string? EngineBuild { get; private set; }
+
     /// <summary>
     /// True when the engine PROCESS is up, regardless of whether audio is running.
     /// Lets the UI tell "engine crashed" apart from "engine fine, no interface
@@ -183,7 +186,14 @@ public sealed class EngineSupervisor : IAsyncDisposable
                 psi.ArgumentList.Add(_bufferSize.ToString());
 
                 var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                p.OutputDataReceived += (_, e) => { if (e.Data is { } d) Log?.Invoke($"[engine] {d}"); };
+                p.OutputDataReceived += (_, e) =>
+                {
+                    if (e.Data is not { } d) return;
+                    // "fk-engine build <hash> built <date>": the one line that says which engine this is.
+                    const string stamp = "fk-engine build ";
+                    if (d.StartsWith(stamp, StringComparison.Ordinal)) EngineBuild = d[stamp.Length..];
+                    Log?.Invoke($"[engine] {d}");
+                };
                 p.ErrorDataReceived  += (_, e) => { if (e.Data is { } d) Log?.Invoke($"[engine] {d}"); };
                 p.Start();
                 p.BeginOutputReadLine();

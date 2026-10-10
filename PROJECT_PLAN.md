@@ -96,6 +96,8 @@ how much of what the ear gets from the voice differs from the clean voice; a
 7. **Stage switches — NEW.** One on/off and one readout per algorithm stage (epic 6). *Goal: any stage off in one tap.*
 8. **Truthful picture — NEW.** The drawn EQ curve assumes the wrong filter width and the advanced panel shows stale values. *Goal: the curve within 1 dB of what the engine applies.*
 9. **Desk analyser overlay — DONE.** The X32's own analyser drawn over the engine's. *Goal: a ring seen by both is marked.*
+10. **Setup in three tabs — IN PROGRESS.** Audio device, Levels, Inputs, with one status strip above them, from your 9 Oct mock-up. *Goal: a new user finds their microphone and arms it without being told which input it is. Built 9 Oct; not yet run on any machine.*
+11. **A level on every input — IN PROGRESS.** The engine opens every input the device has and reports a peak on each, armed or not. *Goal: the input that moves when you sing is obvious within two seconds. Built 9 Oct; not yet run against an interface.*
 
 ## 6. Engine architecture — NEW
 
