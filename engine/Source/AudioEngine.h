@@ -46,8 +46,10 @@ public:
     /// </summary>
     void setOutputMap (const int* ranks, int count) noexcept
     {
+        // An explicit -1 is kept: that slot listens and writes nothing. Slots
+        // beyond the given count keep the old mirror rule.
         for (int i = 0; i < maxChans; ++i)
-            outRank[(size_t) i] = (i < count && ranks[i] >= 0) ? ranks[i] : i;
+            outRank[(size_t) i] = i < count ? ranks[i] : i;
     }
 
     /// <summary>Pass audio through untouched, keeping every notch's state intact.</summary>
@@ -247,11 +249,18 @@ public:
         for (int ch = 0; ch < active; ++ch)
         {
             const int rank = outRank[(size_t) ch];
-            if (rank < 0 || rank >= numOutputs) continue;
-            if (inputs[ch] == nullptr || outputs[rank] == nullptr) continue;
+            if (inputs[ch] == nullptr) continue;
+
+            // No return (rank -1): the slot still runs the whole machine - detector,
+            // bank, duck, recorder - on a scratch block, so everything is logged
+            // exactly as it would have been cut, and no output is ever written.
+            // Assist mode, and the safe state for a rig the engine is not wired into.
+            const bool listenOnly = rank < 0;
+            if (listenOnly && numSamples > (int) listenBuf.size()) continue;
+            if (! listenOnly && (rank >= numOutputs || outputs[rank] == nullptr)) continue;
 
             const float* in  = inputs[ch];
-            float*       out = outputs[rank];
+            float*       out = listenOnly ? listenBuf.data() : outputs[rank];
             for (int n = 0; n < numSamples; ++n) out[n] = in[n];   // passthrough first
 
             // Keep the pre-notch signal for the recorder: `out` is about to become
@@ -489,6 +498,9 @@ private:
     // this only has to survive a scheduling hiccup, not a long one.
     static constexpr int recRingSize  = 1 << 20;
     static constexpr int maxRecBlock  = 2048;
+    // Scratch block for a slot with no return: the whole chain runs on it, nothing
+    // is written to the device. Sized for any buffer the engine is ever opened with.
+    std::array<float, 8192>                      listenBuf {};
     std::array<float, (size_t) recRingSize> recRing {};
     std::array<float, (size_t) maxRecBlock> recPre {};
     std::atomic<int> recWrite { 0 }, recRead { 0 };

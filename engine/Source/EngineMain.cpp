@@ -340,11 +340,13 @@ private:
         setup.bufferSize       = d.bufferSize;
 
         // Slot i reads the i-th checked input (ascending) and writes its chosen
-        // return output - or, with no explicit returns, mirrors its input index.
+        // return output. In an explicit list, -1 means NO return: the slot is
+        // analysed and logged and writes nothing anywhere (assist mode). With no
+        // list at all the old rule stands and a slot mirrors its input index,
+        // for the tools that never send one.
         std::vector<int> returns;
         for (size_t i = 0; i < d.inputs.size(); ++i)
-            returns.push_back (i < d.outputs.size() && d.outputs[i] >= 0 ? d.outputs[i]
-                                                                         : d.inputs[i]);
+            returns.push_back (i < d.outputs.size() ? d.outputs[i] : d.inputs[i]);
 
         if (d.inputs.empty())
         {
@@ -359,7 +361,7 @@ private:
             setup.inputChannels.clear();
             setup.outputChannels.clear();
             for (int idx : d.inputs)  setup.inputChannels.setBit (idx);
-            for (int idx : returns)   setup.outputChannels.setBit (idx);
+            for (int idx : returns)   if (idx >= 0) setup.outputChannels.setBit (idx);
         }
 
         devices.setAudioDeviceSetup (setup, true);
@@ -367,14 +369,17 @@ private:
         // JUCE hands the callback one dense pointer per enabled output channel,
         // ascending - so each slot's return becomes a rank into that dense list.
         // Two slots sharing a return simply write the same channel (last wins).
+        // A slot with no return gets rank -1 and the callback never writes it.
         {
-            std::vector<int> sortedOuts (returns);
+            std::vector<int> sortedOuts;
+            for (int r : returns) if (r >= 0) sortedOuts.push_back (r);
             std::sort (sortedOuts.begin(), sortedOuts.end());
             sortedOuts.erase (std::unique (sortedOuts.begin(), sortedOuts.end()), sortedOuts.end());
 
             std::array<int, AudioEngine::maxChans> ranks {};
             for (size_t i = 0; i < returns.size() && i < ranks.size(); ++i)
-                ranks[i] = (int) (std::lower_bound (sortedOuts.begin(), sortedOuts.end(), returns[i])
+                ranks[i] = returns[i] < 0 ? -1
+                         : (int) (std::lower_bound (sortedOuts.begin(), sortedOuts.end(), returns[i])
                                   - sortedOuts.begin());
             engine.setOutputMap (ranks.data(), (int) returns.size());
         }

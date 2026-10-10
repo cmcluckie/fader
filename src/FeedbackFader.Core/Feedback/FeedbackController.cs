@@ -72,6 +72,11 @@ public sealed class FeedbackController : IAsyncDisposable
         {
             if (int.TryParse(key, out var index)) _returns[index] = value;
         }
+        // Before 2026-10-09 an input without a saved return mirrored its own index.
+        // Keep that for inputs saved by those versions, explicitly, so an upgrade
+        // changes nothing on a rig that relied on it; only inputs armed from now
+        // on start with no return.
+        foreach (var index in _enabled) _returns.TryAdd(index, index);
         _minHz = audio.MinHz > 0 ? audio.MinHz : 200f;
         _maxHz = audio.MaxHz > 0 ? audio.MaxHz : 16000f;
         _floorDb = audio.FloorDb < 0 ? audio.FloorDb : -88f;
@@ -580,7 +585,7 @@ public sealed class FeedbackController : IAsyncDisposable
         lock (_lock)
         {
             var has = _enabled.Contains(channel);
-            if (on && !has && _enabled.Count < MaxChans) _enabled.Add(channel);
+            if (on && !has && _enabled.Count < MaxChans) { _enabled.Add(channel); _returns.TryAdd(channel, NoReturn); }
             else if (!on && has) _enabled.Remove(channel);
             else return;
             _enabled.Sort();
@@ -590,23 +595,31 @@ public sealed class FeedbackController : IAsyncDisposable
         ChannelsChanged?.Invoke();
     }
 
+    /// <summary>The return value that means "listen only": analyse and log, write nothing anywhere.</summary>
+    public const int NoReturn = -1;
+
     /// <summary>
-    /// Where an armed input's processed audio is returned. Defaults to the same
-    /// index as the input (the plain passthrough case); on an insert rig this is
-    /// the output that feeds the console - e.g. mic on ANALOG 5, return on ADAT 3.
+    /// Where an armed input's processed audio is returned, or <see cref="NoReturn"/>.
+    /// On an insert rig this is the output that feeds the console - e.g. mic on
+    /// ANALOG 5, return on ADAT 3. A newly armed input has no return until one
+    /// is chosen: arming a microphone must never, by itself, put it on an output
+    /// (an Apollo's first outputs are its monitors). Inputs saved by older
+    /// versions without a return keep the mirror they always had.
     /// </summary>
     public int ReturnFor(int channel)
     {
-        lock (_lock) { return _returns.GetValueOrDefault(channel, channel); }
+        lock (_lock) { return _returns.GetValueOrDefault(channel, NoReturn); }
+    }
+
+    /// <summary>True when at least one armed input is written back to an output - the engine is in the audio path.</summary>
+    public bool InPath
+    {
+        get { lock (_lock) { return _enabled.Any(i => _returns.GetValueOrDefault(i, NoReturn) >= 0); } }
     }
 
     public void SetReturn(int channel, int output)
     {
-        lock (_lock)
-        {
-            if (output == channel) _returns.Remove(channel);   // default: mirror
-            else _returns[channel] = output;
-        }
+        lock (_lock) { _returns[channel] = output; }
         PushRouting();
         SaveAudio();
         ChannelsChanged?.Invoke();
@@ -625,7 +638,7 @@ public sealed class FeedbackController : IAsyncDisposable
         lock (_lock)
         {
             inputs = _enabled.ToArray();
-            outputs = inputs.Select(i => _returns.GetValueOrDefault(i, i)).ToArray();
+            outputs = inputs.Select(i => _returns.GetValueOrDefault(i, NoReturn)).ToArray();
         }
         _supervisor.Client.SetInputs(inputs);
         _supervisor.Client.SetOutputs(outputs);
@@ -1113,15 +1126,21 @@ public sealed class FeedbackController : IAsyncDisposable
         if (added) DevicesChanged?.Invoke();
     }
 
+    // The device's channel names go to the app log once per listing, so "which
+    // index is Mic 1" can be answered from the log instead of a screenshot.
     private void OnChannelListed(int index, string name)
     {
-        lock (_lock) { _channels[index] = name; }
+        bool changed;
+        lock (_lock) { changed = !_channels.TryGetValue(index, out var old) || old != name; _channels[index] = name; }
+        if (changed) Log?.Invoke($"input {index}: {name}");
         ChannelsChanged?.Invoke();
     }
 
     private void OnOutChannelListed(int index, string name)
     {
-        lock (_lock) { _outChannels[index] = name; }
+        bool changed;
+        lock (_lock) { changed = !_outChannels.TryGetValue(index, out var old) || old != name; _outChannels[index] = name; }
+        if (changed) Log?.Invoke($"output {index}: {name}");
         ChannelsChanged?.Invoke();
     }
 

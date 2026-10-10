@@ -605,19 +605,35 @@ dial. (Decision for Chris: try gentle on the rig - it is a menu in Setup.)
 | S4 | Chris, mains down: both swaps on the real desk, every write "read back as sent", the channels on the desk as the ribbon says; then once during a song with the vocal audibly continuous | not sent to the real desk yet | open |
 
 - **As built.** 10-09 `5b70e7d`: `X32Mutes` (set, read back five times over 250 ms, discard replies to other addresses, null when the desk is silent); `FeedbackController.SwapPlan` (pure, the order), `SwapToDeskAsync`, `RefreshDeskStateAsync` (a read on opening Show), `DeskPort` for the test; `DeskChannels` / `BypassChannels` in `audio.json`; two fields beside the console address in Setup; the hold on Show; the guard pill reads ON THE DESK while the spares carry the vocal; `HoldButton` can change its words.
-- **Not verified.** The address and the 0/1 meaning are from the X32 protocol and September's reads of other paths; nothing here has been sent to the real desk (Rule Zero). First real use is Chris's, after a backup.
+- **Not verified.** The address and the 0/1 meaning are from the X32 protocol and September's reads of other paths; nothing here has been sent to the real desk (Rule Zero). First real use is Chris's, after a backup. **10-09, from Chris:** Ch 11/12 are not spares and the bypass was never built; which two channels become the spares is his choice (checklist §2).
 - **To do.** [ ] S4. [ ] Bus 12's duck key while bypassed (Chris's decision, checklist §2.5). [ ] An alarm on Show when the desk and the app disagree about which path is live for more than a few seconds (a read, so allowed).
 
 ### 7.9 Rig wiring - NEW (Chris)
 
 - **Goal.** The engine is the only path from Apollo Mic 1/2 to X32 Ch 1/2, with a muted spare one hold away.
 - **The steps** are [RIG-CHECKLIST.md](RIG-CHECKLIST.md): backup; Console (Flex Route off ADAT 1/2, Analog 1/2 onto ADAT 3/4, inserts in REC); X32 (card 3/4 into Ch 11/12 by User In, sends copied, muted); Setup (device, Mic 1/2 armed, returns ADAT 1/2, console address, the two channel lists); proof with the mains down; the way back.
-- **Now (10-09).** None of it is done. `audio.json` on the rig is inputs 4/5 → returns 10/11 with no console address. Where the checklist goes by the Console manual or the X32 protocol tables rather than by this rig, it says so.
+- **Now (10-09).** None of it is done, and the order changed in the evening: assist mode (7.11) on a separate computer first, the rig only after that. The facts from Chris, 9 Oct: the Flex Route is not moved (Analog 1/2 → ADAT out 1/2 directly), so the engine is not in the vocal path; Ch 1/2 take card in 1/2 through User In 1/2 (confirmed read-only); Ch 11/12 are unused Local 11/12 inputs, not spares; Apollo ADAT in 1–8 carry the X32's recording feeds to Logic; ADAT out 3–8 are free. The rig Mac's app stays on inputs 4/5 → returns 10/11 (digital silence onto free ADAT outputs) and is not changed from here.
+- **Which Apollo input is which, read from outside the engine (10-09).** Two listens on all 32 Core Audio inputs with `sounddevice`, inputs only. Silent room: nothing above -50 dB rms; input 0 at -90 (a live preamp's floor), inputs 24/25 at -76. Chris singing into the Lead mic, 30 s: input 0 peaked at -43 dB rms and was above -50 in 40 of 60 half-second blocks; inputs 24 and 25 both at -31 dB in 58 of 60, identical, so a Console loopback pair carrying the mix; input 1 (Mic 2) did not move. So Core Audio input 0 = Mic 1.
+- **A false alarm, 10-09.** My first read of the desk's User In patch said card 1 fed input 2 and card 2 fed input 3. It was my script pairing a stray reply with the wrong query; read again with each reply matched to its address, the desk says exactly what the scene file says. The app's own desk reader (`X32Mutes`) already matches addresses.
 
 ### 7.10 Round trip measured - NEW
 
 - **Goal.** A measured figure in the README for Apollo in → Core Audio → engine → ADAT out → X32 card in; the engine's own share stays one buffer (64 samples, 1.33 ms at 48 kHz; the detector runs beside the signal, not in front of it).
 - **How.** The loop probe (4.3) gives the acoustic loop, which includes it; the electrical trip alone needs a loopback (a Console Flex Route or a cable), so it waits for Chris. Console's Input Delay Compensation is Medium-Long already.
+
+### 7.11 Assist mode - IN PROGRESS
+
+- **Goal.** A rig can watch a rehearsal with the engine out of the audio path, and the log says what would have been cut.
+- **What it is.** Not a mode switch: Return = None on every armed mic. The engine runs the whole chain (detector, bank, duck, recorder) on a scratch block and opens no output for that slot; with no returns at all it opens the device with inputs only. Every catch is logged and shown as usual. A newly armed mic starts on None, because arming a microphone must never by itself put it on an output: an Apollo's first two outputs are its monitors, and the old mirror default would have sent Mic 1 straight to them. Inputs saved by older versions keep their mirror, written out explicitly, so an upgrade changes nothing on a rig that relied on it. The Show pill reads ASSIST while every armed mic is on None.
+
+| Stage | Threshold | Now | |
+|---|---|---|---|
+| S1 | `fk-tests` and the self-test pass with -1 returns in the routing message | 57 of 58 (T42 parked), 50 of 50 | pass |
+| S4 | on a real interface: the device opens with inputs only, the levels move, catches appear with nothing on any output | not yet run; Chris runs it on a separate computer first | open |
+
+- **As built.** 10-09: `/fk/outputs` accepts -1 per slot (`EngineMain.cpp`); `setOutputMap` keeps -1; the callback's listen-only branch (`AudioEngine.h`); `FeedbackController.NoReturn`, `InPath`, explicit returns with the mirror migration; "None — listen only" first in Setup's Return picker; the ASSIST pill; input and output channel names written to the app log once per listing, so "which index is Mic 1" is a grep, not a screenshot.
+- **Found while building it.** Before this, an armed input with no saved return mirrored its own index all the way down (controller default, engine default). On the rig's Apollo, arming Mic 1 would have put the vocal on Core Audio output 0.
+- **Not built, on purpose.** The signal-path tone has nowhere to go on a None return, so Check signal path reports failure in assist mode; that is correct and is said in Setup's hint.
 
 **Open, not yet a feature:** playback to ADAT out 3/4 never arrived (unexplained, 10-03, on the old wiring); the 1-2 kHz hole between the two analysers.
 
@@ -807,7 +823,20 @@ the desk at once. One fault found in the merged auto-detect and fixed in the
 repository (7.3). Nothing on the desk or in Console was touched; the audio
 path is the same inputs 4/5 → returns 10/11 the orphan was carrying.
 
-**Where the plan stands.** 78 features: 25 done, 18 in progress, 31 not
+**Evening, from Chris.** The real setup, in his words: mics into Apollo Mic
+1/2 through Unison and UAD; the Flex Route not moved, so the engine is not in
+the path and is not going in yet; Ch 1/2 from card 1/2 via User In 1/2; Ch
+11/12 unused Local inputs, no bypass ever built; ADAT in 1–8 all taken by the
+X32's recording feeds; ADAT out 3–8 free. Wanted: assist mode only, Mic 1/2
+armed with returns on None, detections shown and logged. Then: "DON'T CHANGE
+THE RIG", he will run it on a separate computer first. Built 7.11 (Return =
+None, end to end) for that computer. Nothing on this Mac's app configuration,
+Console or X32 was changed; two read-only desk reads and two read-only listens
+on the Apollo inputs (40 s silent, 30 s singing, from outside the engine) were
+the whole of it. Found and corrected my own false alarm about the User In
+patch.
+
+**Where the plan stands.** 79 features: 25 done, 19 in progress, 31 not
 started, 4 cancelled (three of them proposals).
 
 ### 2026-10-04
@@ -908,8 +937,8 @@ to the live engine's ports).
 
 ## Waiting on Chris
 
-0. **The app on the rig was relaunched on 10-09 at 14:57** on your go, build `ec99884` (your dead-man's switch and 30 s grace, the desk bypass hidden until Setup names channels, the console found by itself). The auto-detect fix (7.3) is in the repository and not on the rig; it matters only if a setting is saved before the next launch. Say when the room is next free for the watchdog check on this build.
-1. **Back up, then the checklist** ([RIG-CHECKLIST.md](RIG-CHECKLIST.md)): Console session, X32 scene, `~/Documents/FeedbackKiller`. Then the Console and X32 steps, Setup, and the proof with the mains down. The desk bypass (7.8) is tried for the first time at step 4.3 of it.
+0. **The rig is frozen** (your words, 10-09 evening). Its app is build `ec99884` from the 14:57 relaunch, on the old configuration: inputs 4/5, returns 10/11, carrying digital silence onto free ADAT outputs. Leave it, or quit it; I will not touch it. Everything since (assist mode, the auto-detect fix, the channel-name log lines) is in the repository for the separate computer.
+1. **Assist mode on the separate computer** ([RIG-CHECKLIST.md](RIG-CHECKLIST.md) §3a): build from the branch, arm the mic inputs, leave Return on None, sing, ring the room once, and read the Show screen and the log. Then decide about the rig.
 2. **Three answers the brief needs.** (a) It asks for an assist mode as the default; the modes were retired in August, and guard-off with Capture on is the same thing. Should a fresh install start with the guard off? (b) It asks for the RTA-assisted GEQ ring-out (4.8), which the plan proposed cancelling; under Rule Zero it would be one click per cut. (c) Has the rig been rewired yet? The saved configuration says no.
 3. **The room, when you are back:** cold jumps at 20 and 22 on `d55f580` (1.2, 2.3); two minutes of singing at low gain for a live voice-change figure (3.2); and the same two minutes with Attack set to Gentle in Setup - the tests say it halves what is taken from the voice at working gains on a rig like yours. All of it with `--go`.
 4. **Three proposed cancellations:** 1.7 wide flat feedback, 3.7 voice budget, 4.8 desk-EQ ring-out (see 2b).

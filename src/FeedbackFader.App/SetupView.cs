@@ -686,7 +686,7 @@ public sealed class SetupView : UserControl
 
         _hint.Text = channels.Length == 0
             ? "Pick an audio device above to see its input channels."
-            : "Switch on the mics to guard; Return is the output the cut signal is sent back on. Double-click a name to rename.";
+            : "Switch on the mics to guard; Return is the output the cut signal is sent back on, or None to listen and log without touching any output. Double-click a name to rename.";
         _hint.Margin = new Thickness(0, 0, 0, 14);
 
         if (indices.SequenceEqual(_built))
@@ -800,7 +800,10 @@ public sealed class ChannelStrip : Border
     public void SyncReturn(IReadOnlyList<(int Index, string Name)> outputs, int selected)
     {
         _syncingReturn = true;
-        var outs = outputs.ToArray();
+        // "None" first: listen only. The engine analyses and logs this input and
+        // writes nothing anywhere - assist mode, and what a newly armed mic gets
+        // until an output is chosen on purpose.
+        var outs = outputs.Prepend((Index: FeedbackController.NoReturn, Name: "None — listen only")).ToArray();
         if (!outs.SequenceEqual(_outs))
         {
             _outs = outs;

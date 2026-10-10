@@ -311,6 +311,12 @@ public sealed class ShowView : UserControl
         {
             (text, hint, colour, alarm) = ("NO CHANNEL SELECTED", "arm a mic in Setup", Tokens.Clip, true);
         }
+        else if (!_feedback.InPath)
+        {
+            // Assist: every armed mic has Return set to None. The detector runs and
+            // every catch is logged and shown; nothing it decides reaches an output.
+            (text, hint, colour) = ("ASSIST", "listening only · nothing in the audio path", (IBrush) Tokens.InkDim);
+        }
         else if (onDesk)
         {
             (text, hint, colour) = ("ON THE DESK", bypassed ? "guard off · tap to protect" : "guard on · tap to bypass", (IBrush) Tokens.InkDim);

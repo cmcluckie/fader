@@ -120,8 +120,9 @@ how much of what the ear gets from the voice differs from the clean voice; a
 6. **Starts with the display asleep — NEW.** *Goal: starts unattended.*
 7. **Windows — IN PROGRESS.** It builds with ASIO, but the build script stops on a test we keep failing on purpose. *Goal: one command produces a working Windows build.*
 8. **One-click desk bypass — IN PROGRESS.** A one-second hold on Show swaps the guarded desk channels for their muted spares, and back; the only thing the app ever writes on the desk. *Goal: the vocal on the spare within a second of the hold, and never without one. Built 9 Oct and proven on a fake desk; waits for the rig checklist and your go.*
-9. **Rig wiring — NEW (yours).** The Console and X32 changes in docs/RIG-CHECKLIST.md: the engine on ADAT 1/2, the spares on ADAT 3/4 into Ch 11/12. *Goal: the engine is the only path from Mic 1/2 to Ch 1/2, with a muted spare one hold away.*
+9. **Rig wiring — NEW (yours).** The Console and X32 changes in docs/RIG-CHECKLIST.md: the engine on ADAT 1/2, a bypass pair on free ADAT outputs into two spare channels. *Goal: the engine is the only path from Mic 1/2 to Ch 1/2, with a muted spare one hold away. Not before assist mode (11) has proved itself on the separate computer.*
 10. **Round trip measured — NEW.** The delay through the Mac, Apollo in to X32 card in. *Goal: a measured figure in the README; the engine's own share stays one buffer (1.3 ms).*
+11. **Assist mode — IN PROGRESS.** Return set to None: the detector listens and logs, and nothing is written to any output; a newly armed mic starts that way. *Goal: a rig can watch a rehearsal with the engine out of the path and the log says what would have been cut. Built 9 Oct; you run it on a separate computer first.*
 
 ## 8. Testing and measurement — IN PROGRESS
 

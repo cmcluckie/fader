@@ -6,10 +6,18 @@ from them is here, as steps for Chris, in the order to do them. Where I am
 going by the protocol tables or the Console manual rather than by something
 seen on this rig, the step says so.
 
-Nothing in this list is done yet (2026-10-09). The app's saved configuration on
-the rig Mac is still the previous wiring (inputs 4/5, returns 10/11). The app
-was relaunched on 2026-10-09 at 14:57 (build ec99884) and found the console's
-address by itself.
+Nothing in this list is done yet (2026-10-09), and the order has changed:
+**assist mode on a separate computer first** (§3a), the rig only after Chris
+has seen it catch real feedback there. The facts, from Chris on 9 Oct: Lead =
+Apollo Mic 1, BGV = Apollo Mic 2, through Unison 610-B and UAD plug-ins in
+Console; the Flex Route is NOT moved (Analog 1 → ADAT out 1, Analog 2 → ADAT out
+2, directly), so the engine is not in the vocal path; on the X32, User In 1 =
+Card 1, User In 2 = Card 2, Ch 1/2 fed from User In 1/2 (the desk confirmed it
+read-only, with each reply matched to its query); Ch 11/12 are unused Local
+11/12 inputs, not bypass channels, and the bypass was never built; Apollo ADAT
+in 1–8 all carry the X32's recording feeds (toms, guitar, bass, drums) to
+Logic; Apollo ADAT out 3–8 are free. The rig Mac's app is on the previous
+wiring (inputs 4/5, returns 10/11) and is not being changed from here.
 
 ## 0. Back up first
 
@@ -21,11 +29,12 @@ address by itself.
 4. Write down, or photograph, Console's Flex Routing view and the X32 routing
    pages (Routing → Inputs, Card Out, User In).
 
-## 1. Console: give ADAT 1/2 to the engine
+## 1. Console: give ADAT 1/2 to the engine (only when assist has proved itself)
 
-Today ADAT out 1/2 carries Analog 1/2 by Flex Route. The engine's return is the
-Mac's playback to ADAT 1/2. Both on the same outputs means the clean vocal and
-the guarded vocal arrive at the desk a few milliseconds apart.
+Today ADAT out 1/2 carries Analog 1/2 by Flex Route, directly, and that is the
+live vocal path. The engine's return would be the Mac's playback to ADAT 1/2.
+Both on the same outputs means the clean vocal and the guarded vocal arrive at
+the desk a few milliseconds apart.
 
 1. Flex Routing view: set **ADAT 1** and **ADAT 2** back to their default
    source (the Mac's playback; in Console that is removing the Flex Route on
@@ -42,14 +51,17 @@ the guarded vocal arrive at the desk a few milliseconds apart.
    Line 1/2 Flex Route for house music, not the ADAT inputs to Logic.
 6. Save the session under the new name.
 
-## 2. X32: the bypass channels
+## 2. X32: the bypass channels (not built yet; your choice of channels)
 
-Ch 1 and Ch 2 are fed from the card (User In 129/130 = card in 1/2). Ch 11 and
-Ch 12 are the spares.
+Ch 1 and Ch 2 are fed from the card (User In 1/2 = 129/130 = card in 1/2).
+There are no spares today: Ch 11 and Ch 12 are unused Local 11/12 inputs. If
+they are the ones to use, the steps are below; any other two unused channels
+work the same way.
 
-1. Routing → User In: **card in 3 → the source for Ch 11**, **card in 4 → Ch 12**,
-   the same way Ch 1/2 take card in 1/2. Going by the X32 User In numbering
-   (card 1–32 = User In 129–160): card 3 = 131, card 4 = 132. Check on the desk.
+1. Routing → User In: **card in 3 → User In 11**, **card in 4 → User In 12**
+   (so Ch 11/12, which take inputs 11/12, carry the pair), the same way User In
+   1/2 take card in 1/2. In the User In numbering (card 1–32 = 129–160): card 3
+   = 131, card 4 = 132. Check on the desk.
 2. Ch 11 / Ch 12 config: no headamp (the vocal is already processed), same
    fader as Ch 1/2, same EQ and dynamics only if Ch 1/2 have any you want on the
    bypass too.
@@ -63,9 +75,27 @@ Ch 12 are the spares.
    ducking while bypassed. The app does not touch the key source either way.
 6. Save the scene to the new slot again.
 
-## 3. The app: Setup
+## 3a. Assist mode, on the separate computer first
 
-Only after 1 and 2. If the room is live, do it with the mains down.
+No Console or X32 change at all. The engine listens and logs; nothing is written
+to any output.
+
+1. Build and start the app there (README: Build, and Building the engine).
+2. Audio device: the Apollo (or that computer's own interface).
+3. Arm the two inputs listed as the mic inputs 1 and 2. The app log lists every
+   input by name at start-up (`input N: ...`). On the rig's Apollo, Core Audio
+   input 0 is Mic 1 (it moved when you sang on 9 Oct); inputs 24/25 are a
+   Console loopback pair, not mics.
+4. Leave each one's Return on **None — listen only**. The Show pill reads
+   ASSIST.
+5. Sing, and push the monitors until the room rings once. Every catch is on the
+   Show screen and in `logs/feedback-log-*.csv`; the eq-log says what it would
+   have cut. Capture on if you want the audio kept too.
+
+## 3. The app: Setup, for the live path
+
+Only after 1 and 2, and only after 3a has shown it catching real feedback. If
+the room is live, do it with the mains down.
 
 1. The app is running (since 10-09 14:57). If it is not, start it: its
    supervisor ends any stray engine from the same binary before launching its

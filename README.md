@@ -22,7 +22,9 @@ get right. Nothing in this repository changes them, and nothing in it is run
 against them without Chris saying go for that run. The app is **read-only
 against the X32 by default**: it subscribes to the RTA, asks the meters, and at
 start-up sends `/info` to find the desk (the last address that answered, then
-the saved one, then a LAN broadcast). That is all. Everything that can write to
+the saved one, then a LAN broadcast). That is all. On the Apollo side, a mic
+armed with its Return set to **None** is listened to and never written anywhere:
+the engine opens no output for it. Everything that can write to
 the console, or make a sound in the room, is listed here. Each is off until used and fires only from an explicit
 click or flag, never on its own.
 
@@ -179,22 +181,28 @@ Apollo Mic 1/2 → UAD chain (Console inserts, REC) → Core Audio inputs (Mic 1
    → Core Audio outputs ADAT 1/2 → X32 card in 1/2 → X32 Ch 1 Lead / Ch 2 BGV
 ```
 
-For that to be the only path, the Flex Route that puts Analog 1/2 on ADAT out
-1/2 has to come **off** ADAT 1/2, or the clean vocal doubles with the engine's
-return a few milliseconds apart (a comb filter, heard as thinness). The inserts
-on Mic 1/2 have to be in **REC**, not MON, or the engine gets the raw mic. Both
-are Console changes, so they are steps in
-[docs/RIG-CHECKLIST.md](docs/RIG-CHECKLIST.md) for Chris to make, with a backup
-first; the software does not touch Console. The bypass pair (Analog 1/2 →
-ADAT out 3/4 → X32 card in 3/4 → Ch 11/12, muted) is in the same checklist.
+**As of 9 Oct 2026 the engine is not in that path and is not going into it
+yet.** The Flex Route still sends Analog 1 → ADAT out 1 and Analog 2 → ADAT out
+2 directly; Ch 1 and Ch 2 take card in 1 and 2 through User In 1/2; Ch 11/12
+are unused Local 11/12 inputs, not bypass channels (the bypass was never
+built); the Apollo's ADAT inputs 1–8 all carry the X32's recording feeds to
+Logic; ADAT outputs 3–8 are free. Chris runs the app on a separate computer
+first. The first step is **assist mode**: arm Mic 1/2 with Return set to
+**None**, so the detector listens and logs and nothing is written to any
+output. On the rig's Apollo, Core Audio input 0 is Mic 1: it was the input that
+moved when Chris sang (read from outside the engine, 9 Oct); inputs 24/25 are a
+Console loopback pair carrying the mix, not a mic.
 
-In the app's Setup, once the checklist is done: device **Universal Audio
-Thunderbolt**; arm the two inputs the Apollo lists as its mic inputs 1 and 2;
-set their Returns to the outputs listed as ADAT 1 and ADAT 2; the console
-address the app finds for itself (type `192.168.9.113` only if it does not);
-desk channels `1 2`, bypass channels `11 12`. The saved
-configuration on the rig Mac is still the previous wiring (inputs 4/5 → returns
-10/11, no console address), so this is a redo, not a check.
+For the engine to become the only path later, the Flex Route has to come
+**off** ADAT 1/2 (or the clean vocal doubles with the engine's return a few
+milliseconds apart, a comb filter heard as thinness), the inserts on Mic 1/2
+have to be in **REC** so the engine gets the processed vocal, and a bypass pair
+has to be patched (Analog 1/2 → a free ADAT out pair → X32 card in → two spare
+channels, muted). Every one of those is a Console or X32 change, so they are
+steps in [docs/RIG-CHECKLIST.md](docs/RIG-CHECKLIST.md) for Chris to make, with
+a backup first; the software does not touch either. The saved configuration on
+the rig Mac is still the previous wiring (inputs 4/5 → returns 10/11, digital
+silence onto free ADAT outputs) and is not being changed from here.
 
 **Latency.** The engine's buffer is 64 samples at 48 kHz (1.33 ms); the detector
 runs on a ring buffer beside the signal, so the engine adds the buffer and
@@ -228,11 +236,17 @@ after a backup.
 
 ### Controls and the workflow
 
-There are no modes. (OFF / ASSIST / AUTO were retired in August.) What there is:
+There are no mode switches. (OFF / ASSIST / AUTO were retired in August.) What
+there is:
 
 - **Feedback engine** (tray): the audio process on or off.
 - **Arm** (Setup, per channel): this input is guarded. Nothing is cut until a
   channel is armed.
+- **Return** (Setup, per channel): the output the cut signal goes back out on,
+  or **None**: the detector listens and every catch is logged and shown, and
+  nothing is written to any output. That is assist mode, and it is what a newly
+  armed mic starts as; the Show pill reads **ASSIST** while every armed mic is
+  on None. Only a Return chosen on purpose puts the engine in the audio path.
 - **Guard on / off** (Show): off passes audio untouched and lets the filters
   fade out.
 - **Capture** (Show or Setup): logs every catch and records the microphone
@@ -374,7 +388,10 @@ and guarded runs.
   the Bus 12 key): Chris makes them from the checklist; the software never will.
 - That the engine receives Apollo Mic 1/2 after the UAD chain and lands on X32
   Ch 1/2 with the new wiring. The saved configuration on the rig is still the
-  old one.
+  old one, and the engine is not going into the path until Chris has run
+  assist mode on a separate computer.
+- Return = None on a real interface: the engine opens the device with inputs
+  only. Built 9 Oct, unit and self-tests pass, not yet run against an Apollo.
 - The desk bypass against the real X32. It is proven on a fake desk on loopback;
   the address and the 0/1 meaning come from the X32 protocol, not from a test
   here.
