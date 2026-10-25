@@ -194,7 +194,14 @@ public sealed class EngineSupervisor : IAsyncDisposable
                     if (d.StartsWith(stamp, StringComparison.Ordinal)) EngineBuild = d[stamp.Length..];
                     Log?.Invoke($"[engine] {d}");
                 };
-                p.ErrorDataReceived  += (_, e) => { if (e.Data is { } d) Log?.Invoke($"[engine] {d}"); };
+                p.ErrorDataReceived  += (_, e) =>
+                {
+                    if (e.Data is not { } d) return;
+                    // The engine writes its build stamp on this stream too; the Setup strip read "build ?" until it was parsed here as well.
+                    const string stamp = "fk-engine build ";
+                    if (d.StartsWith(stamp, StringComparison.Ordinal)) EngineBuild = d[stamp.Length..];
+                    Log?.Invoke($"[engine] {d}");
+                };
                 p.Start();
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();

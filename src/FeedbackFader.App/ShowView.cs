@@ -70,9 +70,17 @@ public sealed class ShowView : UserControl
             CornerRadius = Tokens.Pill,
             Padding = new Thickness(20, 10),
             VerticalAlignment = VerticalAlignment.Center,
+            Cursor = new Avalonia.Input.Cursor(Avalonia.Input.StandardCursorType.Hand),
             Child = Ui.Stack(Orientation.Horizontal, 11, _guardLed, _guardText),
         };
         _guardText.LetterSpacing = 2.0;
+        // It looks like a big button, so it is one: the same tap as the guard
+        // button in the action row. Chris spent an evening tapping it (2026-10-24).
+        _guardPill.PointerPressed += (_, e) =>
+        {
+            if (_feedback.EngineOk) _feedback.SetBypass(!_feedback.IsBypassed);
+            e.Handled = true;
+        };
 
         var rig = Ui.Stack(Orientation.Horizontal, 26,
             Readout("Hearing", _sceneValue),
